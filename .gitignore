@@ -1,0 +1,17 @@
+# 比赛数据（20G，公开发布包，不入库）
+/data/
+
+# 虚拟环境
+/.venv/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 编辑器 / 日志
+nvim.log
+
+# 大体积生成产物（仅保留 experiments 下的小结）
+/outputs/*.csv
+/outputs/*.zip
