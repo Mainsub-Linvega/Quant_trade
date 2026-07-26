@@ -5,6 +5,10 @@ from pathlib import Path
 
 import numpy as np
 
+# 提交包内的同目录模块。官方 runner 加载 main.py 时会把本目录压入 sys.path，
+# 所以扁平 import 在本地与评测端行为一致。绝不 import 仓库的 src/ —— 提交包里没有它。
+from features import apply_robust_transform, linear_predict, single_time_deviation
+
 
 class Model:
     """Lightweight sequential inference model used by the official API."""
@@ -30,13 +34,8 @@ class Model:
         self.last_time_id = time_id
 
         raw = test.loc[:, self.feature_columns].to_numpy(dtype=np.float32, copy=True)
-        np.nan_to_num(raw, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-        np.clip(raw, self.lower, self.upper, out=raw)
-        raw -= self.center
-        raw /= self.scale
-        np.clip(raw, -10.0, 10.0, out=raw)
-
-        cross_sectional = raw - raw.mean(axis=0, keepdims=True)
-        design = np.column_stack([raw, cross_sectional])
-        prediction = (self.intercept + design @ self.coef) * self.prediction_scale
-        return np.clip(prediction, -self.prediction_clip, self.prediction_clip)
+        raw = apply_robust_transform(raw, self.lower, self.upper, self.center, self.scale)
+        deviation = single_time_deviation(raw)
+        return linear_predict(
+            raw, deviation, self.intercept, self.coef, self.prediction_scale, self.prediction_clip
+        )

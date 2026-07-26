@@ -1,102 +1,45 @@
-# CLAUDE.md — 2026 量化交易研究大赛 · AI 协作作战手册
+# CLAUDE.md
 
-本文件是每个 AI 会话的操作总纲。开始任何工作前，先读这里，再动手。
-（人类协作者：`docs/` 是主办方原始赛题/数据说明，本文件是在其之上的**工作约定**。）
+## 绝对禁止
 
----
+1. 不删除、不移动、不重命名任何文件。需要清理时列出清单交给我执行。
+2. 不 git commit / push / tag。
+3. 不修改 `docs/` `examples/` `timeseries_api/`（主办方原文，只读）。
+4. 不生成公榜提交，不打包 zip（打包走 `scripts/make_submission.py`，由我执行）。
+5. AI 不得往「已核实的事实」里加条目。
 
-## 1. 任务本质（一句话）
+## 已核实的事实
 
-用 **323 个匿名特征**，为 **15 个匿名标的** 的每个时点预测一个连续 `target`；
-预测越接近真值（按隐藏 `weight` 加权）分越高；**全程严禁使用任何未来信息**。
+（只写我本人亲手验证过的，注明日期。）
 
-- 评分指标：**加权零均值 R²** = `1 − Σwᵢ(yᵢ−ŷᵢ)² / Σwᵢyᵢ²`
-- 基准：全预测 0 得 **0 分**。模型必须显著优于全 0 才有正分。
-- `target` = 当前时点之后某未来窗口内的"风险调整表现"。正负号=方向，绝对值=强度。
+- 2026-07-24 市场共同分量占 target 方差 73%（只在 p008 测过，待在 9 分区上复验）
+- 2026-07-24 分区级加权均值符号随机（5 正 4 负），漂移不可预测
+- 2026-07-24 train.py 特征选择与预处理均在训练段拟合，无泄漏
 
-## 2. 数据事实（已从 parquet / manifest 核实，勿凭空假设）
+## 当前状态
 
-| 字段 | 训练集 | 测试集 | 说明 |
-|---|---|---|---|
-| `row_id, time_id, asset_id` | ✅ | ✅ | 索引。time_id 越大越靠后；asset_id 共 15 个 |
-| `feature_000..322`（323 个） | ✅ | ✅ | 唯一可用输入。匿名，无语义，只能靠统计挖掘 |
-| `weight` | ✅ | ❌ | 主办方给定的一列，**不是你算的**。仅训练/验证用 |
-| `responder_00..46`（47 个） | ✅ | ❌ | 未来构造的辅助目标。**绝不可当输入特征**（=未来泄露）；只能当辅助训练目标 |
-| `target` | ✅ | ❌ | 要预测的答案 |
+- 公榜 0.00119088（7/23 提交）；公榜第一 0.00426005
+- 本地 valid_score 0.00083852（train.py 单 fold，p005-007 训练 → p008 验证）
+- 本地-公榜校准点见 `experiments/ledger.csv`
 
-- 规模：训练 1322 万行 / 9 分区；测试 322 万行 / 3 分区。float32，zstd 压缩。
-- 分区按连续 time_id 切分；**分区顺序 = 时间顺序**，验证必须尊重它。
+## 评分
 
-## 3. 铁律（违反即无效或泄露，不可协商）
+Score = 1 − Σw(y−ŷ)² / Σwy²。全零预测得 0 分。
+唯一实现在 `src/metric.py`，不得另写。
 
-1. **无未来信息**：任何预处理统计（分位数、均值、标准化参数、特征选择）只能在**训练期**拟合，禁止用验证/测试期的分布、缺失模式、responder、target 反推当前预测。
-2. **responder / weight / target 不进测试期输入**——测试时它们根本不存在。
-3. **推理端约束**：官方评测 4 核 / 12GB 内存 / 无 GPU / 无网络。模型要轻、`predict()` 要快，否则超时→该 time_id 预测被置 0。
-4. **交付形态**：私榜提交 zip 内 `main.py` 必须在根目录，`Model` 类 `__init__` 一次、按递增 time_id 循环 `predict(test)`，返回长度=len(test) 的一维有限浮点数组，顺序同输入行。推理只依赖 NumPy/Pandas，不依赖 sklearn。
-5. **靠本地验证，不靠公榜试错**：公榜每天最多 5 次有效提交，私榜策略共 10 次。改动好坏一律以本地 `walk_forward` 的加权 R² 为准。
+## 工作方式
 
-## 4. 仓库结构
+- 每次改动前，先说明要验证的假设是什么，等我确认。
+- 改完跑本地验证，把改动前后的数字都报给我。
+- 改动涉及预处理 / 推理口径时，必须跑 `scripts/check_consistency.py`。
+- 不确定的事情问我，不要自己假设，不要自己补全。
 
-```
-data/                          # 20G，已 gitignore，勿入库
-examples/
-  baseline_strategy/           # ★ 当前主力策略（v1 = Ridge 截面 baseline）
-    train.py                   # 训练 → model/baseline_model.json
-    main.py                    # Model 类（最终交付推理逻辑）
-    walk_forward.py            # 多窗口时序验证
-    walk_forward_history.py    # 因果 lag/rolling 特征的验证
-    history_features.py        # 因果历史特征（★已备好但尚未接入主模型）
-    model/baseline_model.json  # 训练产物（已入库）
-  {data_io,random_strategy,linear_window_strategy}/   # 参考示例
-timeseries_api/                # 官方本地顺序推理 runner
-docs/                          # 赛题与数据说明（主办方原文）
-outputs/experiments/           # walk_forward 小结（入库）；大 csv/zip 已忽略
-```
+## 伤疤清单
 
-## 5. 版本管理约定
-
-- 每一版策略 = 一次里程碑，用 tag 标记：`git tag -a baseline-vN -m "..."`。当前起点 `baseline-v1`。
-- 较大改动在新分支上做（如 `baseline-v2`），本地验证达标后再合回 `main` 并打 tag。
-- **不入库**：`data/`、`.venv/`、`outputs/*.csv`、`outputs/*.zip`、`__pycache__/`、`nvim.log`（见 `.gitignore`）。
-- 提交信息用中文，结尾附 `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`。
-- 未经用户明确要求，不 push、不打包提交、不改 `docs/`。
-
-## 6. 常用命令
-
-```bash
-# 训练（生成 model/baseline_model.json）——限核避免抢占
-OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 .venv/bin/python examples/baseline_strategy/train.py
-
-# 时序验证：多训练窗口对比加权 R²（结果写 outputs/experiments/）
-OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 .venv/bin/python examples/baseline_strategy/walk_forward.py
-
-# 验证因果 lag/rolling 特征
-OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 .venv/bin/python examples/baseline_strategy/walk_forward_history.py
-
-# 生成公榜提交（约 21.7 万次 API 调用，勿设过紧的 per-step 超时）
-.venv/bin/python timeseries_api/run_timeseries_api.py \
-  --data-root data --strategy-dir examples/baseline_strategy \
-  --output outputs/submission.csv
-```
-
-## 7. 每次改进的标准循环（AI 每个会话遵循）
-
-1. **明确目标**：本次要验证的假设是什么（新特征？调参？新模型？）。
-2. **在分支上改**：动 `train.py` / 新增特征模块；同步保证 `main.py` 推理逻辑与训练口径一致（预处理、特征顺序必须完全对应）。
-3. **本地验证**：跑 `walk_forward*.py`，对比改动前后的加权 R²。**只认时序验证集的稳定提升**，训练集提升无意义。
-4. **一致性自检**：确认没有未来泄露（统计只在训练期拟合）、`predict()` 返回形状/顺序正确、推理够快。
-5. **汇报**：把加权 R² 前后对比、代价（耗时/内存/复杂度）如实告诉用户，给出保留或回滚建议。
-6. **定版**：用户认可后再 commit + `git tag baseline-vN`；必要时生成 submission。
-
-## 8. 改进方向储备（按性价比）
-
-- **接入 `history_features.py` 的因果 lag/rolling 特征**（已验证、未接主模型）——最省事的下一步。
-- 特征交互 / 降维（PCA）；用 LightGBM 看特征重要性再回喂线性模型。
-- 把 47 个 responder 当**辅助目标**做多任务或两段式（先预测 responder 再组合）。
-- 按 asset 分组建模；滚动重新标准化以适应非平稳。
-- 预测后处理：缩放 + 限幅（baseline 已用 `prediction_scale/clip`），保守缩放常能提升加权 R²。
-
-## 9. 交给人类自己跑时
-
-完整循环就是 §6 的四步：`train → walk_forward → run_timeseries_api → git commit/tag`。
-判断标准始终是 `walk_forward` 的加权 R²；每天公榜 5 次、私榜 10 次的额度要省着用。
+- 2026-07-23 AI 把自己的策略写进 examples/（主办方目录），导致后续误判文件归属。
+- 2026-07-23 walk_forward 报告写 Accepted: True，但特征从未接入 train.py，
+  报告结论与实际代码无机械联系。
+- 2026-07-26 发现主办方 `README.md` 与 `examples/linear_window_strategy/train.py`
+  曾被 AI 写入过（mtime 07-22，非发布包解压时间 07-01），原始发布包已丢失，
+  改动内容无法核验。README 已尽量还原；linear_window train.py 保持现状，
+  待重新下载发布包或 8/23 重发包后 diff 核验。

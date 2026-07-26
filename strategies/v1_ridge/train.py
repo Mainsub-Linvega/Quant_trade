@@ -2,20 +2,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
-import pyarrow.parquet as pq
 from sklearn.linear_model import Ridge
 
+# 离线训练专用：把仓库根加入 sys.path 以复用 src/ 下的公共实现。
+# 注意 main.py（提交件）绝不允许这样做 —— 提交包里没有 src/。
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-FEATURE_COLUMNS = [f"feature_{index:03d}" for index in range(323)]
-READ_COLUMNS = ["time_id", "weight", *FEATURE_COLUMNS, "target"]
+from src.io import FEATURE_COLUMNS, load_time_sample, train_files
+from src.metric import weighted_zero_mean_r2
+
+# 同目录的预处理 / 推理唯一实现（main.py 也 import 它，两侧口径由此保持一致）。
+from features import apply_robust_transform, cross_sectional_deviation, linear_predict
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a robust, CPU-friendly contest baseline.")
-    parser.add_argument("--data-root", default=str(Path(__file__).resolve().parents[2] / "data"))
+    parser.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
     parser.add_argument("--model-dir", default=str(Path(__file__).resolve().parent / "model"))
     parser.add_argument("--train-partitions", type=int, default=3)
     parser.add_argument("--sample-modulo", type=int, default=5)
@@ -28,50 +36,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def train_files(data_root: Path) -> list[Path]:
-    manifest_path = data_root / "manifest.json"
-    if manifest_path.exists():
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        relative_paths = manifest.get("files", {}).get("train", [])
-        if relative_paths:
-            return [data_root / str(path) for path in relative_paths]
-    return sorted((data_root / "train").glob("*.parquet"))
-
-
-def load_time_sample(paths: list[Path], sample_modulo: int) -> tuple[np.ndarray, ...]:
-    if sample_modulo <= 0:
-        raise ValueError("sample modulo must be positive")
-
-    feature_parts: list[np.ndarray] = []
-    target_parts: list[np.ndarray] = []
-    weight_parts: list[np.ndarray] = []
-    time_parts: list[np.ndarray] = []
-
-    for path in paths:
-        kept_rows = 0
-        parquet_file = pq.ParquetFile(path)
-        for batch in parquet_file.iter_batches(batch_size=120_000, columns=READ_COLUMNS):
-            frame = batch.to_pandas()
-            mask = frame["time_id"].to_numpy(copy=False) % sample_modulo == 0
-            if not mask.any():
-                continue
-            feature_parts.append(frame.loc[mask, FEATURE_COLUMNS].to_numpy(dtype=np.float32, copy=True))
-            target_parts.append(frame.loc[mask, "target"].to_numpy(dtype=np.float32, copy=True))
-            weight_parts.append(frame.loc[mask, "weight"].to_numpy(dtype=np.float32, copy=True))
-            time_parts.append(frame.loc[mask, "time_id"].to_numpy(dtype=np.int64, copy=True))
-            kept_rows += int(mask.sum())
-        print(f"loaded {path.name}: {kept_rows:,} sampled rows", flush=True)
-
-    if not feature_parts:
-        raise ValueError("training sample is empty")
-    return (
-        np.concatenate(feature_parts),
-        np.concatenate(target_parts),
-        np.concatenate(weight_parts),
-        np.concatenate(time_parts),
-    )
-
-
 def robust_transform_fit(features: np.ndarray) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     # Anonymous market features occasionally contain NaN/inf and regime-specific
     # extremes. Learn every preprocessing statistic on the training period only.
@@ -79,20 +43,8 @@ def robust_transform_fit(features: np.ndarray) -> tuple[np.ndarray, dict[str, np
     quantiles = np.quantile(features, [0.001, 0.25, 0.5, 0.75, 0.999], axis=0).astype(np.float32)
     lower, q25, center, q75, upper = quantiles
     scale = np.maximum(q75 - q25, np.float32(1e-4))
-    np.clip(features, lower, upper, out=features)
-    features -= center
-    features /= scale
-    np.clip(features, -10.0, 10.0, out=features)
+    features = apply_robust_transform(features, lower, upper, center, scale)
     return features, {"lower": lower, "upper": upper, "center": center, "scale": scale}
-
-
-def robust_transform_apply(features: np.ndarray, preprocessing: dict[str, np.ndarray]) -> np.ndarray:
-    np.nan_to_num(features, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    np.clip(features, preprocessing["lower"], preprocessing["upper"], out=features)
-    features -= preprocessing["center"]
-    features /= preprocessing["scale"]
-    np.clip(features, -10.0, 10.0, out=features)
-    return features
 
 
 def select_features(features: np.ndarray, target: np.ndarray, weight: np.ndarray, count: int) -> np.ndarray:
@@ -120,36 +72,10 @@ def select_features(features: np.ndarray, target: np.ndarray, weight: np.ndarray
     return np.sort(selected)
 
 
-def cross_sectional_deviation(features: np.ndarray, time_ids: np.ndarray) -> np.ndarray:
-    starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
-    counts = np.diff(np.r_[starts, len(time_ids)])
-    means = np.add.reduceat(features, starts, axis=0) / counts[:, None]
-    deviation = features.copy()
-    # Chunk the expansion so the temporary repeated-mean matrix stays small.
-    for group_start in range(0, len(starts), 20_000):
-        group_stop = min(group_start + 20_000, len(starts))
-        row_start = int(starts[group_start])
-        row_stop = int(starts[group_stop]) if group_stop < len(starts) else len(features)
-        deviation[row_start:row_stop] -= np.repeat(
-            means[group_start:group_stop], counts[group_start:group_stop], axis=0
-        )
-    return deviation
-
-
 def make_design(features: np.ndarray, time_ids: np.ndarray, selected: np.ndarray) -> np.ndarray:
     raw = features[:, selected].copy()
     deviation = cross_sectional_deviation(raw, time_ids)
     return np.column_stack([raw, deviation]).astype(np.float32, copy=False)
-
-
-def weighted_zero_mean_r2(target: np.ndarray, prediction: np.ndarray, weight: np.ndarray) -> float:
-    target64 = target.astype(np.float64)
-    prediction64 = prediction.astype(np.float64)
-    weight64 = np.maximum(weight.astype(np.float64), 0.0)
-    denominator = float(np.dot(weight64, target64 * target64))
-    if denominator <= 0.0:
-        return 0.0
-    return float(1.0 - np.dot(weight64, (target64 - prediction64) ** 2) / denominator)
 
 
 def fit_model(
@@ -201,12 +127,22 @@ def predict_array(
         name: np.asarray(artifact[name], dtype=np.float32)
         for name in ["lower", "upper", "center", "scale"]
     }
-    selected_features = robust_transform_apply(selected_features, preprocessing)
+    selected_features = apply_robust_transform(
+        selected_features,
+        preprocessing["lower"],
+        preprocessing["upper"],
+        preprocessing["center"],
+        preprocessing["scale"],
+    )
     deviation = cross_sectional_deviation(selected_features, time_ids)
-    design = np.column_stack([selected_features, deviation])
-    prediction = float(artifact["intercept"]) + design @ np.asarray(artifact["coef"], dtype=np.float32)
-    prediction *= prediction_scale
-    return np.clip(prediction, -prediction_clip, prediction_clip)
+    return linear_predict(
+        selected_features,
+        deviation,
+        float(artifact["intercept"]),
+        np.asarray(artifact["coef"], dtype=np.float32),
+        prediction_scale,
+        prediction_clip,
+    )
 
 
 def main() -> None:

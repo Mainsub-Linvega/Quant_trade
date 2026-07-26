@@ -4,19 +4,24 @@ import argparse
 import csv
 import gc
 import json
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 import pyarrow.parquet as pq
 
-from train import (
-    FEATURE_COLUMNS,
-    fit_model,
-    predict_array,
-    train_files,
-    weighted_zero_mean_r2,
-)
+# 离线实验：仓库根（src/）与策略目录（train/features 扁平模块，模拟官方 runner
+# 的加载方式）都压入 sys.path。
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+for _path in (str(_REPO_ROOT), str(_REPO_ROOT / "strategies" / "v1_ridge")):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from src.io import FEATURE_COLUMNS, train_files
+from src.metric import weighted_zero_mean_r2
+from src.validation import partition_folds
+from train import fit_model, predict_array
 
 
 READ_COLUMNS = ["time_id", "asset_id", "weight", *FEATURE_COLUMNS, "target"]
@@ -24,8 +29,8 @@ READ_COLUMNS = ["time_id", "asset_id", "weight", *FEATURE_COLUMNS, "target"]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare chronological training windows over three folds.")
-    parser.add_argument("--data-root", default=str(Path(__file__).resolve().parents[2] / "data"))
-    parser.add_argument("--output-dir", default=str(Path(__file__).resolve().parents[2] / "outputs" / "experiments"))
+    parser.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
+    parser.add_argument("--output-dir", default=str(_REPO_ROOT / "outputs" / "experiments"))
     parser.add_argument("--windows", type=int, nargs="+", default=[2, 3, 4, 6])
     parser.add_argument("--validation-partitions", type=int, nargs="+", default=[6, 7, 8])
     parser.add_argument("--train-sample-modulo", type=int, default=10)
@@ -113,9 +118,8 @@ def main() -> None:
     experiments: list[dict[str, object]] = []
     for window in windows:
         fold_results: list[dict[str, object]] = []
-        for valid_index in validation_indices:
+        for train_indices, valid_index in partition_folds(validation_indices, window):
             started = time.perf_counter()
-            train_indices = list(range(valid_index - window, valid_index))
             train = concatenate(train_cache, train_indices)
             valid = valid_cache[valid_index]
             # Ridge minimises a sum of losses. Preserve the same regularisation

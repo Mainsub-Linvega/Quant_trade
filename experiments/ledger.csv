@@ -1,0 +1,2 @@
+date,git_tag,change,valid_score,public_score,runtime_min,keep_or_rollback
+2026-07-23,baseline-v1,Ridge 截面 baseline（200 特征 + 截面去均值 + scale/clip 0.5）,0.0008385180228406286,0.00119088,,keep

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
+
+# 预处理 / 截面去均值复用 v1_ridge 策略的唯一实现，避免第三份复制。
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT / "strategies" / "v1_ridge") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "strategies" / "v1_ridge"))
+
+from features import apply_robust_transform, cross_sectional_deviation
 
 
 @dataclass
@@ -93,19 +101,7 @@ def transform_selected(
     scale: np.ndarray,
 ) -> np.ndarray:
     values = frame.loc[:, feature_columns].to_numpy(dtype=np.float32, copy=True)
-    np.nan_to_num(values, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    np.clip(values, lower, upper, out=values)
-    values -= center
-    values /= scale
-    np.clip(values, -10.0, 10.0, out=values)
-    return values
-
-
-def cross_sectional_deviation(values: np.ndarray, time_ids: np.ndarray) -> np.ndarray:
-    starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
-    counts = np.diff(np.r_[starts, len(time_ids)])
-    means = np.add.reduceat(values, starts, axis=0) / counts[:, None]
-    return values - np.repeat(means, counts, axis=0)
+    return apply_robust_transform(values, lower, upper, center, scale)
 
 
 def build_history_design(

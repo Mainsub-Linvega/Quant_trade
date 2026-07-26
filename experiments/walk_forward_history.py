@@ -3,26 +3,28 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 from sklearn.linear_model import Ridge
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+for _path in (str(_REPO_ROOT), str(_REPO_ROOT / "strategies" / "v1_ridge")):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
 from history_features import AssetHistory, build_history_design
-from train import (
-    FEATURE_COLUMNS,
-    robust_transform_fit,
-    select_features,
-    train_files,
-    weighted_zero_mean_r2,
-)
+from src.io import FEATURE_COLUMNS, train_files
+from src.metric import weighted_zero_mean_r2
+from train import robust_transform_fit, select_features
 from walk_forward import asset_scores, concatenate, load_partition_sample
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate causal per-asset history features.")
-    parser.add_argument("--data-root", default=str(Path(__file__).resolve().parents[2] / "data"))
-    parser.add_argument("--output-dir", default=str(Path(__file__).resolve().parents[2] / "outputs" / "experiments"))
+    parser.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
+    parser.add_argument("--output-dir", default=str(_REPO_ROOT / "outputs" / "experiments"))
     parser.add_argument("--window", type=int, default=4)
     parser.add_argument("--validation-partitions", type=int, nargs="+", default=[6, 7, 8])
     parser.add_argument("--train-sample-modulo", type=int, default=10)

@@ -33,7 +33,3 @@ python timeseries_api/run_timeseries_api.py \
   --strategy-dir timeseries_api \
   --output /tmp/example_submission.csv
 ```
-
-## 可用 Baseline
-
-`examples/baseline_strategy/` 包含一条经过严格时间切分验证、可生成公榜 CSV 和私榜策略包的稳健 Ridge baseline。完整命令见该目录的 README。
