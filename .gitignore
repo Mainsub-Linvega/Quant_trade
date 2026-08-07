@@ -22,3 +22,6 @@ nvim.log
 strategies/**/model/*.txt
 strategies/**/model/*.pt
 strategies/**/model/*.bin
+
+# CodeGraph 本地索引
+/.codegraph/
