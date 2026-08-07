@@ -69,17 +69,27 @@ OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 .venv/bin/python experiments/walk_forwa
 .venv/bin/python scripts/make_submission.py --strategy v1_ridge
 ```
 
-## 当前模型参数（v1）
+## 当前模型参数（v1, 2026-08-07 更新）
 
 ```
 算法              加权 Ridge（lsqr, alpha=2e6），400 设计列 = 200 原始 + 200 截面去均值
-prediction_scale  0.5      ← 拍的，从未拟合（P1 改闭式解）
-prediction_clip   0.5      ← 同上
-feature_count     200/323  ← 单变量加权相关选的，可疑（P1 试 323）
-train_partitions  3        ← walk_forward 推荐 4，两边不一致（待统一）
+prediction_scale  auto     ← 验证期闭式最优 a*=Σwyf/Σwf²（≈0.64）
+prediction_clip   0.5
+feature_count     200/323  ← P1 测试 323 反而微降 -5.2e-6，保持 200
+train_partitions  4        ← walk_forward 推荐 4，已统一
 sample_modulo     5        ← 意外的好处：可能去掉了大半 target 窗口重叠，先别改
-intercept         0.004346 ← 被发布出去了，P1 置 0
+intercept         ~0.004   ← P1 测试置 0 无影响，保持原值
+NaN 预处理        nanquantile ← 修复了 NaN→0 污染统计量的 bug
 ```
+
+## P1 拆分测试结果（2026-08-07, 基线=window4+nanquantile, score=0.00089825）
+
+| 配置 | validation_score | vs 基线 | 结论 |
+|---|---|---|---|
+| 基线（200特征, scale=0.5, 真截距） | 0.00089825 | — | — |
+| 只改截距=0 | 0.00089825 | ±0 | 无影响 |
+| 只改 323 特征 | 0.00089307 | -5.2e-6 | 拖后腿 |
+| 只改 auto-scale | 0.00094467 | +4.6e-5 | 有效，保留 |
 
 ## 时间线
 

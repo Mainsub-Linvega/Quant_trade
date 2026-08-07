@@ -25,13 +25,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a robust, CPU-friendly contest baseline.")
     parser.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
     parser.add_argument("--model-dir", default=str(Path(__file__).resolve().parent / "model"))
-    parser.add_argument("--train-partitions", type=int, default=3)
+    parser.add_argument("--train-partitions", type=int, default=4)
     parser.add_argument("--sample-modulo", type=int, default=5)
     parser.add_argument("--validation-sample-modulo", type=int, default=10)
     parser.add_argument("--feature-count", type=int, default=200)
     parser.add_argument("--ridge-alpha", type=float, default=2_000_000.0)
-    parser.add_argument("--prediction-scale", type=float, default=0.5)
+    parser.add_argument("--prediction-scale", type=float, default=None,
+                        help="Fixed scale; omit to auto-compute optimal scale on validation data.")
     parser.add_argument("--prediction-clip", type=float, default=0.5)
+    parser.add_argument("--zero-intercept", action="store_true")
     parser.add_argument("--skip-validation", action="store_true")
     return parser.parse_args()
 
@@ -39,8 +41,9 @@ def parse_args() -> argparse.Namespace:
 def robust_transform_fit(features: np.ndarray) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     # Anonymous market features occasionally contain NaN/inf and regime-specific
     # extremes. Learn every preprocessing statistic on the training period only.
-    np.nan_to_num(features, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    quantiles = np.quantile(features, [0.001, 0.25, 0.5, 0.75, 0.999], axis=0).astype(np.float32)
+    # Mark inf as NaN so nanquantile ignores both; apply_robust_transform handles fill.
+    features[~np.isfinite(features)] = np.nan
+    quantiles = np.nanquantile(features, [0.001, 0.25, 0.5, 0.75, 0.999], axis=0).astype(np.float32)
     lower, q25, center, q75, upper = quantiles
     scale = np.maximum(q75 - q25, np.float32(1e-4))
     features = apply_robust_transform(features, lower, upper, center, scale)
@@ -152,10 +155,12 @@ def main() -> None:
     files = train_files(data_root)
     if len(files) < args.train_partitions + 1:
         raise ValueError("not enough chronological train partitions")
-    if args.prediction_scale <= 0 or args.prediction_clip <= 0:
-        raise ValueError("prediction scale and clip must be positive")
+    if args.prediction_clip <= 0:
+        raise ValueError("prediction clip must be positive")
+    auto_scale = args.prediction_scale is None
 
     validation_score: float | None = None
+    final_scale: float = args.prediction_scale if args.prediction_scale is not None else 0.5
     validation_train_paths = files[-(args.train_partitions + 1) : -1]
     validation_path = files[-1]
     if not args.skip_validation:
@@ -171,14 +176,23 @@ def main() -> None:
         )
         del x_train, y_train, w_train, t_train
         x_valid, y_valid, w_valid, t_valid = load_time_sample([validation_path], args.sample_modulo)
-        valid_prediction = predict_array(
-            validation_artifact,
-            x_valid,
-            t_valid,
-            selected,
-            args.prediction_scale,
-            args.prediction_clip,
-        )
+        if auto_scale:
+            raw_prediction = predict_array(
+                validation_artifact, x_valid, t_valid, selected,
+                prediction_scale=1.0, prediction_clip=1e9,
+            )
+            w64 = np.maximum(w_valid.astype(np.float64), 0.0)
+            y64 = y_valid.astype(np.float64)
+            f64 = raw_prediction.astype(np.float64)
+            final_scale = float(np.dot(w64, y64 * f64) / np.maximum(np.dot(w64, f64 * f64), 1e-30))
+            final_scale = max(0.0, min(final_scale, 2.0))
+            valid_prediction = np.clip(raw_prediction * final_scale, -args.prediction_clip, args.prediction_clip)
+            print(f"optimal prediction_scale: {final_scale:.6f}", flush=True)
+        else:
+            valid_prediction = predict_array(
+                validation_artifact, x_valid, t_valid, selected,
+                final_scale, args.prediction_clip,
+            )
         validation_score = weighted_zero_mean_r2(y_valid, valid_prediction, w_valid)
         print(f"validation weighted zero-mean R2: {validation_score:.8f}", flush=True)
         del x_valid, y_valid, w_valid, t_valid, valid_prediction, validation_artifact
@@ -189,6 +203,8 @@ def main() -> None:
     artifact, _ = fit_model(
         features, target, weight, time_ids, args.feature_count, args.ridge_alpha
     )
+    if args.zero_intercept:
+        artifact["intercept"] = 0.0
     artifact.update(
         {
             "strategy": "robust_ridge_cross_section_baseline",
@@ -196,7 +212,7 @@ def main() -> None:
             "sample_modulo": int(args.sample_modulo),
             "train_rows": int(len(target)),
             "feature_count": int(args.feature_count),
-            "prediction_scale": float(args.prediction_scale),
+            "prediction_scale": float(final_scale),
             "prediction_clip": float(args.prediction_clip),
             "validation_score": validation_score,
             "validation_metric": "weighted_zero_mean_r2",
