@@ -1,0 +1,265 @@
+{
+  "metric": "weighted_zero_mean_r2",
+  "mode": "paired_ab",
+  "label": "selfcheck",
+  "baseline_arm": "baseline#0",
+  "configuration": {
+    "n_folds": 10,
+    "train_window": 39480,
+    "embargo": 6,
+    "fold_offset": 0,
+    "valid_chunk_size": 4934,
+    "sample_modulo": 10,
+    "fold_alpha_factor": 0.4935,
+    "fit_cache": false
+  },
+  "arms": {
+    "baseline#0": {
+      "feature_count": 200,
+      "ridge_alpha": 2000000.0,
+      "prediction_scale": 0.5,
+      "prediction_clip": 0.5,
+      "zero_intercept": false
+    },
+    "baseline#1": {
+      "feature_count": 200,
+      "ridge_alpha": 2000000.0,
+      "prediction_scale": 0.5,
+      "prediction_clip": 0.5,
+      "zero_intercept": false
+    }
+  },
+  "absolute_reference": {
+    "baseline#0": {
+      "mean": 0.001337673201121392,
+      "std": 0.000666194775063917,
+      "se": 0.0002106692854505523,
+      "min": 0.0002575051669804207,
+      "max": 0.0025832289887436355
+    },
+    "baseline#1": {
+      "mean": 0.001337673201121392,
+      "std": 0.000666194775063917,
+      "se": 0.0002106692854505523,
+      "min": 0.0002575051669804207,
+      "max": 0.0025832289887436355
+    }
+  },
+  "paired_delta": {
+    "baseline#1": {
+      "mean_delta": 0.0,
+      "std_delta": 0.0,
+      "se_delta": 0.0,
+      "t_stat": null,
+      "min_delta": 0.0,
+      "max_delta": 0.0,
+      "positive_folds": 0,
+      "negative_folds": 0,
+      "zero_folds": 10,
+      "sign_test_p": 0.001953125
+    }
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "train_time_range": [
+        0,
+        394890
+      ],
+      "valid_time_range": [
+        394960,
+        444300
+      ],
+      "embargo_gap": 70,
+      "train_rows": 591864,
+      "valid_rows": 73998,
+      "scores": {
+        "baseline#0": 0.0002575051669804207,
+        "baseline#1": 0.0002575051669804207
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 17.912791515000208
+    },
+    {
+      "fold": 1,
+      "train_time_range": [
+        49340,
+        444240
+      ],
+      "valid_time_range": [
+        444310,
+        493670
+      ],
+      "embargo_gap": 70,
+      "train_rows": 591860,
+      "valid_rows": 74010,
+      "scores": {
+        "baseline#0": 0.001508358064441384,
+        "baseline#1": 0.001508358064441384
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 17.85424701300053
+    },
+    {
+      "fold": 2,
+      "train_time_range": [
+        98680,
+        493610
+      ],
+      "valid_time_range": [
+        493680,
+        543010
+      ],
+      "embargo_gap": 70,
+      "train_rows": 591912,
+      "valid_rows": 74009,
+      "scores": {
+        "baseline#0": 0.0015723542667115398,
+        "baseline#1": 0.0015723542667115398
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 17.753073262000726
+    },
+    {
+      "fold": 3,
+      "train_time_range": [
+        148020,
+        542950
+      ],
+      "valid_time_range": [
+        543020,
+        592350
+      ],
+      "embargo_gap": 70,
+      "train_rows": 591933,
+      "valid_rows": 71221,
+      "scores": {
+        "baseline#0": 0.001620272310351667,
+        "baseline#1": 0.001620272310351667
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 17.743068676999428
+    },
+    {
+      "fold": 4,
+      "train_time_range": [
+        197360,
+        592290
+      ],
+      "valid_time_range": [
+        592360,
+        641690
+      ],
+      "embargo_gap": 70,
+      "train_rows": 589162,
+      "valid_rows": 71902,
+      "scores": {
+        "baseline#0": 0.0025832289887436355,
+        "baseline#1": 0.0025832289887436355
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 17.387824956999793
+    },
+    {
+      "fold": 5,
+      "train_time_range": [
+        246700,
+        641630
+      ],
+      "valid_time_range": [
+        641700,
+        691030
+      ],
+      "embargo_gap": 70,
+      "train_rows": 587052,
+      "valid_rows": 73725,
+      "scores": {
+        "baseline#0": 0.0004259936873270975,
+        "baseline#1": 0.0004259936873270975
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 17.09982517899971
+    },
+    {
+      "fold": 6,
+      "train_time_range": [
+        296040,
+        690970
+      ],
+      "valid_time_range": [
+        691040,
+        740370
+      ],
+      "embargo_gap": 70,
+      "train_rows": 586789,
+      "valid_rows": 74010,
+      "scores": {
+        "baseline#0": 0.001340834416056924,
+        "baseline#1": 0.001340834416056924
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 17.080814936000024
+    },
+    {
+      "fold": 7,
+      "train_time_range": [
+        345480,
+        740310
+      ],
+      "valid_time_range": [
+        740380,
+        789740
+      ],
+      "embargo_gap": 70,
+      "train_rows": 586801,
+      "valid_rows": 73730,
+      "scores": {
+        "baseline#0": 0.0009262289590874495,
+        "baseline#1": 0.0009262289590874495
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 17.079255324999394
+    },
+    {
+      "fold": 8,
+      "train_time_range": [
+        394820,
+        789680
+      ],
+      "valid_time_range": [
+        789750,
+        839080
+      ],
+      "embargo_gap": 70,
+      "train_rows": 586725,
+      "valid_rows": 70141,
+      "scores": {
+        "baseline#0": 0.0015337081235181627,
+        "baseline#1": 0.0015337081235181627
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 16.857275028000004
+    },
+    {
+      "fold": 9,
+      "train_time_range": [
+        444170,
+        839020
+      ],
+      "valid_time_range": [
+        839090,
+        888470
+      ],
+      "embargo_gap": 70,
+      "train_rows": 582868,
+      "valid_rows": 74084,
+      "scores": {
+        "baseline#0": 0.0016082480279956402,
+        "baseline#1": 0.0016082480279956402
+      },
+      "auto_scale": {},
+      "elapsed_seconds": 16.758599503999903
+    }
+  ],
+  "caveat": "滚动 fold 的训练窗口互相重叠约 87%，各 fold 的 Δ 是正相关的，上面这个 SE 偏乐观；判断阈值以 P0-3 噪声地板（--fold-offset half 重跑的 mean(Δ) 漂移量）为准。"
+}

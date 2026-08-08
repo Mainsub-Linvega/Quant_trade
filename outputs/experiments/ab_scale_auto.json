@@ -1,0 +1,415 @@
+{
+  "metric": "weighted_zero_mean_r2",
+  "mode": "paired_ab",
+  "label": "scale_auto",
+  "baseline_arm": "baseline",
+  "configuration": {
+    "n_folds": 10,
+    "train_window": 39480,
+    "embargo": 6,
+    "fold_offset": 0,
+    "valid_chunk_size": 4934,
+    "sample_modulo": 10,
+    "fold_alpha_factor": 0.4935,
+    "fit_cache": true
+  },
+  "arms": {
+    "baseline": {
+      "feature_count": 200,
+      "ridge_alpha": 2000000.0,
+      "prediction_scale": 0.5,
+      "prediction_clip": 0.5,
+      "zero_intercept": false
+    },
+    "scale_auto": {
+      "feature_count": 200,
+      "ridge_alpha": 2000000.0,
+      "prediction_scale": "auto_inner",
+      "prediction_clip": 0.5,
+      "zero_intercept": false
+    }
+  },
+  "absolute_reference": {
+    "baseline": {
+      "mean": 0.001337673201121392,
+      "std": 0.000666194775063917,
+      "se": 0.0002106692854505523,
+      "min": 0.0002575051669804207,
+      "max": 0.0025832289887436355
+    },
+    "scale_auto": {
+      "mean": 0.0012618808287605642,
+      "std": 0.0021449675750420103,
+      "se": 0.0006782983044340891,
+      "min": -0.0038650143345140275,
+      "max": 0.004526369690377341
+    }
+  },
+  "paired_delta": {
+    "scale_auto": {
+      "mean_delta": -7.579237236082781e-05,
+      "std_delta": 0.001617286517460891,
+      "se_delta": 0.0005114309024258093,
+      "t_stat": -0.14819670067125562,
+      "min_delta": -0.004291008021841125,
+      "max_delta": 0.0019431407016337054,
+      "positive_folds": 6,
+      "negative_folds": 4,
+      "zero_folds": 0,
+      "sign_test_p": 0.75390625
+    }
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "train_time_range": [
+        0,
+        394890
+      ],
+      "valid_time_range": [
+        394960,
+        444300
+      ],
+      "embargo_gap": 70,
+      "train_rows": 591864,
+      "valid_rows": 73998,
+      "scores": {
+        "baseline": 0.0002575051669804207,
+        "scale_auto": 9.251444356173089e-05
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 0.6144955365980276,
+          "inner_train_range": [
+            0,
+            345490
+          ],
+          "inner_valid_range": [
+            345560,
+            394890
+          ],
+          "inner_train_time_ids": 34540,
+          "inner_valid_time_ids": 4934,
+          "inner_ridge_alpha": 863500.0
+        }
+      },
+      "elapsed_seconds": 15.626038804000018
+    },
+    {
+      "fold": 1,
+      "train_time_range": [
+        49340,
+        444240
+      ],
+      "valid_time_range": [
+        444310,
+        493670
+      ],
+      "embargo_gap": 70,
+      "train_rows": 591860,
+      "valid_rows": 74010,
+      "scores": {
+        "baseline": 0.001508358064441384,
+        "scale_auto": 0.0011512717030023323
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 0.3422102220936357,
+          "inner_train_range": [
+            49340,
+            394830
+          ],
+          "inner_valid_range": [
+            394900,
+            444240
+          ],
+          "inner_train_time_ids": 34540,
+          "inner_valid_time_ids": 4934,
+          "inner_ridge_alpha": 863500.0
+        }
+      },
+      "elapsed_seconds": 15.75294328200016
+    },
+    {
+      "fold": 2,
+      "train_time_range": [
+        98680,
+        493610
+      ],
+      "valid_time_range": [
+        493680,
+        543010
+      ],
+      "embargo_gap": 70,
+      "train_rows": 591912,
+      "valid_rows": 74009,
+      "scores": {
+        "baseline": 0.0015723542667115398,
+        "scale_auto": 0.002043508915765546
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 0.826695259105007,
+          "inner_train_range": [
+            98680,
+            444180
+          ],
+          "inner_valid_range": [
+            444250,
+            493610
+          ],
+          "inner_train_time_ids": 34540,
+          "inner_valid_time_ids": 4934,
+          "inner_ridge_alpha": 863500.0
+        }
+      },
+      "elapsed_seconds": 15.732345567000266
+    },
+    {
+      "fold": 3,
+      "train_time_range": [
+        148020,
+        542950
+      ],
+      "valid_time_range": [
+        543020,
+        592350
+      ],
+      "embargo_gap": 70,
+      "train_rows": 591933,
+      "valid_rows": 71221,
+      "scores": {
+        "baseline": 0.001620272310351667,
+        "scale_auto": 0.002396630777768971
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 1.066956459535027,
+          "inner_train_range": [
+            148020,
+            493550
+          ],
+          "inner_valid_range": [
+            493620,
+            542950
+          ],
+          "inner_train_time_ids": 34540,
+          "inner_valid_time_ids": 4934,
+          "inner_ridge_alpha": 863500.0
+        }
+      },
+      "elapsed_seconds": 15.660499041000548
+    },
+    {
+      "fold": 4,
+      "train_time_range": [
+        197360,
+        592290
+      ],
+      "valid_time_range": [
+        592360,
+        641690
+      ],
+      "embargo_gap": 70,
+      "train_rows": 589162,
+      "valid_rows": 71902,
+      "scores": {
+        "baseline": 0.0025832289887436355,
+        "scale_auto": 0.004526369690377341
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 1.0900302656692658,
+          "inner_train_range": [
+            197360,
+            542890
+          ],
+          "inner_valid_range": [
+            542960,
+            592290
+          ],
+          "inner_train_time_ids": 34540,
+          "inner_valid_time_ids": 4934,
+          "inner_ridge_alpha": 863500.0
+        }
+      },
+      "elapsed_seconds": 15.47612532400035
+    },
+    {
+      "fold": 5,
+      "train_time_range": [
+        246700,
+        641630
+      ],
+      "valid_time_range": [
+        641700,
+        691030
+      ],
+      "embargo_gap": 70,
+      "train_rows": 587052,
+      "valid_rows": 73725,
+      "scores": {
+        "baseline": 0.0004259936873270975,
+        "scale_auto": -0.0038650143345140275
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 1.7776030514620103,
+          "inner_train_range": [
+            246700,
+            592230
+          ],
+          "inner_valid_range": [
+            592300,
+            641630
+          ],
+          "inner_train_time_ids": 34540,
+          "inner_valid_time_ids": 4934,
+          "inner_ridge_alpha": 863500.0
+        }
+      },
+      "elapsed_seconds": 15.443968712000242
+    },
+    {
+      "fold": 6,
+      "train_time_range": [
+        296040,
+        690970
+      ],
+      "valid_time_range": [
+        691040,
+        740370
+      ],
+      "embargo_gap": 70,
+      "train_rows": 586789,
+      "valid_rows": 74010,
+      "scores": {
+        "baseline": 0.001340834416056924,
+        "scale_auto": 0.0012055938828267054
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 0.430254476939416,
+          "inner_train_range": [
+            296040,
+            641570
+          ],
+          "inner_valid_range": [
+            641640,
+            690970
+          ],
+          "inner_train_time_ids": 34540,
+          "inner_valid_time_ids": 4934,
+          "inner_ridge_alpha": 863500.0
+        }
+      },
+      "elapsed_seconds": 15.411096361999626
+    },
+    {
+      "fold": 7,
+      "train_time_range": [
+        345480,
+        740310
+      ],
+      "valid_time_range": [
+        740380,
+        789740
+      ],
+      "embargo_gap": 70,
+      "train_rows": 586801,
+      "valid_rows": 73730,
+      "scores": {
+        "baseline": 0.0009262289590874495,
+        "scale_auto": 0.0010538878081434166
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 0.9458255268949223,
+          "inner_train_range": [
+            345480,
+            690910
+          ],
+          "inner_valid_range": [
+            690980,
+            740310
+          ],
+          "inner_train_time_ids": 34540,
+          "inner_valid_time_ids": 4934,
+          "inner_ridge_alpha": 863500.0
+        }
+      },
+      "elapsed_seconds": 15.401131118000194
+    },
+    {
+      "fold": 8,
+      "train_time_range": [
+        394820,
+        789680
+      ],
+      "valid_time_range": [
+        789750,
+        839080
+      ],
+      "embargo_gap": 70,
+      "train_rows": 586725,
+      "valid_rows": 70141,
+      "scores": {
+        "baseline": 0.0015337081235181627,
+        "scale_auto": 0.0018827701956496412
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 0.7677899093938391,
+          "inner_train_range": [
+            394820,
+            740250
+          ],
+          "inner_valid_range": [
+            740320,
+            789680
+          ],
+          "inner_train_time_ids": 34540,
+          "inner_valid_time_ids": 4934,
+          "inner_ridge_alpha": 863500.0
+        }
+      },
+      "elapsed_seconds": 15.17250449599942
+    },
+    {
+      "fold": 9,
+      "train_time_range": [
+        444170,
+        839020
+      ],
+      "valid_time_range": [
+        839090,
+        888470
+      ],
+      "embargo_gap": 70,
+      "train_rows": 582868,
+      "valid_rows": 74084,
+      "scores": {
+        "baseline": 0.0016082480279956402,
+        "scale_auto": 0.002131275205023986
+      },
+      "auto_scale": {
+        "scale_auto": {
+          "scale": 1.0411529912906266,
+          "inner_train_range": [
+            444170,
+            789570
+          ],
+          "inner_valid_range": [
+            789640,
+            839020
+          ],
+          "inner_train_time_ids": 34535,
+          "inner_valid_time_ids": 4939,
+          "inner_ridge_alpha": 863375.0
+        }
+      },
+      "elapsed_seconds": 15.190077877000476
+    }
+  ],
+  "caveat": "滚动 fold 的训练窗口互相重叠约 87%，各 fold 的 Δ 是正相关的，上面这个 SE 偏乐观；判断阈值以 P0-3 噪声地板（--fold-offset half 重跑的 mean(Δ) 漂移量）为准。"
+}
