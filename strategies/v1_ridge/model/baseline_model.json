@@ -1615,6 +1615,8 @@
     -0.0004559660446830094
   ],
   "ridge_alpha": 2000000.0,
+  "design_basis": "raw_dev",
+  "market_alpha_ratio": 1.0,
   "strategy": "robust_ridge_cross_section_baseline",
   "train_files": [
     "train_partition_005.parquet",
@@ -1625,8 +1627,8 @@
   "sample_modulo": 5,
   "train_rows": 1146659,
   "feature_count": 200,
-  "prediction_scale": 0.6424065227113341,
+  "prediction_scale": 1.13,
   "prediction_clip": 0.5,
-  "validation_score": 0.0009446669868076185,
+  "validation_score": 0.00040044684463669267,
   "validation_metric": "weighted_zero_mean_r2"
 }
