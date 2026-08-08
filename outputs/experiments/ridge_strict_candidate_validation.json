@@ -1,0 +1,33 @@
+{
+  "baseline_model": "/home/mainsub/Documents/Quant_trade/strategies/v1_ridge/model/baseline_model.json",
+  "baseline_model_sha256": "e2bec9a97df11c6dc533d119beba5650b3c7a371d0163dca2ae27d891ef3a8bb",
+  "candidate_model": "outputs/candidates/v1_ridge_strict/baseline_model.json",
+  "candidate_model_sha256": "c23a8cfbc591a4cf1baf02a383ffd8fe7111743b37d02672608b6b690a4b2249",
+  "split": "test",
+  "rows": 3217458,
+  "predict_calls": 214538,
+  "prediction_comparison": {
+    "max_abs_diff": 0.0053381770849227905,
+    "rmse_diff": 0.0005224990253028964,
+    "correlation": 0.9999278610217228,
+    "baseline_mean": 0.00895607116763259,
+    "candidate_mean": 0.008834441506667871,
+    "baseline_std": 0.04172310063724655,
+    "candidate_std": 0.04163607304508777,
+    "baseline_clipped_rows": 0,
+    "candidate_clipped_rows": 0,
+    "baseline_invalid_rows": 0,
+    "candidate_invalid_rows": 0
+  },
+  "timing": {
+    "baseline_init_seconds": 0.0004985429986845702,
+    "candidate_init_seconds": 0.0004236770037095994,
+    "baseline_predict_total_seconds": 88.47245913241204,
+    "candidate_predict_total_seconds": 86.99949046258553,
+    "baseline_mean_predict_seconds": 0.00041238596021409745,
+    "candidate_mean_predict_seconds": 0.00040552018972203304,
+    "baseline_max_predict_seconds": 0.05387633599457331,
+    "candidate_max_predict_seconds": 0.0512128499976825,
+    "wall_seconds": 195.60543461899942
+  }
+}

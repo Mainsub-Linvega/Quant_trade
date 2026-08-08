@@ -1,0 +1,23 @@
+{
+  "configuration": {
+    "threads": [
+      1,
+      4
+    ],
+    "sample_modulo": 5,
+    "ridge_tol": 0.0001,
+    "ridge_max_iter": 100
+  },
+  "comparisons": {
+    "1_vs_4": {
+      "same_selected": true,
+      "max_abs_coef_diff": 8.152564987540245e-07,
+      "max_abs_prediction_diff": 4.8045068979263306e-05,
+      "abs_score_diff": 5.7880653603348264e-09,
+      "score_reference": 0.0026064155457120597,
+      "score_current": 0.0026064097576466994,
+      "n_iter_reference": 13,
+      "n_iter_current": 13
+    }
+  }
+}

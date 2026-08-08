@@ -1,0 +1,10 @@
+{
+  "model_path": "outputs/candidates/v1_ridge_strict/baseline_model.json",
+  "model_sha256": "c23a8cfbc591a4cf1baf02a383ffd8fe7111743b37d02672608b6b690a4b2249",
+  "partition": "train_partition_008.parquet",
+  "time_ids": 500,
+  "rows": 7500,
+  "atol": 1e-06,
+  "max_abs_diff": 1.1175870895385742e-07,
+  "passed": true
+}
