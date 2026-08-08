@@ -9,11 +9,17 @@ from __future__ import annotations
 import numpy as np
 
 
+def weighted_zero_mean_r2_from_sums(weighted_sse: float, weighted_target_energy: float) -> float:
+    """由可流式累积的分子/分母计算比赛分数。"""
+    if weighted_target_energy <= 0.0:
+        return 0.0
+    return float(1.0 - weighted_sse / weighted_target_energy)
+
+
 def weighted_zero_mean_r2(target: np.ndarray, prediction: np.ndarray, weight: np.ndarray) -> float:
     target64 = target.astype(np.float64)
     prediction64 = prediction.astype(np.float64)
     weight64 = np.maximum(weight.astype(np.float64), 0.0)
     denominator = float(np.dot(weight64, target64 * target64))
-    if denominator <= 0.0:
-        return 0.0
-    return float(1.0 - np.dot(weight64, (target64 - prediction64) ** 2) / denominator)
+    weighted_sse = float(np.dot(weight64, (target64 - prediction64) ** 2))
+    return weighted_zero_mean_r2_from_sums(weighted_sse, denominator)

@@ -13,8 +13,10 @@ from features import apply_robust_transform, linear_predict, single_time_deviati
 class Model:
     """Lightweight sequential inference model used by the official API."""
 
-    def __init__(self):
-        model_path = Path(__file__).resolve().parent / "model" / "baseline_model.json"
+    def __init__(self, model_path: str | Path | None = None):
+        if model_path is None:
+            model_path = Path(__file__).resolve().parent / "model" / "baseline_model.json"
+        model_path = Path(model_path)
         payload = json.loads(model_path.read_text(encoding="utf-8"))
         self.feature_columns = list(payload["selected_features"])
         self.lower = np.asarray(payload["lower"], dtype=np.float32)

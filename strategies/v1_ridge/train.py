@@ -31,9 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-sample-modulo", type=int, default=10)
     # 2026-08-08：alpha 回滚到 2e6。滚动网格曾指向 5e5（两个采样口径都 8/10 折同号），
     # 但公榜用两点定抛物线做峰值对峰值的对比，5e5 比 2e6 低 19.2%（0.00150896 vs 0.00186804）。
-    # 病根：本地尺子只在模型训练过的相位上评估（modulo 10 只有相位 0，modulo 5 只有 0+5），
-    # 而公榜评全部 10 个相位、其中 8 个模型没见过。alpha 调小 = 更贴合训练分布 =
-    # 在见过的相位上更准、没见过的更差。详见 NOTES.md「相位」一节。
+    # 相位隔离与长验证跨度实验都未复现这次反转；当前只能确认公榜时期分布与训练期不同，
+    # 不能把病因归到相位。详见 ROADMAP「本地与公榜为什么在 alpha 上量反了」。
     #
     # ⚠️ prediction_scale=1.13 是公榜实测最优（Score(a)=2aA−a²B 两点解出，顶点 1.1317）。
     # 它是对公榜测试集拟合出来的，**私榜交付前必须重新评估**：本地尺子给 0.88~0.97。
@@ -55,6 +54,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cross-sectional-scaling", choices=["none", "std"], default="none",
                         help="none=只去截面均值（历史口径）；std=再除以截面标准差，"
                              "把时变的截面离散度归一化掉")
+    parser.add_argument("--ridge-tol", type=float, default=1e-8,
+                        help="LSQR 收敛容差；收紧以降低 BLAS 线程数导致的模型漂移。")
+    parser.add_argument("--ridge-max-iter", type=int, default=2000)
+    parser.add_argument(
+        "--allow-production-overwrite",
+        action="store_true",
+        help="显式允许写入 strategies/v1_ridge/model；默认拒绝，防止候选误覆盖正式模型。",
+    )
     parser.add_argument("--skip-validation", action="store_true")
     return parser.parse_args()
 
@@ -138,6 +145,8 @@ def fit_model(
     design_basis: str = "raw_dev",
     market_alpha_ratio: float = 1.0,
     cross_sectional_scaling: str = "none",
+    ridge_tol: float = 1e-4,
+    ridge_max_iter: int = 100,
 ) -> tuple[dict[str, object], np.ndarray]:
     """拟合。design_basis="raw_dev"（默认）与历史口径逐位一致。
 
@@ -147,6 +156,8 @@ def fit_model(
     """
     if market_alpha_ratio <= 0:
         raise ValueError("market_alpha_ratio must be positive")
+    if ridge_tol <= 0 or ridge_max_iter <= 0:
+        raise ValueError("ridge_tol and ridge_max_iter must be positive")
     # 列缩放 c 与有效正则的关系：对 mean 列乘 c，等价于对它的系数用 alpha/c² 的正则。
     # 要让择时分量吃 r 倍正则，取 c = 1/√r。
     market_scale = 1.0 / math.sqrt(market_alpha_ratio) if design_basis == "mean_dev" else 1.0
@@ -160,8 +171,8 @@ def fit_model(
     estimator = Ridge(
         alpha=ridge_alpha,
         solver="lsqr",
-        tol=1e-4,
-        max_iter=100,
+        tol=ridge_tol,
+        max_iter=ridge_max_iter,
         fit_intercept=True,
         copy_X=False,
     )
@@ -188,6 +199,9 @@ def fit_model(
         "design_basis": design_basis,
         "market_alpha_ratio": float(market_alpha_ratio),
         "cross_sectional_scaling": cross_sectional_scaling,
+        "ridge_tol": float(ridge_tol),
+        "ridge_max_iter": int(ridge_max_iter),
+        "ridge_n_iter": int(np.max(np.atleast_1d(estimator.n_iter_))),
     }
     return artifact, selected
 
@@ -229,6 +243,12 @@ def main() -> None:
     args = parse_args()
     data_root = Path(args.data_root)
     model_dir = Path(args.model_dir)
+    production_dir = Path(__file__).resolve().parent / "model"
+    if model_dir.resolve() == production_dir.resolve() and not args.allow_production_overwrite:
+        raise SystemExit(
+            "拒绝覆盖正式模型目录；候选请传 --model-dir，确认晋级后再显式加 "
+            "--allow-production-overwrite"
+        )
     files = train_files(data_root)
     if len(files) < args.train_partitions + 1:
         raise ValueError("not enough chronological train partitions")
@@ -252,6 +272,7 @@ def main() -> None:
             x_train, y_train, w_train, t_train, args.feature_count, validation_alpha,
             design_basis=args.design_basis, market_alpha_ratio=args.market_alpha_ratio,
             cross_sectional_scaling=args.cross_sectional_scaling,
+            ridge_tol=args.ridge_tol, ridge_max_iter=args.ridge_max_iter,
         )
         del x_train, y_train, w_train, t_train
         x_valid, y_valid, w_valid, t_valid = load_time_sample([validation_path], args.sample_modulo)
@@ -300,7 +321,8 @@ def main() -> None:
     artifact, _ = fit_model(
         features, target, weight, time_ids, args.feature_count, args.ridge_alpha,
         design_basis=args.design_basis, market_alpha_ratio=args.market_alpha_ratio,
-            cross_sectional_scaling=args.cross_sectional_scaling,
+        cross_sectional_scaling=args.cross_sectional_scaling,
+        ridge_tol=args.ridge_tol, ridge_max_iter=args.ridge_max_iter,
     )
     if args.zero_intercept:
         artifact["intercept"] = 0.0

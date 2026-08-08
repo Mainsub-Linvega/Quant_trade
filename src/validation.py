@@ -27,13 +27,14 @@ def rolling_fold_chunk_size(
     n_folds: int,
     train_window: int,
     embargo: int = 6,
-    offset: int = 0,
+    reserved_offset: int = 0,
 ) -> int:
     """每个验证段的长度（time_id 个数）—— rolling_time_folds 的切分算术，单独暴露。
 
-    调用方用它算 P0-3 的「平移半个 fold」偏移量，不必自己重算一遍公式。
+    ``reserved_offset`` 为平移后的 grid 预留尾部空间，使 offset=0 与平移版本
+    保持相同折数和验证段长度。
     """
-    return (n_time_ids - train_window - embargo - offset) // n_folds
+    return (n_time_ids - train_window - embargo - reserved_offset) // n_folds
 
 
 def rolling_time_folds(
@@ -42,6 +43,7 @@ def rolling_time_folds(
     train_window: int,
     embargo: int = 6,
     offset: int = 0,
+    reserved_offset: int = 0,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
     """按 time_id 滚动细切多 fold，训练段与验证段之间空出 embargo 个 time_id。
 
@@ -58,6 +60,10 @@ def rolling_time_folds(
     n = len(ids)
     if offset < 0:
         raise ValueError("offset must be non-negative")
+    if reserved_offset < 0:
+        raise ValueError("reserved_offset must be non-negative")
+    if offset > reserved_offset:
+        raise ValueError("offset cannot exceed reserved_offset")
     first_valid_idx = train_window + embargo + offset
     if first_valid_idx >= n:
         raise ValueError(
@@ -67,14 +73,23 @@ def rolling_time_folds(
     if n_folds <= 0:
         raise ValueError("n_folds must be positive")
 
-    chunk_size = rolling_fold_chunk_size(n, n_folds, train_window, embargo, offset)
-    if chunk_size == 0:
+    chunk_size = rolling_fold_chunk_size(
+        n, n_folds, train_window, embargo, reserved_offset
+    )
+    if chunk_size <= 0:
         raise ValueError(f"not enough validation time_ids for {n_folds} folds")
 
     folds: list[tuple[np.ndarray, np.ndarray]] = []
     for i in range(n_folds):
         v_start = first_valid_idx + i * chunk_size
-        v_end = first_valid_idx + (i + 1) * chunk_size if i < n_folds - 1 else n
+        # 历史默认口径让最后一折吃完除法余数；只有为 offset 对照预留尾部时，
+        # 才固定每折长度，保证 base/shifted 两套 grid 可逐折比较。
+        if reserved_offset == 0 and i == n_folds - 1:
+            v_end = n
+        else:
+            v_end = v_start + chunk_size
+        if v_end > n:
+            raise ValueError("reserved_offset is too small for the requested fold offset")
         t_end = v_start - embargo
         t_start = max(0, t_end - train_window)
         folds.append((ids[t_start:t_end].copy(), ids[v_start:v_end].copy()))

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ for _path in (str(_REPO_ROOT), str(_REPO_ROOT / "strategies" / "v1_ridge")):
         sys.path.insert(0, _path)
 
 from src.io import FEATURE_COLUMNS, train_files
+from src.artifact import sha256_file
 import main as strategy_main
 import train as strategy_train
 
@@ -33,6 +35,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--partition-index", type=int, default=8)
     parser.add_argument("--n-time-ids", type=int, default=50)
     parser.add_argument("--atol", type=float, default=1e-6)
+    parser.add_argument(
+        "--model-path",
+        default=str(_REPO_ROOT / "strategies" / "v1_ridge" / "model" / "baseline_model.json"),
+    )
+    parser.add_argument("--output", default=None)
     return parser.parse_args()
 
 
@@ -56,13 +63,8 @@ def load_leading_time_ids(path: Path, n_time_ids: int):
 
 def main() -> None:
     args = parse_args()
-    import json
-
-    artifact = json.loads(
-        (_REPO_ROOT / "strategies" / "v1_ridge" / "model" / "baseline_model.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    model_path = Path(args.model_path)
+    artifact = json.loads(model_path.read_text(encoding="utf-8"))
     selected = np.asarray(artifact["selected_indices"], dtype=np.int64)
     files = train_files(Path(args.data_root))
     frame = load_leading_time_ids(files[args.partition_index], args.n_time_ids)
@@ -81,19 +83,42 @@ def main() -> None:
     )
 
     # 推理侧路径：官方 API 语义，按 time_id 递增逐批喂 Model
-    model = strategy_main.Model()
+    model = strategy_main.Model(model_path=model_path)
     parts = []
     for time_id in sorted(frame["time_id"].unique()):
         parts.append(model.predict(frame[frame["time_id"] == time_id]))
     pred_infer = np.concatenate(parts)
 
-    assert pred_infer.shape == pred_train.shape, "两侧输出长度不一致"
+    if pred_infer.shape != pred_train.shape:
+        raise AssertionError("两侧输出长度不一致")
     max_diff = float(np.max(np.abs(pred_train.astype(np.float64) - pred_infer.astype(np.float64))))
     print(f"max |train - infer| = {max_diff:.3e}")
-    assert np.allclose(pred_train, pred_infer, atol=args.atol), (
-        f"训练与推理口径不一致（max diff {max_diff:.3e} > atol {args.atol:g}）——"
-        "有人改了一侧的预处理没改另一侧"
-    )
+    if not np.isfinite(max_diff) or max_diff > args.atol:
+        raise AssertionError(
+            f"训练与推理口径不一致（max diff {max_diff:.3e} > atol {args.atol:g}）——"
+            "有人改了一侧的预处理没改另一侧"
+        )
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(
+                {
+                    "model_path": str(model_path),
+                    "model_sha256": sha256_file(model_path),
+                    "partition": files[args.partition_index].name,
+                    "time_ids": int(frame["time_id"].nunique()),
+                    "rows": int(len(frame)),
+                    "atol": args.atol,
+                    "max_abs_diff": max_diff,
+                    "passed": True,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     print("OK: 训练与推理口径一致")
 
 

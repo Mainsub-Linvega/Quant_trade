@@ -62,12 +62,23 @@ BASE_CONFIG: dict[str, object] = {
     "design_basis": "raw_dev",  # 或 mean_dev：[截面均值 ‖ deviation]
     "market_alpha_ratio": 1.0,  # 择时分量的正则倍数，只在 mean_dev 下生效
     "cross_sectional_scaling": "none",  # 或 std：deviation 再除以截面标准差
+    # 历史 A/B 产物使用旧 LSQR 停止条件；锁死在配置中，避免求解器修复
+    # 被误算成某个建模旋钮的收益。新求解器应注册独立配置比较。
+    "ridge_tol": 1e-4,
+    "ridge_max_iter": 100,
 }
 
 CONFIGS: dict[str, dict[str, object]] = {
     "baseline": {},  # = 已提交的 walk_forward_rolling.json 那一版口径
+    "production_legacy": {"prediction_scale": 1.13},
+    "production_strict": {
+        "prediction_scale": 1.13,
+        "ridge_tol": 1e-8,
+        "ridge_max_iter": 2000,
+    },
     "scale_auto": {"prediction_scale": AUTO_INNER},
     "zero_intercept": {"zero_intercept": True},
+    "strict_solver": {"ridge_tol": 1e-8, "ridge_max_iter": 2000},
     # 固定 scale 扫描：与 baseline 共用同一次拟合 → 噪声地板 ~1e-5，最灵敏的一类 A/B。
     # 公榜两点定抛物线算出最优 scale ≈1.13，远大于上线的 0.6424，本地要复核。
     "scale075": {"prediction_scale": 0.75},
@@ -120,7 +131,7 @@ for _fc in (200, 323):
 # 影响 fit 的参数（决定能不能共用同一次拟合）。其余参数都是 fit 之后才起作用的
 # 旋钮：只差这些的两个臂共用同一个 artifact，Δ 就纯粹是那个旋钮的效果。
 FIT_KEYS = ("feature_count", "ridge_alpha", "design_basis", "market_alpha_ratio",
-            "cross_sectional_scaling")
+            "cross_sectional_scaling", "ridge_tol", "ridge_max_iter")
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,7 +148,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label", default=None,
                         help="A/B 模式的实验名，输出到 ab_<label>.{json,md}；多配置时必填。")
     parser.add_argument("--fold-offset", default="0",
-                        help="把 fold 边界整体右移 N 个采样 time_id；'half' = 半个验证段（P0-3）。")
+                        help="把 fold 边界整体右移 N 个采样 time_id；'half' = 预留范围的上限。"
+                             "基准与平移版都预留约半个旧验证段，保证折数与长度相同。")
     parser.add_argument("--holdout-phase", type=int, default=None,
                         help="相位隔离：额外加载 time_id %% sample_modulo == P 的行，"
                              "训练只用余数 0、验证只用余数 P。用来量「模型没见过的相位」上的表现 —— "
@@ -220,6 +232,9 @@ def estimate_inner_scale(
     fold_alpha: float,
     design_basis: str = "raw_dev",
     market_alpha_ratio: float = 1.0,
+    cross_sectional_scaling: str = "none",
+    ridge_tol: float = 1e-4,
+    ridge_max_iter: int = 100,
     phase_split: tuple[int, int, int] | None = None,
 ) -> tuple[float, dict[str, object]]:
     """在训练段内部再切一层 fold 来估 a*，绝不碰外层验证段。
@@ -256,6 +271,9 @@ def estimate_inner_scale(
         inner_alpha,
         design_basis=design_basis,
         market_alpha_ratio=market_alpha_ratio,
+        cross_sectional_scaling=cross_sectional_scaling,
+        ridge_tol=ridge_tol,
+        ridge_max_iter=ridge_max_iter,
     )
     raw_prediction = predict_array(
         artifact,
@@ -281,8 +299,9 @@ def estimate_inner_scale(
     return scale, diagnostics
 
 
-def sign_test_p(positive: int, total: int) -> float:
-    """双侧符号检验的 p 值（math.comb，不引 scipy）。"""
+def sign_test_p(positive: int, negative: int) -> float:
+    """双侧符号检验 p 值；零差值按定义剔除。"""
+    total = positive + negative
     if total == 0:
         return 1.0
     extreme = max(positive, total - positive)
@@ -334,11 +353,15 @@ def run_folds(
         v_target = data["target"][valid_set]
         v_weight = data["weight"][valid_set]
         v_time = data["time_id"][valid_set]
+        w64 = np.maximum(v_weight.astype(np.float64), 0.0)
+        y64 = v_target.astype(np.float64)
+        score_denominator = float(np.dot(w64, y64 * y64))
 
         fit_cache: dict[tuple, tuple[dict[str, object], np.ndarray]] = {}
         scale_cache: dict[tuple, tuple[float, dict[str, object]]] = {}
         scores: dict[str, float] = {}
         auto_scale_info: dict[str, object] = {}
+        fit_diagnostics: dict[str, object] = {}
 
         for label, config in arms:
             arm_started = time.perf_counter()
@@ -357,6 +380,7 @@ def run_folds(
                         int(config["feature_count"]), fold_alpha,
                         str(config["design_basis"]), float(config["market_alpha_ratio"]),
                         str(config["cross_sectional_scaling"]),
+                        float(config["ridge_tol"]), int(config["ridge_max_iter"]),
                         phase_split,
                     )
                 scale, diagnostics = scale_cache[fit_key]
@@ -380,6 +404,8 @@ def run_folds(
                     design_basis=str(config["design_basis"]),
                     market_alpha_ratio=float(config["market_alpha_ratio"]),
                     cross_sectional_scaling=str(config["cross_sectional_scaling"]),
+                    ridge_tol=float(config["ridge_tol"]),
+                    ridge_max_iter=int(config["ridge_max_iter"]),
                 )
                 gc.collect()
                 if use_fit_cache:
@@ -396,6 +422,12 @@ def run_folds(
                 scale, float(config["prediction_clip"]),
             )
             scores[label] = float(weighted_zero_mean_r2(v_target, prediction, v_weight))
+            fit_diagnostics[label] = {
+                "selected_indices": [int(value) for value in selected],
+                "ridge_n_iter": int(artifact.get("ridge_n_iter", -1)),
+                "ridge_tol": float(config["ridge_tol"]),
+                "ridge_max_iter": int(config["ridge_max_iter"]),
+            }
             print(
                 f"fold {index:2d} [{label}]: score={scores[label]:.8f} scale={scale:.6f} "
                 f"({time.perf_counter() - arm_started:.1f}s)",
@@ -414,7 +446,9 @@ def run_folds(
             "train_rows": int(train_set.sum()),
             "valid_rows": int(valid_set.sum()),
             "scores": scores,
+            "score_denominator": score_denominator,
             "auto_scale": auto_scale_info,
+            "fit_diagnostics": fit_diagnostics,
             "elapsed_seconds": float(time.perf_counter() - started),
         })
         del v_features, v_target, v_weight, v_time, train_set, valid_set
@@ -427,19 +461,30 @@ def run_folds(
 
 def write_single_report(
     output_dir: Path, fold_results: list[dict[str, object]], arm_label: str,
-    config: dict[str, object], n_folds: int, train_window: int, embargo: int,
-    sample_modulo: int, fold_alpha: float, offset: int,
+    config: dict[str, object], requested_n_folds: int, actual_n_folds: int,
+    train_window: int, embargo: int, sample_modulo: int, fold_alpha: float,
+    offset: int, reserved_offset: int,
 ) -> None:
     """单配置模式：保持本次改动前的 json/md 结构与数值不变。"""
     scores = np.array([float(f["scores"][arm_label]) for f in fold_results])
+    denominators = np.array([float(f["score_denominator"]) for f in fold_results])
     stats = summarise(scores)
+    pooled_score = (
+        float(np.average(scores, weights=denominators))
+        if float(denominators.sum()) > 0.0 else 0.0
+    )
     configuration = {
-        "n_folds": n_folds,
+        "validation_grid_version": 2,
+        "requested_n_folds": requested_n_folds,
+        "actual_n_folds": actual_n_folds,
         "train_window": train_window,
         "embargo": embargo,
+        "reserved_offset": reserved_offset,
         "sample_modulo": sample_modulo,
         "feature_count": config["feature_count"],
         "ridge_alpha": fold_alpha,
+        "ridge_tol": config["ridge_tol"],
+        "ridge_max_iter": config["ridge_max_iter"],
         "prediction_scale": config["prediction_scale"],
         "prediction_clip": config["prediction_clip"],
     }
@@ -451,6 +496,7 @@ def write_single_report(
         "configuration": configuration,
         "summary": {
             "mean_score": stats["mean"],
+            "pooled_score": pooled_score,
             "std_score": stats["std"],
             "se_score": stats["se"],
             "min_score": stats["min"],
@@ -467,6 +513,7 @@ def write_single_report(
                 "train_rows": f["train_rows"],
                 "valid_rows": f["valid_rows"],
                 "score": float(f["scores"][arm_label]),
+                "score_denominator": f["score_denominator"],
                 "elapsed_seconds": f["elapsed_seconds"],
             }
             for f in fold_results
@@ -480,7 +527,7 @@ def write_single_report(
         "# Rolling time_id-level walk-forward validation",
         "",
         f"train_window={train_window:,}, embargo={embargo}, "
-        f"sample_modulo={sample_modulo}, n_folds={n_folds}"
+        f"sample_modulo={sample_modulo}, n_folds={actual_n_folds}"
         + (f", fold_offset={offset:,}" if offset else ""),
         "",
         "| Fold | Train range | Valid range | Embargo | Score |",
@@ -494,12 +541,13 @@ def write_single_report(
         )
     lines += [
         "",
-        f"**Mean**: {stats['mean']:.8f}, **SE**: {stats['se']:.8f}, "
+        f"**Mean**: {stats['mean']:.8f}, **Pooled**: {pooled_score:.8f}, **SE**: {stats['se']:.8f}, "
         f"**Positive folds**: {int((scores > 0).sum())}/{len(scores)}",
     ]
     (output_dir / "walk_forward_rolling.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(json.dumps({
         "mean_score": stats["mean"],
+        "pooled_score": pooled_score,
         "se_score": stats["se"],
         "positive_folds": int((scores > 0).sum()),
         "total_folds": len(scores),
@@ -514,9 +562,10 @@ CAVEAT = (
 
 def write_ab_report(
     output_dir: Path, label: str, fold_results: list[dict[str, object]],
-    arms: list[tuple[str, dict[str, object]]], n_folds: int, train_window: int,
-    embargo: int, sample_modulo: int, fold_alpha_factor: float, offset: int,
-    chunk_size: int, use_fit_cache: bool, force: bool,
+    arms: list[tuple[str, dict[str, object]]], requested_n_folds: int,
+    actual_n_folds: int, train_window: int, embargo: int, sample_modulo: int,
+    fold_alpha_factor: float, offset: int, reserved_offset: int, chunk_size: int,
+    use_fit_cache: bool, force: bool,
 ) -> dict[str, object]:
     json_path = output_dir / f"ab_{label}.json"
     md_path = output_dir / f"ab_{label}.md"
@@ -529,6 +578,14 @@ def write_ab_report(
     arm_names = [name for name, _ in arms]
     per_arm = {
         name: np.array([float(f["scores"][name]) for f in fold_results]) for name in arm_names
+    }
+    denominators = np.array([float(f["score_denominator"]) for f in fold_results])
+    pooled_by_arm = {
+        name: (
+            float(np.average(values, weights=denominators))
+            if float(denominators.sum()) > 0.0 else 0.0
+        )
+        for name, values in per_arm.items()
     }
 
     paired: dict[str, object] = {}
@@ -549,7 +606,8 @@ def write_ab_report(
             "positive_folds": positive,
             "negative_folds": negative,
             "zero_folds": len(deltas) - positive - negative,
-            "sign_test_p": sign_test_p(positive, len(deltas)),
+            "sign_test_p": sign_test_p(positive, negative),
+            "pooled_delta": pooled_by_arm[name] - pooled_by_arm[baseline_label],
         }
 
     payload = {
@@ -558,17 +616,23 @@ def write_ab_report(
         "label": label,
         "baseline_arm": baseline_label,
         "configuration": {
-            "n_folds": n_folds,
+            "validation_grid_version": 2,
+            "requested_n_folds": requested_n_folds,
+            "actual_n_folds": actual_n_folds,
             "train_window": train_window,
             "embargo": embargo,
             "fold_offset": offset,
+            "reserved_offset": reserved_offset,
             "valid_chunk_size": chunk_size,
             "sample_modulo": sample_modulo,
             "fold_alpha_factor": fold_alpha_factor,
             "fit_cache": use_fit_cache,
         },
         "arms": {name: config for name, config in arms},
-        "absolute_reference": {name: summarise(values) for name, values in per_arm.items()},
+        "absolute_reference": {
+            name: {**summarise(values), "pooled_score": pooled_by_arm[name]}
+            for name, values in per_arm.items()
+        },
         "paired_delta": paired,
         "folds": fold_results,
         "caveat": CAVEAT,
@@ -578,7 +642,7 @@ def write_ab_report(
     lines = [
         f"# A/B paired rolling walk-forward: {label}",
         "",
-        f"n_folds={n_folds}, train_window={train_window:,}, embargo={embargo}, "
+        f"n_folds={actual_n_folds}, train_window={train_window:,}, embargo={embargo}, "
         f"sample_modulo={sample_modulo}, fold_offset={offset:,}, fit_cache={use_fit_cache}",
         "",
         f"baseline arm = `{baseline_label}`",
@@ -617,13 +681,13 @@ def write_ab_report(
         "",
         "## 绝对分（参考值，不作结论依据）",
         "",
-        "| Arm | mean | SE | min | max |",
-        "|---|---:|---:|---:|---:|",
+        "| Arm | mean | pooled | SE | min | max |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
     for name in arm_names:
         stats = summarise(per_arm[name])
         lines.append(
-            f"| `{name}` | {stats['mean']:.8f} | {stats['se']:.8f} | "
+            f"| `{name}` | {stats['mean']:.8f} | {pooled_by_arm[name]:.8f} | {stats['se']:.8f} | "
             f"{stats['min']:.8f} | {stats['max']:.8f} |"
         )
     auto_names = [
@@ -700,20 +764,29 @@ def main() -> None:
     if train_window is None:
         train_window = int(len(unique_time_ids) * 4 / 9)
 
-    chunk_size = rolling_fold_chunk_size(
+    unreserved_chunk = rolling_fold_chunk_size(
         len(unique_time_ids), args.n_folds, train_window, args.embargo
     )
+    reserved_offset = unreserved_chunk // 2
+    chunk_size = rolling_fold_chunk_size(
+        len(unique_time_ids), args.n_folds, train_window, args.embargo, reserved_offset
+    )
     if args.fold_offset == "half":
-        offset = chunk_size // 2
+        offset = reserved_offset
     else:
         offset = int(args.fold_offset)
+    if not 0 <= offset <= reserved_offset:
+        raise SystemExit(f"--fold-offset 必须在 0..{reserved_offset}，或使用 'half'")
     print(
         f"valid chunk_size={chunk_size:,} sampled time_ids "
-        f"(--fold-offset half → {chunk_size // 2:,}); using offset={offset:,}",
+        f"(--fold-offset half → {reserved_offset:,}); using offset={offset:,}",
         flush=True,
     )
 
-    folds = rolling_time_folds(unique_time_ids, args.n_folds, train_window, args.embargo, offset)
+    folds = rolling_time_folds(
+        unique_time_ids, args.n_folds, train_window, args.embargo,
+        offset, reserved_offset,
+    )
     print(f"generated {len(folds)} folds (embargo={args.embargo})", flush=True)
 
     # Scale alpha: match per-row regularisation to the production fit.
@@ -742,9 +815,9 @@ def main() -> None:
 
     if args.label:
         payload = write_ab_report(
-            output_dir, args.label, fold_results, arms, args.n_folds, train_window,
-            args.embargo, args.sample_modulo, fold_alpha_factor, offset, chunk_size,
-            not args.disable_fit_cache, args.force,
+            output_dir, args.label, fold_results, arms, args.n_folds, len(folds),
+            train_window, args.embargo, args.sample_modulo, fold_alpha_factor,
+            offset, reserved_offset, chunk_size, not args.disable_fit_cache, args.force,
         )
         if phase_split:
             # 报告写完后补记相位口径，免得日后拿它和不切相位的结果直接比
@@ -756,9 +829,9 @@ def main() -> None:
     else:
         label, config = arms[0]
         write_single_report(
-            output_dir, fold_results, label, config, args.n_folds, train_window,
-            args.embargo, args.sample_modulo,
-            float(config["ridge_alpha"]) * fold_alpha_factor, offset,
+            output_dir, fold_results, label, config, args.n_folds, len(folds),
+            train_window, args.embargo, args.sample_modulo,
+            float(config["ridge_alpha"]) * fold_alpha_factor, offset, reserved_offset,
         )
 
 

@@ -27,10 +27,41 @@ def train_files(data_root: Path) -> list[Path]:
     return sorted((data_root / "train").glob("*.parquet"))
 
 
-def load_time_sample(paths: list[Path], sample_modulo: int) -> tuple[np.ndarray, ...]:
-    """按 time_id % sample_modulo == 0 抽样加载若干分区，返回 (features, target, weight, time_id)。"""
+def time_sample_mask(
+    time_ids: np.ndarray,
+    sample_modulo: int,
+    *,
+    sampling: str = "periodic",
+    phase_period: int = 10,
+) -> np.ndarray:
+    """返回完整 time_id 截面的确定性采样掩码。
+
+    ``periodic`` 保持历史口径：只取 ``time_id % sample_modulo == 0``。
+    ``phase_balanced`` 在每个 phase 上各取约 ``1 / sample_modulo``，并让相邻
+    被选 time_id 尽量均匀分布；默认每 50 个 time_id 精确覆盖 10 个 phase 各一次。
+    """
     if sample_modulo <= 0:
         raise ValueError("sample modulo must be positive")
+    ids = np.asarray(time_ids, dtype=np.int64)
+    if sampling == "periodic":
+        return ids % sample_modulo == 0
+    if sampling != "phase_balanced":
+        raise ValueError(f"unknown time sampling: {sampling}")
+    if phase_period <= 0:
+        raise ValueError("phase period must be positive")
+    phase = ids % phase_period
+    cycle = ids // phase_period
+    return (cycle + phase) % sample_modulo == 0
+
+
+def load_time_sample(
+    paths: list[Path],
+    sample_modulo: int,
+    *,
+    sampling: str = "periodic",
+    phase_period: int = 10,
+) -> tuple[np.ndarray, ...]:
+    """确定性抽样加载若干分区，返回 (features, target, weight, time_id)。"""
 
     feature_parts: list[np.ndarray] = []
     target_parts: list[np.ndarray] = []
@@ -42,7 +73,12 @@ def load_time_sample(paths: list[Path], sample_modulo: int) -> tuple[np.ndarray,
         parquet_file = pq.ParquetFile(path)
         for batch in parquet_file.iter_batches(batch_size=120_000, columns=READ_COLUMNS):
             frame = batch.to_pandas()
-            mask = frame["time_id"].to_numpy(copy=False) % sample_modulo == 0
+            mask = time_sample_mask(
+                frame["time_id"].to_numpy(copy=False),
+                sample_modulo,
+                sampling=sampling,
+                phase_period=phase_period,
+            )
             if not mask.any():
                 continue
             feature_parts.append(frame.loc[mask, FEATURE_COLUMNS].to_numpy(dtype=np.float32, copy=True))
