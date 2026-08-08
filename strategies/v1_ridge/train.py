@@ -145,8 +145,11 @@ def fit_model(
     design_basis: str = "raw_dev",
     market_alpha_ratio: float = 1.0,
     cross_sectional_scaling: str = "none",
-    ridge_tol: float = 1e-4,
-    ridge_max_iter: int = 100,
+    # 与 CLI 默认（--ridge-tol / --ridge-max-iter）保持一致。历史值 1e-4/100 停得太早，
+    # 换个 BLAS 线程数就训出不同模型（coef 相对差 4.75e-04）——绕过 CLI 直接调本函数的
+    # 代码路径会悄悄退回那个不可复现的求解器，所以签名默认值也必须是严格档。
+    ridge_tol: float = 1e-8,
+    ridge_max_iter: int = 2000,
 ) -> tuple[dict[str, object], np.ndarray]:
     """拟合。design_basis="raw_dev"（默认）与历史口径逐位一致。
 

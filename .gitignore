@@ -21,7 +21,7 @@ nvim.log
 
 # 模型产物：小的（json/npz）入库以便复现公榜分数
 # 等上了 LightGBM/NN 再改成只记 hash
-strategies/**/model/*.txt
+# strategies/**/model/*.txt 这个第24行会挡住LGBM模型，故选择注释
 strategies/**/model/*.pt
 strategies/**/model/*.bin
 
