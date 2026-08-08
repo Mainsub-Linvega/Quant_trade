@@ -1,0 +1,82 @@
+{
+  "question": "LightGBM 在评测环境（4 核 / 12GB / 无 GPU）里推理跑得完吗？",
+  "why_blocking": "超时该 time_id 置 0。这条不过，前面三轮实验价值为零。",
+  "measurement_shape": "按真实形态：一个 time_id 一批（平均 15.0 行）、调用 500 次外推到 214,538 次。15 行是极小批，LightGBM 的每次调用固定开销可能盖过树遍历本身，所以不能拿大批量吞吐换算。",
+  "reference": {
+    "ridge_total_seconds": 87.0,
+    "ridge_per_call_ms": 0.4055225647670809
+  },
+  "configuration": {
+    "spec": {
+      "num_leaves": 63,
+      "min_data_frac": 0.0034285714285714284,
+      "learning_rate": 0.03,
+      "feature_fraction": 0.7,
+      "lambda_l2": 1.0
+    },
+    "min_data_in_leaf": 503,
+    "n_seeds": 3,
+    "omp_num_threads": "4",
+    "sample_modulo": 40,
+    "train_rows": 146615,
+    "columns": 201,
+    "model_text_bytes": 19371636,
+    "tree_shape": {
+      "mean_depth": 18.844074074074076,
+      "max_depth": 32,
+      "mean_leaves": 63.0,
+      "n_trees_total": 2700
+    },
+    "why_small_sample_is_ok": "推理成本只取决于模型形状（树数 × 叶子数，由参数控制）与调用形态（每批约 15 行 × 201 列），不取决于训练集大小。tree_shape 用来核验这个假设。"
+  },
+  "results": [
+    {
+      "n_trees": 100,
+      "n_seeds": 3,
+      "per_call_ms": 0.16379627599962987,
+      "extrapolated_total_seconds": 35.1405254604086,
+      "extrapolated_total_minutes": 0.5856754243401433,
+      "vs_ridge_x": 0.40391408575182297
+    },
+    {
+      "n_trees": 200,
+      "n_seeds": 3,
+      "per_call_ms": 0.25224218200310133,
+      "extrapolated_total_seconds": 54.11553324258136,
+      "extrapolated_total_minutes": 0.9019255540430227,
+      "vs_ridge_x": 0.6220176234779466
+    },
+    {
+      "n_trees": 300,
+      "n_seeds": 3,
+      "per_call_ms": 0.39386211402597837,
+      "extrapolated_total_seconds": 84.49839021890534,
+      "extrapolated_total_minutes": 1.4083065036484224,
+      "vs_ridge_x": 0.9712458645851189
+    },
+    {
+      "n_trees": 450,
+      "n_seeds": 3,
+      "per_call_ms": 0.6727900840051007,
+      "extrapolated_total_seconds": 144.3390390422863,
+      "extrapolated_total_minutes": 2.4056506507047715,
+      "vs_ridge_x": 1.6590694142791527
+    },
+    {
+      "n_trees": 600,
+      "n_seeds": 3,
+      "per_call_ms": 0.8385083639877848,
+      "extrapolated_total_seconds": 179.8919073932114,
+      "extrapolated_total_minutes": 2.9981984565535234,
+      "vs_ridge_x": 2.0677230734851886
+    },
+    {
+      "n_trees": 900,
+      "n_seeds": 3,
+      "per_call_ms": 1.2854730759863742,
+      "extrapolated_total_seconds": 275.78282277596475,
+      "extrapolated_total_minutes": 4.596380379599412,
+      "vs_ridge_x": 3.1699175031720084
+    }
+  ]
+}
