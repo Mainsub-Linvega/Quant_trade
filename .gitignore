@@ -16,6 +16,8 @@ nvim.log
 /outputs/*.zip
 /outputs/*.parquet
 /outputs/*_submission_*/
+# 流式聚合缓存（~1.2G，可由 experiments/mt_lagged.py 重新生成）
+/outputs/cache/
 
 # 模型产物：小的（json/npz）入库以便复现公榜分数
 # 等上了 LightGBM/NN 再改成只记 hash
