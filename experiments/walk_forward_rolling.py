@@ -61,6 +61,7 @@ BASE_CONFIG: dict[str, object] = {
     "zero_intercept": False,
     "design_basis": "raw_dev",  # 或 mean_dev：[截面均值 ‖ deviation]
     "market_alpha_ratio": 1.0,  # 择时分量的正则倍数，只在 mean_dev 下生效
+    "cross_sectional_scaling": "none",  # 或 std：deviation 再除以截面标准差
 }
 
 CONFIGS: dict[str, dict[str, object]] = {
@@ -107,10 +108,19 @@ for _fc in (200, 323):
                 "ridge_alpha": _alpha,
                 "prediction_scale": _scale,
             }
+            # 截面标准差归一化：固定容量的表示变换（列数不变），按 A/B 分解的规则
+            # 属于「不靠 A↑」那一类，迁移性预期更好。
+            CONFIGS[f"x{_fc}_{_atag}_s{int(_scale * 100):03d}"] = {
+                "feature_count": _fc,
+                "ridge_alpha": _alpha,
+                "prediction_scale": _scale,
+                "cross_sectional_scaling": "std",
+            }
 
 # 影响 fit 的参数（决定能不能共用同一次拟合）。其余参数都是 fit 之后才起作用的
 # 旋钮：只差这些的两个臂共用同一个 artifact，Δ 就纯粹是那个旋钮的效果。
-FIT_KEYS = ("feature_count", "ridge_alpha", "design_basis", "market_alpha_ratio")
+FIT_KEYS = ("feature_count", "ridge_alpha", "design_basis", "market_alpha_ratio",
+            "cross_sectional_scaling")
 
 
 def parse_args() -> argparse.Namespace:
@@ -346,6 +356,7 @@ def run_folds(
                         data, all_time_ids, train_ids, len(valid_ids), embargo,
                         int(config["feature_count"]), fold_alpha,
                         str(config["design_basis"]), float(config["market_alpha_ratio"]),
+                        str(config["cross_sectional_scaling"]),
                         phase_split,
                     )
                 scale, diagnostics = scale_cache[fit_key]
@@ -368,6 +379,7 @@ def run_folds(
                     fold_alpha,
                     design_basis=str(config["design_basis"]),
                     market_alpha_ratio=float(config["market_alpha_ratio"]),
+                    cross_sectional_scaling=str(config["cross_sectional_scaling"]),
                 )
                 gc.collect()
                 if use_fit_cache:

@@ -25,6 +25,9 @@ class Model:
         self.coef = np.asarray(payload["coef"], dtype=np.float32)
         self.prediction_scale = np.float32(payload["prediction_scale"])
         self.prediction_clip = np.float32(payload["prediction_clip"])
+        # 缺省视作 "none" —— 2026-08-08 之前训出来的模型 json 没有这个字段，
+        # 保持它们逐位可复现（公榜 0.00119088 / 0.00186805 都靠这条）。
+        self.cross_sectional_scaling = str(payload.get("cross_sectional_scaling", "none"))
         self.last_time_id: int | None = None
 
     def predict(self, test):
@@ -35,7 +38,7 @@ class Model:
 
         raw = test.loc[:, self.feature_columns].to_numpy(dtype=np.float32, copy=True)
         raw = apply_robust_transform(raw, self.lower, self.upper, self.center, self.scale)
-        deviation = single_time_deviation(raw)
+        deviation = single_time_deviation(raw, self.cross_sectional_scaling)
         return linear_predict(
             raw, deviation, self.intercept, self.coef, self.prediction_scale, self.prediction_clip
         )

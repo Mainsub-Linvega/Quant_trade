@@ -52,6 +52,9 @@ def parse_args() -> argparse.Namespace:
                         help="raw_dev=历史口径；mean_dev=[截面均值‖deviation]，可对择时分量单独加罚")
     parser.add_argument("--market-alpha-ratio", type=float, default=1.0,
                         help="择时分量（截面均值块）的正则倍数，只在 --design-basis mean_dev 下生效")
+    parser.add_argument("--cross-sectional-scaling", choices=["none", "std"], default="none",
+                        help="none=只去截面均值（历史口径）；std=再除以截面标准差，"
+                             "把时变的截面离散度归一化掉")
     parser.add_argument("--skip-validation", action="store_true")
     return parser.parse_args()
 
@@ -99,6 +102,7 @@ def make_design(
     selected: np.ndarray,
     design_basis: str = "raw_dev",
     market_scale: float = 1.0,
+    cross_sectional_scaling: str = "none",
 ) -> np.ndarray:
     """构造设计矩阵。两种基底张成同一个列空间，区别只在 ridge 怎么罚。
 
@@ -108,10 +112,14 @@ def make_design(
                raw = mean + deviation，所以两者可逆变换，见 fit_model 里的还原。
     """
     raw = features[:, selected].copy()
-    deviation = cross_sectional_deviation(raw, time_ids)
+    deviation = cross_sectional_deviation(raw, time_ids, cross_sectional_scaling)
     if design_basis == "raw_dev":
         return np.column_stack([raw, deviation]).astype(np.float32, copy=False)
     if design_basis == "mean_dev":
+        if cross_sectional_scaling != "none":
+            # 这条路径靠 raw − deviation 反推截面均值，deviation 一旦被标准差归一化，
+            # 这个等式就不成立了。mean_dev 已被 P2-1 否决，不值得为它再补一套推导。
+            raise ValueError("design_basis=mean_dev 不支持 cross_sectional_scaling≠none")
         market = raw - deviation  # 逐 time_id 的截面均值，广播回每一行
         if market_scale != 1.0:
             market *= np.float32(market_scale)
@@ -129,6 +137,7 @@ def fit_model(
     *,
     design_basis: str = "raw_dev",
     market_alpha_ratio: float = 1.0,
+    cross_sectional_scaling: str = "none",
 ) -> tuple[dict[str, object], np.ndarray]:
     """拟合。design_basis="raw_dev"（默认）与历史口径逐位一致。
 
@@ -144,7 +153,8 @@ def fit_model(
 
     features, preprocessing = robust_transform_fit(features)
     selected = select_features(features, target, weight, feature_count)
-    design = make_design(features, time_ids, selected, design_basis, market_scale)
+    design = make_design(features, time_ids, selected, design_basis, market_scale,
+                         cross_sectional_scaling)
     del features
 
     estimator = Ridge(
@@ -177,6 +187,7 @@ def fit_model(
         "ridge_alpha": float(ridge_alpha),
         "design_basis": design_basis,
         "market_alpha_ratio": float(market_alpha_ratio),
+        "cross_sectional_scaling": cross_sectional_scaling,
     }
     return artifact, selected
 
@@ -201,7 +212,9 @@ def predict_array(
         preprocessing["center"],
         preprocessing["scale"],
     )
-    deviation = cross_sectional_deviation(selected_features, time_ids)
+    deviation = cross_sectional_deviation(
+        selected_features, time_ids, str(artifact.get("cross_sectional_scaling", "none"))
+    )
     return linear_predict(
         selected_features,
         deviation,
@@ -238,6 +251,7 @@ def main() -> None:
         validation_artifact, selected = fit_model(
             x_train, y_train, w_train, t_train, args.feature_count, validation_alpha,
             design_basis=args.design_basis, market_alpha_ratio=args.market_alpha_ratio,
+            cross_sectional_scaling=args.cross_sectional_scaling,
         )
         del x_train, y_train, w_train, t_train
         x_valid, y_valid, w_valid, t_valid = load_time_sample([validation_path], args.sample_modulo)
@@ -286,6 +300,7 @@ def main() -> None:
     artifact, _ = fit_model(
         features, target, weight, time_ids, args.feature_count, args.ridge_alpha,
         design_basis=args.design_basis, market_alpha_ratio=args.market_alpha_ratio,
+            cross_sectional_scaling=args.cross_sectional_scaling,
     )
     if args.zero_intercept:
         artifact["intercept"] = 0.0
