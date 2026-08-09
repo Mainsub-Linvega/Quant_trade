@@ -1,5 +1,6 @@
 """生成私榜提交 zip：只读复制 + 校验 + 压缩，不修改策略源目录。
 
+入包内容：策略根目录下的所有 `*.py`（除 `train.py`）+ `model/`。
 校验项：main.py 在包根、Model 可实例化、predict 返回长度正确且全为有限浮点。
 
 用法：
@@ -21,6 +22,9 @@ from pathlib import Path
 import numpy as np
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# 训练侧模块，不进提交包（依赖 src/ 与 sklearn，评测端没有）
+EXCLUDED_MODULES = {"train.py"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,10 +78,15 @@ def main() -> None:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    # 只复制推理所需内容：main.py + features.py + model/ 产物。
-    # train.py 不进包 —— 它依赖 src/ 与 sklearn，评测端两者都没有。
-    for name in ("main.py", "features.py"):
-        shutil.copy2(strategy_dir / name, staging / name)
+    # 复制策略根目录下的所有 .py（不递归）+ model/ 产物。
+    # 排除 train.py —— 它依赖 src/ 与 sklearn，评测端两者都没有。
+    # 用「除 train.py 外全收」而不是写死清单，是因为写死过一次就漏过一次：
+    # v3_hybrid 加了 lgbm_numpy.py，而清单还停在 (main.py, features.py)。
+    sources = sorted(path for path in strategy_dir.glob("*.py")
+                     if path.name not in EXCLUDED_MODULES)
+    assert any(path.name == "main.py" for path in sources), "策略目录里没有 main.py"
+    for path in sources:
+        shutil.copy2(path, staging / path.name)
     model_dir = strategy_dir / "model"
     if model_dir.is_dir():
         shutil.copytree(model_dir, staging / "model")

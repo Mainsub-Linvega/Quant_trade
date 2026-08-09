@@ -45,9 +45,13 @@ for _path in (str(_REPO_ROOT), str(_REPO_ROOT / "experiments"),
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from train import robust_transform_fit, select_features        # v1_ridge 的生产实现
 from features import apply_robust_transform, cross_sectional_deviation
-from lgbm_xs import load_rows                                   # 流式加载（带 asset_id）
+
+# ⚠️ 训练侧还要 v1_ridge 的 `train.robust_transform_fit` / `select_features` 与
+# `experiments.lgbm_xs.load_rows`，但它们**只在 main() 里 import**。原因：本文件被
+# `import train` 加载时模块名就叫 `train`，模块级写 `from train import …` 会导入自己
+# （当脚本跑时模块名是 `__main__`，所以以前一直没暴露）。
+# 顺带的好处是 `predict_array` 只依赖 numpy + features.py，离线用不必拖进整套训练栈。
 
 # 全部来自 lgbm_blend_unweighted，预注册、不在这里搜
 SPEC = {"num_leaves": 63, "learning_rate": 0.03,
@@ -55,6 +59,82 @@ SPEC = {"num_leaves": 63, "learning_rate": 0.03,
 MIN_DATA_FRAC = 12000 / 3_500_000        # lgbm_blend 里 min_data_in_leaf 与行数的比例
 NUM_ITERATION = 160                       # 逐折 best_iteration 的折均（范围 44~302）
 BLEND_WEIGHT = 0.5                        # blend50：ê 里 LGBM 占一半，不拟合权重
+
+
+def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
+                  asset_ids: np.ndarray, backend: str = "lightgbm") -> np.ndarray:
+    """离线全量口径的预测 —— 与 `main.Model.predict` 数学等价，但一次吃全部 time_id。
+
+    存在的理由有两个：
+
+    1. **`scripts/check_consistency.py` 的参照物**。在线路径是逐 time_id 喂进来的，
+       离线这条是整块 `cross_sectional_deviation` 分组去均值 —— 两条浮点求和顺序不同。
+       08-08 就是在这个对比里抓到 `max|Δ|=1.138e-03`（工程坑第 7 条）。
+    2. 想在本地给 v3_hybrid 算分时，不必绕 `timeseries_api` 的顺序 runner。
+
+    ⚠️ 与 `main.py` 的口径必须逐行对应：市场分量走**无权**截面均值、
+    ê 投影成无权零均值、限幅只在最后做一次。改了一侧就得改另一侧 —— 所以才有那个检查。
+    """
+    model_dir = Path(model_dir)
+    ridge = json.loads((model_dir / "baseline_model.json").read_text(encoding="utf-8"))
+    meta = json.loads((model_dir / "hybrid_meta.json").read_text(encoding="utf-8"))
+
+    starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
+    counts = np.diff(np.r_[starts, len(time_ids)])
+
+    def group_mean(values: np.ndarray) -> np.ndarray:
+        """逐 time_id 的无权截面均值，广播回每一行。"""
+        return np.repeat(np.add.reduceat(values, starts) / counts, counts)
+
+    def stats(artifact: dict) -> tuple[np.ndarray, ...]:
+        return tuple(np.asarray(artifact[name], dtype=np.float32)
+                     for name in ("lower", "upper", "center", "scale"))
+
+    # ---- 岭回归的原始预测（不乘 scale、不 clip）
+    selected = np.asarray(ridge["selected_indices"], dtype=np.int64)
+    raw = full_features[:, selected].copy()
+    lower, upper, center, scale = stats(ridge)
+    apply_robust_transform(raw, lower, upper, center, scale)
+    dev = cross_sectional_deviation(
+        raw, time_ids, str(ridge.get("cross_sectional_scaling", "none")))
+    ridge_raw = (np.float32(ridge["intercept"])
+                 + np.column_stack([raw, dev]) @ np.asarray(ridge["coef"], dtype=np.float32))
+    del raw, dev
+
+    market = group_mean(ridge_raw)
+    e_ridge = ridge_raw - market
+
+    # ---- LightGBM 的截面分量，投影成无权零均值
+    lgbm_indices = np.array([int(name.split("_")[1]) for name in meta["lgbm_features"]])
+    lraw = full_features[:, lgbm_indices].copy()
+    lower, upper, center, scale = stats(meta)
+    apply_robust_transform(lraw, lower, upper, center, scale)
+    design = np.column_stack([cross_sectional_deviation(lraw, time_ids),
+                              asset_ids.astype(np.float32)])
+    del lraw
+    paths = [model_dir / name for name in meta["lgbm_model_files"]]
+    if backend == "lightgbm":
+        import lightgbm as lgb
+        e_lgbm = np.zeros(len(design), dtype=np.float64)
+        for path in paths:
+            e_lgbm += lgb.Booster(model_file=str(path)).predict(
+                design, num_iteration=int(meta["num_iteration"]))
+    elif backend == "numpy":
+        from lgbm_numpy import NumpyForest
+        forest = NumpyForest.from_files(paths, int(meta["num_iteration"]))
+        e_lgbm = np.concatenate([
+            forest.predict_sum(design[start:start + count],
+                               asset_ids[start:start + count].astype(np.int64))
+            for start, count in zip(starts, counts)])
+    else:
+        raise ValueError(f"未知 backend {backend!r}")
+    e_lgbm /= len(paths)
+    e_lgbm -= group_mean(e_lgbm)
+
+    weight = float(meta["blend_weight"])
+    blended = market + (1.0 - weight) * e_ridge + weight * e_lgbm
+    clip = np.float32(meta["prediction_clip"])
+    return np.clip(blended * np.float32(meta["prediction_scale"]), -clip, clip)
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,6 +156,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     import lightgbm as lgb
+    from train import robust_transform_fit, select_features    # v1_ridge 的生产实现
+    from lgbm_xs import load_rows                              # 流式加载（带 asset_id）
 
     args = parse_args()
     model_dir = Path(args.model_dir)

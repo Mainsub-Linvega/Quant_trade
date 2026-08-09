@@ -1,12 +1,14 @@
 {
   "strategy": "v3_hybrid",
+  "backend": "lightgbm",
+  "model_path": "/home/mainsub/Documents/Quant_trade/strategies/v3_hybrid/model/baseline_model.json",
+  "model_sha256": "c23a8cfbc591a4cf1baf02a383ffd8fe7111743b37d02672608b6b690a4b2249",
+  "partition": "train_partition_008.parquet",
   "time_ids": 500,
   "rows": 7500,
   "atol": 1e-06,
   "max_abs_diff": 4.421869946591439e-08,
-  "passed": true,
-  "max_abs_diff_before_fix": 0.001138,
-  "fix": "main.py 的 LGBM 分支改用 cross_sectional_deviation（与训练端逐位一致），不再用数学等价但求和顺序不同的 single_time_deviation。树是阶跃函数：输入差一个 float32 ulp（4.77e-07）会翻枝，输出跳到 2.85e-03。岭回归分支继续用 single_time_deviation，保持与 v1_ridge 生产路径逐位相同。",
   "online_pred_std": 0.029062722707806514,
-  "online_pred_absmax": 0.18557479066031454
+  "online_pred_absmax": 0.18557479066031454,
+  "passed": true
 }
