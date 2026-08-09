@@ -77,6 +77,35 @@ PUBLIC_MODELS: dict[str, list[tuple[float, float]]] = {
     ],
 }
 
+# ⚠️ `replace`（blend_weight=1.0）只有**一个**公榜点，两点法解不了 —— 但它不需要两点。
+#
+# A 是 f 的线性泛函，而 f 关于 blend_weight 精确线性
+# （f(w) = f(0) + 2w·(f(0.5) − f(0))，3750 行真实数据实测恒等式 max|Δ|=3.9e-08）
+# ⟹ A(w) 是一次函数。w=0 恰好**逐位**就是 strict_ridge（m̂ + ê_ridge），w=0.5 是 v3_hybrid，
+# 两组已花掉的公榜点把整条 A(w) 钉死 ⟹ A(1) 是精确值，一个点就能反解 B。
+# 详见 NOTES「整条 blend_weight 曲线是免费解出来的」。
+ONE_POINT_MODELS: dict[str, dict[str, Any]] = {
+    "v3_hybrid_replace": {
+        "blend_weight": 1.0,
+        "point": (1.16, 0.0024872338),        # ledger 2026-08-09 keep 行
+        "note": "blend_weight 1.0；A 由 strict_ridge 与 v3_hybrid 线性外推，精确",
+    },
+}
+
+# A(w) = A(0) + 2w·(A(0.5) − A(0))，两个基点
+BLEND_WEIGHT_BASE = ("strict_ridge", "v3_hybrid")
+
+
+def a_of_blend_weight(solved: dict[str, tuple[float, float, float]], weight: float) -> float:
+    """由两个基点线性外推出任意 blend_weight 的 A（精确，不是近似）。"""
+    base, half = (solved[name] for name in BLEND_WEIGHT_BASE)
+    return base[0] + 2.0 * weight * (half[0] - base[0])
+
+
+def b_from_one_point(scale: float, score: float, a_value: float) -> float:
+    """A 已知时，一个 (scale, score) 点反解 B：Score = 2aA − a²B。"""
+    return (2.0 * scale * a_value - score) / scale ** 2
+
 # 换模型轴的本地对照：产物文件 → 该臂的 delta_A_pct / delta_B_pct（读产物，不重算）
 LOCAL_COMPONENT_SOURCE = ("lgbm_blend_unweighted.json", "blend50_xs_loose")
 
@@ -135,6 +164,11 @@ def model_axis() -> dict[str, Any]:
     所以这是近似对读。但 ΔA 比值 1.07 与正则轴的 2.22 差一倍以上，不是口径噪声能解释的。
     """
     solved = {name: solve_ab(points) for name, points in PUBLIC_MODELS.items()}
+    # 一点法的模型：A 由 blend_weight 线性外推（精确），B 反解
+    for name, spec in ONE_POINT_MODELS.items():
+        a_value = a_of_blend_weight(solved, spec["blend_weight"])
+        scale, score = spec["point"]
+        solved[name] = (a_value, b_from_one_point(scale, score, a_value), 0.0)
     before, after = solved["strict_ridge"], solved["v3_hybrid"]
     public = {
         "before": {"model": "strict_ridge", "A": before[0], "B": before[1],
@@ -163,7 +197,13 @@ def model_axis() -> dict[str, Any]:
     else:
         print(f"跳过换模型轴的本地一侧：{name} 不存在", flush=True)
 
-    return {"public": public, "local": local,
+    table = {
+        name: {"A": values[0], "B": values[1], "best_scale": values[0] / values[1],
+               "peak": values[0] ** 2 / values[1], "ic": (values[0] ** 2 / values[1]) ** 0.5,
+               "solved_from": "两点法" if name in PUBLIC_MODELS else "一点法（A 由线性外推精确定出）"}
+        for name, values in solved.items()
+    }
+    return {"public": public, "local": local, "all_models": table,
             "local_over_public_dA": (local["dA"] / public["dA"]) if local else float("nan"),
             "local_over_public_dB": (local["dB"] / public["dB"]) if local else float("nan")}
 
@@ -306,17 +346,21 @@ def main() -> None:
     comp_pub = component["public"]
     lines += [
         "",
-        "换模型轴的两条公榜抛物线（每条由 `PUBLIC_MODELS` 里的两个 scale 点解出）：",
+        "## 公榜上解出来的所有模型",
         "",
-        "| 模型 | A | B | 最优 scale | 峰值 | IC |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| 模型 | A | B | 最优 scale | 峰值 | IC | 怎么解的 |",
+        "|---|---:|---:|---:|---:|---:|---|",
     ]
-    for side in ("before", "after"):
-        entry = comp_pub[side]
+    for name, entry in sorted(component["all_models"].items(), key=lambda kv: kv[1]["peak"]):
         lines.append(
-            f"| {entry['model']} | {entry['A']:.8f} | {entry['B']:.8f} | "
-            f"{entry['best_scale']:.4f} | {entry['peak']:.8f} | {entry['peak']**0.5:.5f} |"
-        )
+            f"| {name} | {entry['A']:.8f} | {entry['B']:.8f} | {entry['best_scale']:.4f} | "
+            f"{entry['peak']:.8f} | {entry['ic']:.5f} | {entry['solved_from']} |")
+    lines += [
+        "",
+        "⭐ **`v3_hybrid_replace` 只花了一次额度**：A 关于 `blend_weight` 精确线性，",
+        "`strict_ridge`（w=0）与 `v3_hybrid`（w=0.5）两组已花掉的点把 A(1) 钉死，一点反解 B 即可。",
+        "这条把「每个模型两次额度」的规矩，在同一个线性族里降到了一次。",
+    ]
     lines += [
         "",
         f"判据 `2·ΔA > ΔB`：2×{comp_pub['dA']*100:.2f}% = {2*comp_pub['dA']*100:.2f}% "
