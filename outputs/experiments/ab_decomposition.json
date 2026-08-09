@@ -34,6 +34,28 @@
       ]
     ]
   },
+  "public_models": {
+    "strict_ridge": [
+      [
+        1.13,
+        0.00187232
+      ],
+      [
+        0.92,
+        0.001805154
+      ]
+    ],
+    "v3_hybrid": [
+      [
+        0.9,
+        0.0021381
+      ],
+      [
+        1.3,
+        0.0022857726
+      ]
+    ]
+  },
   "rulers": [
     {
       "ruler": "公榜",
@@ -242,5 +264,60 @@
       }
     }
   ],
-  "local_over_public_dA": 2.2241795032177323
+  "local_over_public_dA": 2.2241795032177323,
+  "local_over_public_dB": 0.8949503067142368,
+  "change_axes": {
+    "regularisation": {
+      "name": "调正则强度（alpha 2e6 → 5e5）",
+      "public_dA": 0.12317956249931972,
+      "public_dB": 0.5617449067157172,
+      "public_peak_ratio": 0.807771054153211,
+      "local_dA": 0.2739734581263145,
+      "local_dB": 0.5027337765603914,
+      "local_over_public_dA": 2.2241795032177323,
+      "local_over_public_dB": 0.8949503067142368
+    },
+    "new_component": {
+      "name": "加一个结构不同的模型分量（LGBM 截面块 blend50）",
+      "public_dA": 0.14111443360065334,
+      "public_dB": 0.06199458459823104,
+      "public_peak_ratio": 1.226128804662747,
+      "local_dA": 0.15130740579029403,
+      "local_dB": 0.027772495046798563,
+      "local_over_public_dA": 1.0722319604703674,
+      "local_over_public_dB": 0.4479825976217772
+    }
+  },
+  "model_axis": {
+    "public": {
+      "before": {
+        "model": "strict_ridge",
+        "A": 0.0016496030858938436,
+        "B": 0.0014533502812437047,
+        "best_scale": 1.1350347587796905,
+        "peak": 0.0018723568406797517,
+        "residual": 6.505213034913027e-19
+      },
+      "after": {
+        "model": "v3_hybrid",
+        "A": 0.0018823858910256431,
+        "B": 0.0015434501282051306,
+        "best_scale": 1.219596186897635,
+        "peak": 0.0022957506549647812,
+        "residual": 1.734723475976807e-18
+      },
+      "dA": 0.14111443360065334,
+      "dB": 0.06199458459823104,
+      "peak_ratio": 1.226128804662747
+    },
+    "local": {
+      "source": "lgbm_blend_unweighted.json",
+      "arm": "blend50_xs_loose",
+      "dA": 0.15130740579029403,
+      "dB": 0.027772495046798563,
+      "peak_ratio": 1.2894836076830678
+    },
+    "local_over_public_dA": 1.0722319604703674,
+    "local_over_public_dB": 0.4479825976217772
+  }
 }

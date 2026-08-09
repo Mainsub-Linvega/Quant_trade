@@ -15,6 +15,15 @@
 分歧**完全在 ΔA** —— 本地一致高估「放松正则能让信号变强多少」约 2.4 倍。
 由此得到的工作规则见 NOTES.md「A/B 分解」一节。
 
+⚠️ 2026-08-09 扩写：折扣系数**不是普适常数，它取决于改动的性质**。
+本脚本现在算两条轴：
+
+- **正则强度轴**（alpha 2e6→5e5）：原有的公榜 vs 五把本地尺子，ΔA 比值约 2.2
+- **换模型轴**（严格岭回归 → v3_hybrid，加一个结构不同的 LGBM 截面分量）：
+  公榜两组两点法 vs `lgbm_blend_unweighted` 的 `blend50_xs_loose`，ΔA 比值约 1.1
+
+两条轴差了一倍，所以「本地打 2.2 折」只对第一类改动成立。
+
 用法：.venv/bin/python experiments/ab_decomposition.py
 输出：outputs/experiments/ab_decomposition.{json,md}
 """
@@ -41,17 +50,35 @@ ALPHA_TAGS = {"a8": 250_000, "a4": 500_000, "a2": 1_000_000,
 
 # 公榜实测点。每条都对应 experiments/ledger.csv 里的一次提交。
 # 同一个模型的多个 scale 点即可解出该模型的 A、B。
+#
+# ⚠️ 下面这两组都是 **legacy 求解器**（LSQR tol 1e-4/100，sha e2bec9a9…）那一版的点，
+# 它们定义的是「正则强度轴」。严格求解器 c23a8cfb… 与 v3_hybrid 的点在 PUBLIC_MODELS 里。
 PUBLIC_POINTS: dict[int, list[tuple[float, float]]] = {
     2_000_000: [
         (0.5, 0.00128602),                    # ledger 2026-08-08 rollback 行
         (0.6424065227113341, 0.00151886),     # ledger 2026-08-07 keep 行
-        (1.13, 0.00186805),                   # ledger 2026-08-08 keep 行（当前上线）
+        (1.13, 0.00186805),                   # ledger 2026-08-08 keep 行
     ],
     500_000: [
         (0.8, 0.00150852),                    # ledger 2026-08-08 rollback 行
         (1.2, 0.0011693833),                  # ledger 2026-08-08 rollback 行（CSV 按比例缩放）
     ],
 }
+
+# 「换模型轴」的公榜点，按模型分组。两点即可解出该模型自己的 A、B、最优 scale、峰值。
+PUBLIC_MODELS: dict[str, list[tuple[float, float]]] = {
+    "strict_ridge": [
+        (1.13, 0.00187232),                   # ledger 2026-08-08 keep 行（严格求解器 c23a8cfb）
+        (0.92, 0.0018051540),                 # ledger 2026-08-09 keep 行（同模型，CSV 按比例缩放）
+    ],
+    "v3_hybrid": [
+        (0.90, 0.00213810),                   # ledger 2026-08-09 keep 行
+        (1.30, 0.0022857726),                 # ledger 2026-08-09 keep 行（自 base 0.856 缩放）
+    ],
+}
+
+# 换模型轴的本地对照：产物文件 → 该臂的 delta_A_pct / delta_B_pct（读产物，不重算）
+LOCAL_COMPONENT_SOURCE = ("lgbm_blend_unweighted.json", "blend50_xs_loose")
 
 # 本地尺子：标签 → (产物文件, 一句话说明)
 LOCAL_RULERS = [
@@ -95,6 +122,50 @@ def local_ab(path: Path, feature_count: int = 200) -> dict[int, tuple[float, flo
         for alpha, points in grouped.items()
         if len(points) >= 2
     }
+
+
+def model_axis() -> dict[str, Any]:
+    """「换模型轴」：严格岭回归 → v3_hybrid。公榜两组两点法 vs 本地装车实验。
+
+    公榜那侧两个模型各自解出 A、B；本地那侧直接读 lgbm_blend_unweighted 的 ΔA/ΔB
+    （那是同一次实验里 baseline 臂与 blend50 臂的配对结果，不在这里重算）。
+
+    ⚠️ 保留项：本地的 baseline 是逐折拟合的 ridge（内层选 alpha / phase_balanced），
+    公榜的 baseline 是生产 ridge（alpha 2e6 / modulo 5 periodic）——**两个基准不是同一个**，
+    所以这是近似对读。但 ΔA 比值 1.07 与正则轴的 2.22 差一倍以上，不是口径噪声能解释的。
+    """
+    solved = {name: solve_ab(points) for name, points in PUBLIC_MODELS.items()}
+    before, after = solved["strict_ridge"], solved["v3_hybrid"]
+    public = {
+        "before": {"model": "strict_ridge", "A": before[0], "B": before[1],
+                   "best_scale": before[0] / before[1], "peak": before[0] ** 2 / before[1],
+                   "residual": before[2]},
+        "after": {"model": "v3_hybrid", "A": after[0], "B": after[1],
+                  "best_scale": after[0] / after[1], "peak": after[0] ** 2 / after[1],
+                  "residual": after[2]},
+        "dA": after[0] / before[0] - 1.0,
+        "dB": after[1] / before[1] - 1.0,
+    }
+    public["peak_ratio"] = public["after"]["peak"] / public["before"]["peak"]
+
+    name, arm = LOCAL_COMPONENT_SOURCE
+    path = EXPERIMENTS / name
+    local: dict[str, Any] | None = None
+    if path.exists():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        comparison = payload["comparisons"][arm]
+        local = {
+            "source": name, "arm": arm,
+            "dA": comparison["delta_A_pct"] / 100.0,
+            "dB": comparison["delta_B_pct"] / 100.0,
+            "peak_ratio": 1.0 + comparison["relative_pct"] / 100.0,
+        }
+    else:
+        print(f"跳过换模型轴的本地一侧：{name} 不存在", flush=True)
+
+    return {"public": public, "local": local,
+            "local_over_public_dA": (local["dA"] / public["dA"]) if local else float("nan"),
+            "local_over_public_dB": (local["dB"] / public["dB"]) if local else float("nan")}
 
 
 def main() -> None:
@@ -146,14 +217,42 @@ def main() -> None:
         float(np.mean([e["delta"]["dA"] for e in locals_]) / public["delta"]["dA"])
         if locals_ else float("nan")
     )
+    discount_b = (
+        float(np.mean([e["delta"]["dB"] for e in locals_]) / public["delta"]["dB"])
+        if locals_ else float("nan")
+    )
+    component = model_axis()
 
     payload = {
         "identity": "Score(a) = 2aA − a²B；A = 峰值/a*，B = 峰值/a*²",
         "meaning": {"A": "Σw·y·f/Σw·y²，信号对齐程度", "B": "Σw·f²/Σw·y²，预测方差"},
         "compared": {"reference_alpha": REFERENCE_ALPHA, "compare_alpha": COMPARE_ALPHA},
         "public_points": {str(k): v for k, v in PUBLIC_POINTS.items()},
+        "public_models": {k: v for k, v in PUBLIC_MODELS.items()},
         "rulers": rulers,
         "local_over_public_dA": discount,
+        "local_over_public_dB": discount_b,
+        "change_axes": {
+            "regularisation": {
+                "name": "调正则强度（alpha 2e6 → 5e5）",
+                "public_dA": public["delta"]["dA"], "public_dB": public["delta"]["dB"],
+                "public_peak_ratio": 1.0 / public["delta"]["peak_ratio"],
+                "local_dA": float(np.mean([e["delta"]["dA"] for e in locals_])) if locals_ else float("nan"),
+                "local_dB": float(np.mean([e["delta"]["dB"] for e in locals_])) if locals_ else float("nan"),
+                "local_over_public_dA": discount,
+                "local_over_public_dB": discount_b,
+            },
+            "new_component": {
+                "name": "加一个结构不同的模型分量（LGBM 截面块 blend50）",
+                "public_dA": component["public"]["dA"], "public_dB": component["public"]["dB"],
+                "public_peak_ratio": component["public"]["peak_ratio"],
+                "local_dA": component["local"]["dA"] if component["local"] else float("nan"),
+                "local_dB": component["local"]["dB"] if component["local"] else float("nan"),
+                "local_over_public_dA": component["local_over_public_dA"],
+                "local_over_public_dB": component["local_over_public_dB"],
+            },
+        },
+        "model_axis": component,
     }
     (EXPERIMENTS / "ab_decomposition.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -189,16 +288,58 @@ def main() -> None:
         "- **分歧完全在 ΔA** → 本地一致高估「放松正则能让信号变强多少」，",
         f"  倍数 = 本地 ΔA 均值 / 公榜 ΔA = **{discount:.2f}**",
         "",
-        "## 由此得到的工作规则",
+        "## ⭐ 但这个倍数不是普适常数 —— 它取决于改动的性质",
         "",
-        "> 靠**增加信号对齐（A↑）**起作用的改动，本地测出的收益要打约 "
-        f"{discount:.1f} 折再信；",
+        "2026-08-09 拿到第二条轴：把 LGBM 的截面分量 blend50 进来（严格岭回归 → v3_hybrid），",
+        "公榜两组两点法给出的 ΔA 与本地几乎一样 —— **没有 2.2 倍的高估**。",
+        "",
+        "| 改动性质 | 公榜 ΔA | 本地 ΔA | **ΔA 比值** | 公榜 ΔB | 本地 ΔB | ΔB 比值 | 公榜峰值比 |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for axis in payload["change_axes"].values():
+        lines.append(
+            f"| {axis['name']} | {axis['public_dA']*100:+.1f}% | {axis['local_dA']*100:+.1f}% | "
+            f"**{axis['local_over_public_dA']:.2f}** | {axis['public_dB']*100:+.1f}% | "
+            f"{axis['local_dB']*100:+.1f}% | {axis['local_over_public_dB']:.2f} | "
+            f"{axis['public_peak_ratio']:.3f} |"
+        )
+    comp_pub = component["public"]
+    lines += [
+        "",
+        "换模型轴的两条公榜抛物线（每条由 `PUBLIC_MODELS` 里的两个 scale 点解出）：",
+        "",
+        "| 模型 | A | B | 最优 scale | 峰值 | IC |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for side in ("before", "after"):
+        entry = comp_pub[side]
+        lines.append(
+            f"| {entry['model']} | {entry['A']:.8f} | {entry['B']:.8f} | "
+            f"{entry['best_scale']:.4f} | {entry['peak']:.8f} | {entry['peak']**0.5:.5f} |"
+        )
+    lines += [
+        "",
+        f"判据 `2·ΔA > ΔB`：2×{comp_pub['dA']*100:.2f}% = {2*comp_pub['dA']*100:.2f}% "
+        f"vs {comp_pub['dB']*100:.2f}% → "
+        f"**{'通过' if 2*comp_pub['dA'] > comp_pub['dB'] else '不通过'}**，"
+        f"峰值 {comp_pub['peak_ratio']:.4f} 倍（{(comp_pub['peak_ratio']-1)*100:+.1f}%）。",
+        "",
+        "⚠️ **保留项**：换模型轴的本地基准是逐折拟合的 ridge（内层选 alpha / phase_balanced），",
+        "公榜基准是生产 ridge（alpha 2e6 / modulo 5 periodic）——**两个基准不是同一个**，",
+        "所以这是近似对读。但 ΔA 比值差一倍以上是量级差异，不是口径噪声能解释的。",
+        "",
+        "## 由此得到的工作规则（2026-08-09 修订）",
+        "",
+        "> 靠**增加信号对齐（A↑）**起作用的改动，本地收益要打折再信 —— **折多少看改动性质**：",
+        f"> 调正则强度 / 特征数这类「拧紧拧松同一个模型」的，打约 {discount:.1f} 折；",
+        f"> 加一个结构不同的模型分量这类，约 {payload['change_axes']['new_component']['local_over_public_dA']:.1f} 折（几乎不打）。",
+        ">",
         "> 靠**降低预测方差（B↓）**起作用的改动，大致 1:1 迁移。",
         ">",
-        "> 增加容量（更多列 / 更弱正则 / 更深的树）主要通过 A↑ 起作用 → 一律重罚。",
+        "> 增加容量（更多列 / 更弱正则 / 更深的树）主要通过 A↑ 起作用 → 在第一类里一律重罚。",
         "",
-        "⚠️ 这个倍数目前只由**两个 alpha、两次公榜双点测量**支撑，是量级参考不是精确系数。",
-        "每多一次公榜两点测量都应回填 `PUBLIC_POINTS` 重算。",
+        "⚠️ 每条轴目前都只有**一个**公榜观测点（正则轴两个 alpha、换模型轴两个模型），",
+        "是量级参考不是精确系数。每多一次公榜两点测量都应回填 `PUBLIC_POINTS` / `PUBLIC_MODELS` 重算。",
         "",
         "## 各尺子说明",
         "",
@@ -218,7 +359,12 @@ def main() -> None:
     for entry in rulers:
         d = entry["delta"]
         print(f"{entry['ruler']:<10}{d['dA']*100:>+9.1f}%{d['dB']*100:>+9.1f}%{d['peak_ratio']:>9.3f}")
-    print(f"\n本地 ΔA / 公榜 ΔA = {discount:.2f}")
+    print(f"\n正则强度轴：本地 ΔA / 公榜 ΔA = {discount:.2f}")
+    axis = payload["change_axes"]["new_component"]
+    print(f"换模型轴  ：本地 ΔA / 公榜 ΔA = {axis['local_over_public_dA']:.2f} "
+          f"（公榜 {axis['public_dA']*100:+.1f}% vs 本地 {axis['local_dA']*100:+.1f}%）")
+    print(f"           公榜峰值 {comp_pub['before']['peak']:.8f} → {comp_pub['after']['peak']:.8f} "
+          f"（{(comp_pub['peak_ratio']-1)*100:+.1f}%）")
     print(f"报告 → {EXPERIMENTS / 'ab_decomposition.md'}")
 
 
