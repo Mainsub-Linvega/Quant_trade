@@ -29,6 +29,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-partitions", type=int, default=4)
     parser.add_argument("--sample-modulo", type=int, default=5)
     parser.add_argument("--validation-sample-modulo", type=int, default=10)
+    parser.add_argument(
+        "--sampling", choices=["periodic", "phase_balanced"], default="periodic",
+        help="periodic 只取 time_id %% modulo == 0（相位 0 和 5）；phase_balanced 同预算覆盖全部 "
+             "10 个相位。⚠️ 默认必须保持 periodic —— 生产模型 c23a8cfb 是这么训的，改了就不是它了。"
+             "测试集是连续 time_id（全部 10 个相位），所以这里存在已知的口径错配，见 ROADMAP 第 2 项")
     # 2026-08-08：alpha 回滚到 2e6。滚动网格曾指向 5e5（两个采样口径都 8/10 折同号），
     # 但公榜用两点定抛物线做峰值对峰值的对比，5e5 比 2e6 低 19.2%（0.00150896 vs 0.00186804）。
     # 相位隔离与长验证跨度实验都未复现这次反转；当前只能确认公榜时期分布与训练期不同，
@@ -266,7 +271,7 @@ def main() -> None:
     if not args.skip_validation:
         print("validation: train on earlier partitions and score the final partition", flush=True)
         x_train, y_train, w_train, t_train = load_time_sample(
-            validation_train_paths, args.validation_sample_modulo
+            validation_train_paths, args.validation_sample_modulo, sampling=args.sampling
         )
         # Ridge's loss is a sum over rows, so keep alpha proportional to the
         # sampled row count when validation uses a sparser training sample.
@@ -278,6 +283,8 @@ def main() -> None:
             ridge_tol=args.ridge_tol, ridge_max_iter=args.ridge_max_iter,
         )
         del x_train, y_train, w_train, t_train
+        # ⚠️ 验证段**故意不跟 --sampling 走**：要量「训练相位覆盖」的效果，
+        # 评估口径必须固定，否则两个臂连评的行都不是同一批。
         x_valid, y_valid, w_valid, t_valid = load_time_sample([validation_path], args.sample_modulo)
         if auto_scale:
             raw_prediction = predict_array(
@@ -320,7 +327,8 @@ def main() -> None:
 
     final_paths = files[-args.train_partitions :]
     print("final fit: " + ", ".join(path.name for path in final_paths), flush=True)
-    features, target, weight, time_ids = load_time_sample(final_paths, args.sample_modulo)
+    features, target, weight, time_ids = load_time_sample(
+        final_paths, args.sample_modulo, sampling=args.sampling)
     artifact, _ = fit_model(
         features, target, weight, time_ids, args.feature_count, args.ridge_alpha,
         design_basis=args.design_basis, market_alpha_ratio=args.market_alpha_ratio,
@@ -342,6 +350,11 @@ def main() -> None:
             "validation_metric": "weighted_zero_mean_r2",
         }
     )
+    # 只在非默认时才写这个键：默认 periodic 下产物与生产模型 c23a8cfb **逐字节相同**，
+    # 「重训能复现 sha」那条验收（NOTES 线程数复现性一节）不能被一个新字段搞坏。
+    # 非 periodic 的产物则自带标识，不会和生产模型混淆。
+    if args.sampling != "periodic":
+        artifact["sampling"] = str(args.sampling)
     model_dir.mkdir(parents=True, exist_ok=True)
     output_path = model_dir / "baseline_model.json"
     output_path.write_text(json.dumps(artifact, indent=2), encoding="utf-8")
