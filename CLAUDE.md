@@ -37,8 +37,12 @@
   拧同一个模型的紧密度约 2.2，加一个结构不同的分量只有 1.07（见 NOTES A/B 分解一节）
 - 「本地绝对分 ≈ 公榜分」这条**已撤回** —— 那次吻合很可能是巧合（见 NOTES.md）。
   **有效的是逐折配对 Δ，不是绝对分。**
-- 影响「拟合紧密度」的参数（alpha / 特征数 / 树深 / 轮数 / 学习率）本地结论一律不可信，
-  改用公榜两点法比峰值。**公榜 8/23 到期。**
+- 调参先分类（ROADMAP「参数怎么调」一节）：**①纯后处理**（scale / blend 权重）
+  解析求解、**0 次额度**；**②拟合紧密度**（alpha / 特征数 / 树深 / 轮数 / 学习率）
+  本地量反、只能公榜判；**③结构性改动**本地 ΔA 约 1:1 迁移、本地尺子能信。
+  **公榜 8/23 到期。**
+- `experiments/variant_submission.py` 出变体 CSV（改临时副本的 meta，不碰生产 model/）；
+  `experiments/public_csv_fingerprints.py` 存历史 CSV 的指纹 + Gram 矩阵（删 CSV 前必跑）
 - 提交台账见 `experiments/ledger.csv`；实验产物见 `outputs/experiments/`
 
 ## 评分
