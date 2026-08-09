@@ -24,6 +24,16 @@ strategies/v1_ridge/     # 自包含：整个目录 = 提交包内容
   main.py                #   交付推理件，只依赖 numpy + 同目录 features.py
   model/baseline_model.json
 
+strategies/v3_hybrid/    # ★ 现在上线的：冻结的生产岭回归 + LGBM 截面分量 blend50
+  features.py            #   与 v1_ridge 逐字节相同的拷贝（提交包不能跨目录 import）
+  train.py               #   只训 LGBM 部分；predict_array() 是离线全量口径的参照物
+  main.py                #   交付推理件；lightgbm 主路径 + numpy 兜底 + 开机对拍自检
+  lgbm_numpy.py          #   ★ 纯 numpy 树遍历，只依赖 numpy，随包提交
+  model/                 #   baseline_model.json + hybrid_meta.json + 3 个 lgbm_seed*.txt
+
+⚠️ 三个策略目录里的模块都叫 main / train / features，跨目录 import 必然拿错，
+   见工程坑第 11 条。
+
 experiments/             # 离线实验脚本 + 台账
   walk_forward.py        #   训练窗口对比（分区级 3 折，绝对分口径，已被下面那个取代）
   walk_forward_rolling.py#   ★ P0 主力：time_id 滚动多折 + 配对 A/B + 噪声地板
@@ -91,36 +101,58 @@ OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 .venv/bin/python experiments/mt_predict
 # 相位诊断：训练相位 vs 评估相位拆开报分
 OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 .venv/bin/python experiments/phase_diagnostic.py
 
-# 本地全量顺序推理（≈21.7 万次 predict 调用，约 2 分钟）→ 公榜交这个 CSV
+# 本地全量顺序推理（21.4 万次 predict 调用）→ 公榜交这个 CSV
+#   v3_hybrid 实测 4.93 分钟（lightgbm 主路径）/ 5.44 分钟（numpy 兜底）/ 0 超时
 .venv/bin/python timeseries_api/run_timeseries_api.py \
-  --data-root data --strategy-dir strategies/v1_ridge --output outputs/submission.csv
+  --data-root data --strategy-dir strategies/v3_hybrid --output outputs/submission.csv
 
-# 私榜提交包（zip，不是公榜用的）
-.venv/bin/python scripts/make_submission.py --strategy v1_ridge
+# 私榜提交包（zip，不是公榜用的）。包内 = 策略根目录所有 *.py（除 train.py）+ model/
+.venv/bin/python scripts/make_submission.py --strategy v3_hybrid
+
+# 训练/推理一致性（改预处理后必跑）。v3_hybrid 可以指定树后端分别验
+.venv/bin/python scripts/check_consistency.py --strategy v3_hybrid --n-time-ids 500
+.venv/bin/python scripts/check_consistency.py --strategy v3_hybrid --backend numpy --n-time-ids 500
+
+# 两个树后端逐位对拍 + 防呆用例
+.venv/bin/python -m unittest tests.test_lgbm_numpy -v
+
+# 公榜两点法的折扣系数 / 交付 scale 的账
+.venv/bin/python experiments/ab_decomposition.py
+.venv/bin/python experiments/scale_transfer.py
 ```
 
-## 当前模型参数（v1, 2026-08-08 更新）
+## 当前模型参数（2026-08-09 核对过代码）
+
+**上线的是 `v3_hybrid`** = 冻结的生产岭回归（下表）+ LightGBM 截面分量 blend50。
 
 ```
-算法              加权 Ridge（lsqr），400 设计列 = 200 原始 + 200 截面去均值
+岭回归            加权 Ridge（lsqr, tol 1e-8 / max_iter 2000），400 设计列 = 200 原始 + 200 截面去均值
 train_partitions  4        ← walk_forward 推荐 4，已统一
 sample_modulo     5        ← 训练抽样；先别改
-prediction_clip   0.5      ← 实际从未触发（预测最大 0.354，要 scale>1.41 才会碰到）
+prediction_clip   0.5
 intercept         ~-0.004  ← 置 0 在单折和滚动配对两套框架下都测不出差异
 NaN 预处理        nanquantile ← 修复了 NaN→0 污染统计量的 bug
+LGBM              num_leaves 63 / lr 0.03 / feature_fraction 0.7 / lambda_l2 1.0 /
+                  min_data_in_leaf 9070，160 轮 × 3 种子，目标 e = y − 无权截面均值(y)
 ```
 
-|  | 旧版（公榜 0.00151886） | **现在的默认值（2026-08-08 落地）** |
+| | `v1_ridge/train.py` 默认值 | `baseline_model.json`（生产） |
 |---|---|---|
 | feature_count | 200 | 200 |
-| ridge_alpha | 2e6 | **5e5** |
-| prediction_scale | 0.6424 | **0.8** |
-| 滚动 10 折 @modulo 10（仅相位 0） | 0.00152539 | **0.00175314**（+14.9%） |
-| 滚动 10 折 @modulo 5（相位 0+5） | 0.00083224 | **0.00102767**（+23.5%） |
+| ridge_alpha | **2e6** | **2e6** |
+| prediction_scale | **1.13** | **1.13** |
 
-依据 `ab_shrinkgrid` / `ab_shrinkgrid_m5`：两个采样口径都单调指向 alpha=5e5（各 8/10 折同号）；
-最优 scale 本地给 0.759（modulo 10）/ 0.820（modulo 5），公榜给更高，取中间的 0.8，
-精确值留给公榜两点定抛物线。限幅体检：raw 幅度 0.367，clip(0.5) 要到 scale≈1.362 才生效。
+⚠️ **08-08 一度把默认值改成 alpha 5e5 / scale 0.8（本地网格推荐），公榜实测峰值反而低
+19.2%，当天就回滚了。** 下面那张「滚动 10 折」的对比表说的是被回滚掉的那个配置 ——
+它是「本地与公榜量反」那条主线的**证据**，不是现在的配置：
+
+| 滚动尺子 | alpha 2e6 / scale 0.6424 | alpha 5e5 / scale 0.8（已回滚） |
+|---|---|---|
+| 10 折 @modulo 10（仅相位 0） | 0.00152539 | 0.00175314（+14.9%） |
+| 10 折 @modulo 5（相位 0+5） | 0.00083224 | 0.00102767（+23.5%） |
+
+两个本地采样口径都单调指向 alpha=5e5（各 8/10 折同号），公榜说反话。详见「本地与公榜在
+alpha 上量反了」一节。**v3_hybrid 的 `prediction_scale` 另算，见「交付 scale」一节。**
 
 ⚠️「323 特征略优」那条旧结论**已被联合网格否定**，见下面「过度收缩」一节。
 
@@ -251,11 +283,73 @@ n=10 的符号检验功效很低（10/10 才 p=0.002，7/10 只有 p=0.34），�
 
 | 模型 | 公榜最优 scale | 峰值 | IC |
 |---|---:|---:|---:|
-| 200 特征 / alpha=2e6 | 1.1317 | **0.00186805** | 0.04322 |
-| 200 特征 / alpha=5e5 | 0.8139 | 0.00150896 | 0.03885 |
+| 200 特征 / alpha=2e6（legacy 求解器） | 1.1317 | 0.00186805 | 0.04322 |
+| 200 特征 / alpha=5e5（legacy 求解器） | 0.8139 | 0.00150896 | 0.03885 |
+| 严格求解器 `c23a8cfb`（200/2e6） | 1.1350 | 0.00187236 | 0.04327 |
+| **v3_hybrid（严格岭回归 + LGBM 截面 blend50）** | **1.2196** | **0.00229575** | **0.04791** |
 
 限幅检查：测试集 raw 幅度 0.354（alpha 2e6）/ 0.425（alpha 5e5），
 clip(0.5) 分别自 scale 1.411 / 1.178 起生效，超过就不再是二次式。
+hybrid 的 clip 自 **1.435** 起生效，两个点（0.90 / 1.30）都安全。
+
+### ⭐「一个点 + B 的无权近似」外推 → 已被证实可用（2026-08-09）
+
+08-08 只有严格模型一个公榜点时，用「B 按**无权**近似重算」外推它的峰值。
+那条建立在「测试集权重近似均匀」上，而**测试集没有 `weight` 列，当时无从验证**。
+08-09 交了第二点 scale 0.92，两点解出真值：
+
+| | 预测（一个点 + 无权近似） | 实测（两点） | 误差 |
+|---|---:|---:|---:|
+| 最优 scale | 1.1359 | 1.1350 | 0.08% |
+| 峰值 | 0.00187237 | 0.00187236 | **0.00%** |
+
+**结论：这个近似可用。** 以后只有一个点时，可以靠它外推出相当准的峰值估计 ——
+但它只省一次额度，**要精确比较两个模型仍然老老实实交两点**。
+
+## 🏁 公榜裁决：v3_hybrid 峰值 0.00229575，较严格岭回归 +22.6%（2026-08-09）
+
+两条抛物线各交两点解出来的，峰值 `A²/B` 与 scale 无关，**这是唯一能公平比较两个模型的量**。
+
+| 模型 | A | B | 最优 scale | 峰值 | IC |
+|---|---:|---:|---:|---:|---:|
+| 严格岭回归 `c23a8cfb` | 0.00164960 | 0.00145335 | 1.1350 | 0.00187236 | 0.04327 |
+| **v3_hybrid** | 0.00188239 | 0.00154345 | 1.2196 | **0.00229575** | **0.04791** |
+
+ΔA **+14.11%** / ΔB **+6.20%**，判据 `2·ΔA > ΔB`（28.22% > 6.20%）通过 →
+峰值 **1.2261 倍**。**LightGBM 截面分量这条线是真的。**
+
+已交的最好成绩是 hybrid @ scale 1.30 的 **0.0022857726**（不是峰值，峰值在 1.2196）。
+公榜第一 0.00520002（IC 0.07211）—— 我们到了它的 **44%**。
+
+用掉的四次提交（ledger 2026-08-08/09）：strict @1.13 / strict @0.92 /
+hybrid @0.90 / hybrid @1.30。四份 CSV 都 0 行触 clip → 二次式精确成立。
+
+**期望值仍然要压住**：截面块这条线基本吃完了（它总共只占 28% 方差 / 15% 的分）。
+到 0.0052 还差 2.3 倍，再往上需要新的信号来源。
+
+### 交付 scale：一处口径错误，纠正后结论翻了（`scale_transfer`，2026-08-09）
+
+比较「本地最优 scale」和「公榜最优 scale」时，**两边必须是同一个模型**。
+08-09 我一度拿岭回归的本地最优 **0.759** 对公榜的 1.1350，算出比值 1.50 ——
+但 0.759 是 **alpha=5e5** 那个配置的最优 scale，生产模型是 alpha=2e6。
+**小 alpha 抬高 B、压低 `a*=A/B`**，那个比值里混进了「换模型」的成分。
+
+生产 alpha 下五把尺子给 0.865~0.973（均值 **0.912**），比值是 **1.244**。
+hybrid 走同一次实验里的臂间比换算（1.120，公榜对应比 1.075，差 4% 互相印证）
+得本地最优 ≈ **1.022**，公榜 1.2196 —— **只差 1.19 倍**。
+
+结论因此从「差 1.42 倍，要好好想」变成：
+
+| 取值 | 最坏能拿到峰值的 |
+|---|---:|
+| 1.022（本地最优）/ 1.112（调和平均）/ 1.220（公榜最优） | 96~99% |
+| **0.856（`hybrid_meta.json` 现值）** | **91.1%** |
+
+**真正该动的是那个 0.856**（训练脚本里的本地占位值），不是「本地还是公榜」之争。
+判据与保留项见 ROADMAP 第 6 项与 `outputs/experiments/scale_transfer.md`。
+
+**教训**：`a* = A/B` 同时被「模型有多准」和「预测幅度多大」决定，
+拿两个不同正则强度的模型比 a*，比的是后者不是前者。
 
 ## ⚠️ 本地与公榜在 alpha 上量反了（未解决）
 
@@ -397,16 +491,58 @@ alpha 从 2e6 降到 5e5 时：
 
 **ΔB 五把本地尺子与公榜几乎一致 —— 分歧完全在 ΔA。** 本地 ΔA 均值 / 公榜 ΔA = **2.22**。
 
-### 由此得到的工作规则
+### ⭐⭐ 2.2 折不是普适常数 —— 它取决于改动的性质（2026-08-09 修订）
 
-> 靠**增加信号对齐（A↑）**起作用的改动，本地收益打约 **2.2 折**再信；
-> 靠**降低预测方差（B↓）**的改动，大致 1:1 迁移。
-> 增加容量（更多列 / 更弱正则 / 更深的树）主要通过 A↑ 起作用 → 一律重罚。
+08-09 拿到了第二条轴：把 LGBM 的截面分量 blend50 进来（严格岭回归 → v3_hybrid），
+公榜两组两点法给出的 ΔA **与本地几乎一样，没有 2.2 倍的高估**。
+
+| 改动性质 | 公榜 ΔA | 本地 ΔA | **ΔA 比值** | 公榜 ΔB | 本地 ΔB | ΔB 比值 |
+|---|---:|---:|---:|---:|---:|---:|
+| 调正则强度（alpha 2e6→5e5） | +12.3% | +27.4% | **2.22** | +56.2% | +50.3% | 0.89 |
+| 加一个结构不同的模型分量（LGBM 截面块 blend50） | +14.1% | +15.1% | **1.07** | +6.2% | +2.8% | 0.45 |
+
+**为什么会这样（一个说得通的解释，未验证）**：拧 alpha 是在**同一个假设空间里**
+挪紧密度，本地那点样本外优势主要是拟合噪声，换个时期就没了；
+而加一个结构不同的分量是**换了假设空间**，学到的是别的东西，迁移性天然更好。
+
+⚠️ **两条保留项，别把这张表当定论**：
+
+1. **换模型轴的两个基准不是同一个**。本地基准是逐折拟合的 ridge（内层选 alpha /
+   phase_balanced），公榜基准是生产 ridge（alpha 2e6 / modulo 5 periodic），是近似对读。
+   但 2 倍以上是量级差异，不是口径噪声能解释的。
+2. **ΔB 那一列反过来了**：换模型轴上公榜 ΔB（+6.2%）比本地（+2.8%）**大**一倍多，
+   而正则轴上两者接近（0.89）。「ΔB 1:1 迁移」这条只由正则轴支撑，
+   在换模型轴上**只有一个点、方向还相反** —— 见下面 `replace` 那条预测为什么分叉。
+
+### 由此得到的工作规则（2026-08-09 修订）
+
+> 靠**增加信号对齐（A↑）**起作用的改动，本地收益要打折再信 —— **折多少看改动性质**：
+> 「拧紧拧松同一个模型」（alpha / 特征数 / 树深 / 轮数）打约 **2.2 折**；
+> 「加一个结构不同的分量」约 **1.1 折**（几乎不打）。
+> 靠**降低预测方差（B↓）**的改动，在正则轴上大致 1:1 迁移；换模型轴上未定。
 
 判据算术：`峰值 = A²/B`，所以峰值涨 ⟺ **`2·ΔA > ΔB`**。折扣时只折 ΔA。
 
-⚠️ 这个 2.22 目前只由两个 alpha、两次公榜双点测量支撑，是量级参考不是精确系数。
-每多一次公榜两点测量都应回填 `experiments/ab_decomposition.py` 的 `PUBLIC_POINTS` 重算。
+⚠️ 每条轴目前都只有**一个**公榜观测点，是量级参考不是精确系数。每多一次公榜两点测量
+都应回填 `experiments/ab_decomposition.py` 的 `PUBLIC_POINTS` / `PUBLIC_MODELS` 重算。
+
+### 这条修订立刻改变了一个判断：`replace` 可能反而更好
+
+`lgbm_blend` 当初按 2.2 折判 `blend50`（折后 +11.1%）优于 `replace`（+9.8%）。
+但 blend50 的公榜实测是 **+22.6%**，落在原始 +28.9% 与折后 +11.1% 之间 ——
+**折扣过严**。`replace` 的本地原始收益是 +42.2%（ΔA +30.3% / ΔB +17.9%），
+按新系数重算，结论取决于 ΔB 怎么迁移，而那正是只有一个点的量：
+
+（公榜 ΔA 一律取 30.26% / 1.07 = **+28.22%**，只有 ΔB 的假设不同）
+
+| ΔB 迁移假设 | 依据 | 公榜 ΔB | `replace` 预测峰值 | vs blend50 的 0.00229575 |
+|---|---|---:|---:|---:|
+| 加性偏置（本地 +2.78% → 公榜 +6.20%，差 +3.4pp） | 那一个点 | +21.3% | 0.00254 | **+10.5%** |
+| 乘性（÷0.448） | 同一个点 | +40.0% | 0.00220 | −4.2% |
+
+**两个假设给出相反结论 → 这正是值得花 2 次公榜额度去分的东西。**
+`replace` 就是 `hybrid_meta.json` 里 `blend_weight` 从 0.5 改成 1.0，**不需要重训**
+（同一套 LGBM 模型）。做完顺带给 ΔB 那一半添第二个支点。
 
 ## 截面标准差归一化 → ❌ 不采用（`ab_xsstd`，2026-08-08）
 
@@ -575,22 +711,90 @@ predict_total 277.2 s = 4.62 分钟（岭回归 87 s）| mean 1.292 ms/次 | max
 （岭回归单独就 0.406 ms/次）。**结论不变，但那个数测的不是端到端。**
 
 **训练/推理一致性 4.42e-08**（门限 1e-6），证据 `consistency_v3_hybrid.json`。
-第一次是 1.138e-03 不通过，原因见工程坑第 8 条。
+第一次是 1.138e-03 不通过，原因见工程坑第 7 条。
+
+⚠️ 08-08 那份 json 是**用一段没入库的临时代码跑出来的**（`check_consistency.py` 当时写死
+只认 v1_ridge）—— 又是伤疤清单第 2 条那种「报告与代码无机械联系」。
+08-09 补上了：`check_consistency.py --strategy v3_hybrid` 与
+`strategies/v3_hybrid/train.py:predict_array`（离线全量口径的参照物）。
+重跑复现到 **`4.421869946591439e-08` 逐位相同**，确认补的这条路和当初那段临时代码是同一个计算。
 
 四个公榜 CSV（全部 3,217,458 行 / row_id 逐位对齐 / 无 NaN·inf / 0 行触 clip）：
 
-| 文件 | scale | max\|pred\| |
+| 文件 | scale | max\|pred\| | 公榜 |
+|---|---:|---:|---:|
+| `submission_strict_scale113.csv` | 1.13 | 0.399 | 0.00187232 |
+| `submission_strict_scale092.csv` | 0.92 | 0.325 | 0.0018051540 |
+| `submission_hybrid_scale090.csv` | 0.90 | 0.314 | 0.00213810 |
+| `submission_hybrid_scale130.csv` | 1.30 | 0.453 | **0.0022857726** |
+
+hybrid 的 clip(0.5) 自 scale **1.435** 起生效，四个点都安全 → 二次式精确成立。
+四条一起解出上面「公榜裁决」那节的两条抛物线。
+
+⚠️ `submission_hybrid_base0856.csv` 是 scale 0.856 的**原始产物**（未缩放、全精度），
+另外两个 hybrid CSV 都是从它按比例缩放来的。它是端到端回归测试的黄金基准，别删。
+
+### 私榜依赖：已解除（2026-08-09）
+
+**主办方确认评测环境有 lightgbm**，`make_submission.py` 打出来的包可以直接用。
+
+残余风险只剩一条：模型文本是 **`version=v4`**（LightGBM 4.x 格式），
+评测端「有 lightgbm」不等于「有 4.x」，3.3.x 读 v4 文件会报错或误读。
+这**不是 `import lightgbm` 失败**，`try: import` 兜不住。
+所以 `main.py` 仍然带了一条纯 numpy 的树遍历兜底 + 开机对拍自检，见下一节。
+
+## 纯 numpy 树遍历 `lgbm_numpy.py`（2026-08-09）
+
+### 后端怎么选
+
+`Model.__init__` **无条件**建一份 numpy 森林（0.09 s / 2.9 MB），然后：
+
+```
+try:  import lightgbm → 构造 3 个 Booster → 拿固定种子的 15 行合成输入对拍
+      一致            → backend = "lightgbm"
+      任何一步失败 / 对拍不过 → backend = "numpy"，打一行日志
+显式 backend="lightgbm" 则不许降级，对拍不过直接抛（离线校验用）
+```
+
+**自检包住的是「import + Booster 构造 + 一次预测」整段**，不是只包 import ——
+`version=v4` 被旧版读错属于「import 成功但结果不对」，只有对拍拦得住。
+合成输入而不是真数据：提交包里没有数据，这个自检必须在评测机上也能跑。
+
+### 三条让它不慢的做法（都实测过）
+
+1. **叶子自环**：叶子的左右孩子都指向自己、阈值设 `+inf` → 「跑满最大深度」就等于
+   「所有行都到了叶子」，遍历里不需要任何 mask 或分支
+2. **分类分裂编成合成列**：唯一的 categorical 是 `asset_id`，每个不同的位集合编成一列
+   （2424 个分裂只有 1901 个不同位集合），列值 `0.0`=命中 / `1.0`=不命中、阈值 `0.5`
+   —— `x <= 0.5` 恰好等价于「命中走左」。整条遍历只剩一种比较。
+   合成列只由 asset 决定，所以设计矩阵按 **asset 槽位**布局，`__init__` 里一次填好
+3. **按深度排序 + 逐层收窄**：第 k 层只需处理「深度 > k」的树，排序后那是一个**连续后缀**
+   → 每层的活动视图预先切好，运行期零切片开销（0.885 → 0.588 ms/次）
+
+### 实测（官方 runner 全量测试集，两条路径各跑一遍）
+
+| 项 | 主路径 lightgbm | 兜底 纯 numpy |
 |---|---:|---:|
-| `submission_strict_scale113.csv` | 1.13 | 0.399（已交，0.00187232） |
-| `submission_strict_scale092.csv` | 0.92 | 0.325 |
-| `submission_hybrid_scale090.csv` | 0.90 | 0.314 |
-| `submission_hybrid_scale130.csv` | 1.30 | 0.453 |
+| `predict_total` | 295.6 s = **4.93 分钟** | 326.2 s = **5.44 分钟** |
+| `mean_predict` | 1.378 ms/次 | 1.520 ms/次 |
+| `max_predict` | 0.796 s | **0.686 s** |
+| `model_init` | 0.475 s（含建 numpy 森林 + 自检） | 0.099 s |
+| 超时 | 0 | 0 |
+| 只算树那一段（15 行一批） | 0.15~0.21 ms/次 | 0.588 ms/次 |
 
-hybrid 的 clip(0.5) 自 scale **1.435** 起生效，两个点都安全 → 二次式精确成立。
+**兜底路径只贵 10%**（+0.51 分钟），远低于我按树的耗时外推的 +2 分钟 ——
+因为端到端的大头是特征管线不是模型（工程坑第 8 条），树那段慢 3 倍摊到全程只剩 10%。
 
-⚠️ **私榜依赖未解决**：`make_submission.py` 只打包 `main.py` + `features.py` + `model/`，
-**包里没有 lightgbm**。公榜交 CSV 不受影响，私榜 zip 要么装进 lightgbm、
-要么写纯 numpy 树遍历（3.1 MB 纯文本模型，可行）。
+**逐位复现已交 CSV**（3,217,458 行，与 08-08 的 `submission_hybrid_base0856.csv` 对比）：
+
+| 路径 | 结果 |
+|---|---|
+| lightgbm | **逐字节相同** —— 这次重构没动过生产路径 |
+| 纯 numpy | `max\|Δ\| = 2.08e-16`、`max\|Δ\|/std = 6.4e-15`（判据 1e-9），5.9% 的行差最后一两个 bit |
+
+差异纯粹来自 480 个 double 的求和顺序，**没有一个分裂翻枝**。
+其它证据：`tests/test_lgbm_numpy.py`（2.1 万行随机 + 真实 test 分区 + 防呆用例，6 个全过）；
+`check_consistency.py --strategy v3_hybrid --backend {lightgbm,numpy}` 两条都是 4.422e-08。
 
 ## 🚨 阻塞项已清：LGBM 推理成本（`lgbm_inference_cost`，2026-08-08）
 
@@ -914,6 +1118,34 @@ README 把它当烟测旋钮是有误导性的。烟测进程 exit 137 = SIGKILL
    `iter_batches` 把每个分区的每一批完整读出来（12 万行 × 328 列）再按 mask 丢弃，
    所以「调小采样率省内存」只对留下来的 numpy 数组成立，对读取阶段无效 ——
    实测 modulo 40 只留 33 万行（0.40 GB），但加载后 RSS 已到 **4.10 GB**（pyarrow 内存池不及时归还）。
+10. **自己写树推理时，「差不多的语义」= 错的语义。** LightGBM 文本模型有四处细节
+    必须照 C++ 源码抄，任何一处想当然都会在分裂边界上翻枝：
+
+    | 细节 | 正确语义 |
+    |---|---|
+    | 数值分裂方向 | `x <= threshold` 走**左**（不是 `<`） |
+    | 缺失值 | `decision_type` 的 bit2-3 是 missing_type；本模型全是 `None` → NaN 先当 **0.0** 再比 |
+    | 分类分裂 | `int(fval)` **截断取整**，负数直接走右；再查 `cat_threshold` 位集合，**命中走左** |
+    | shrinkage | `leaf_value` **已经乘过** learning_rate，`boost_from_average` 也已烘进 Tree=0 → 直接求和，别再乘一遍 |
+
+    还有一条容易漏：`threshold` 是以 `%.17g` 写出的 double，**必须按 float64 解析并比较**；
+    float32 输入交给 LightGBM 时它内部 `static_cast<double>`，所以两侧都在 double 上比才逐位一致。
+11. **每个策略目录都有一个叫 `main` / `train` / `features` 的模块 —— 靠 `sys.path` 顺序
+    import 它们迟早会拿到错的那个。** 08-09 一天之内踩了三次：
+
+    | 现场 | 症状 |
+    |---|---|
+    | `check_consistency.py` import v3_hybrid 的 `train` | 它模块级写着 `from train import …`（本意是 v1_ridge 的），**结果 import 了自己** → 循环导入报错。当脚本跑时模块名是 `__main__`，所以以前一直没暴露 |
+    | `unittest discover` 跑整个 tests/ | 先跑的用例已经把 v1_ridge 的 `main` 塞进 `sys.modules`，后面的用例拿到它 → `Model.__init__() got an unexpected keyword argument` |
+    | v3_hybrid 的 `features` | 与 v1_ridge 的**恰好逐字节相同**，所以拿错了也不报错 —— 最危险的那种 |
+
+    修法：跨策略加载一律用 `importlib.util.spec_from_file_location` **按文件路径**加载并给唯一模块名；
+    策略内部只在函数体里 import 另一个策略的模块，别放模块级。
+12. **优化 numpy 查表遍历时，表的大小比指令数重要得多。**
+    为了省掉每层一次 `np.add`，我把「每 asset 一份阈值表」预展开成 43 MB ——
+    **反而从 0.885 ms 慢到 1.392 ms**，因为 gather 的目标放不进 L2。
+    保持 4 张表合计 2.9 MB、多做一次加法，才是快的那条。
+    **7200 元素的小数组上，numpy 是访存受限的，不是指令受限的。**
 
 ## 时间线
 
