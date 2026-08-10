@@ -1,0 +1,46 @@
+{
+  "question": "候选模型的前 160 棵树是否逐棵等于生产模型？",
+  "why": "成立才能一次训练白送多个 num_iteration，且 A(160) 的公榜精确值才能继续用",
+  "production": "/home/mainsub/Documents/Quant_trade/strategies/v3_hybrid/model",
+  "candidate": "outputs/candidates/v3_hybrid_r480",
+  "probe": {
+    "seed": 20260810,
+    "rows": 4000,
+    "width": 201
+  },
+  "meta_checks": {
+    "lgbm_features_identical": true,
+    "min_data_in_leaf_identical": true,
+    "train_rows_identical": true,
+    "sampling_identical": true,
+    "model_files_identical": true,
+    "lower_max_abs_diff": 0.0,
+    "upper_max_abs_diff": 0.0,
+    "center_max_abs_diff": 0.0,
+    "scale_max_abs_diff": 0.0
+  },
+  "per_seed": [
+    {
+      "model": "lgbm_seed2026.txt",
+      "production_trees": 160,
+      "candidate_trees": 480,
+      "max_abs_diff_at_num_iteration": 1.734723475976807e-18
+    },
+    {
+      "model": "lgbm_seed2027.txt",
+      "production_trees": 160,
+      "candidate_trees": 480,
+      "max_abs_diff_at_num_iteration": 0.0
+    },
+    {
+      "model": "lgbm_seed2028.txt",
+      "production_trees": 160,
+      "candidate_trees": 480,
+      "max_abs_diff_at_num_iteration": 8.673617379884035e-19
+    }
+  ],
+  "max_abs_diff": 1.734723475976807e-18,
+  "nesting_atol": 1e-10,
+  "nested": true,
+  "candidate_num_iteration": 480
+}

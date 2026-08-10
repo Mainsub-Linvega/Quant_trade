@@ -51,6 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-iteration", type=int, default=None,
                         help="用前 k 棵树；不能超过模型文件里的棵数（免训练地减轮数）")
     parser.add_argument("--scale", type=float, default=None, help="prediction_scale")
+    parser.add_argument("--model-dir", default=None,
+                        help="换一套模型产物（默认用生产的 strategies/v3_hybrid/model）。"
+                             "重训出来的候选放在 outputs/candidates/ 下，用这个参数指过去 —— "
+                             "推理代码仍然取自 strategies/v3_hybrid/*.py，只换 model/。")
     parser.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
     parser.add_argument("--output", required=True)
     parser.add_argument("--decimals", type=int, default=8)
@@ -59,14 +63,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def stage(overrides: dict[str, float | int], destination: Path) -> Path:
+def stage(overrides: dict[str, float | int], destination: Path,
+          model_dir: Path | None = None) -> Path:
     """只读复制策略目录到 destination，并把 overrides 写进**拷贝**的 hybrid_meta.json。"""
     package = destination / "v3_hybrid"
     package.mkdir(parents=True)
     for path in sorted(STRATEGY_DIR.glob("*.py")):
         if path.name not in EXCLUDED_MODULES:
             shutil.copy2(path, package / path.name)
-    shutil.copytree(STRATEGY_DIR / "model", package / "model")
+    shutil.copytree(model_dir or (STRATEGY_DIR / "model"), package / "model")
 
     meta_path = package / "model" / "hybrid_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -112,8 +117,10 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="v3_hybrid_variant_") as workspace:
         workspace = Path(workspace)
-        print("暂存策略副本并改写 meta：")
-        package = stage(overrides, workspace)
+        print("暂存策略副本并改写 meta："
+              + (f"（模型产物来自 {args.model_dir}）" if args.model_dir else ""))
+        package = stage(overrides, workspace,
+                        Path(args.model_dir) if args.model_dir else None)
 
         raw_path = workspace / "raw.csv"
         print(f"\n跑官方 runner（全量测试集）…", flush=True)
