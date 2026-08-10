@@ -25,5 +25,14 @@ nvim.log
 strategies/**/model/*.pt
 strategies/**/model/*.bin
 
+# 当前最好模型（公榜 0.0026330806）是两个已入库候选的**拼装结果**，9.1 MB 全是重复。
+# 目录留在盘上，但不入库 —— 拼装就两条命令（NOTES「当前最好模型是怎么拼出来的」也有）：
+#   mkdir -p outputs/candidates/v3_hybrid_r480_phasebal
+#   cp outputs/candidates/v3_hybrid_r480/{hybrid_meta.json,lgbm_seed*.txt} \
+#      outputs/candidates/v3_hybrid_r480_phasebal/
+#   cp outputs/candidates/v1_ridge_phasebal/baseline_model.json \
+#      outputs/candidates/v3_hybrid_r480_phasebal/
+/outputs/candidates/v3_hybrid_r480_phasebal/
+
 # CodeGraph 本地索引
 /.codegraph/

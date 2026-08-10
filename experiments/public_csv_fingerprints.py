@@ -24,6 +24,15 @@ CSV 删了就永远重建不出来。
 `MANIFEST` 里「同一个模型、不同 scale」的那些文件，除以各自的 scale 之后**必须相等**。
 脚本会实测这一点：对不上就说明 MANIFEST 的归属写错了，直接报错而不是写出一份错的存档。
 
+## ⚠️ 存档是**累积**的（2026-08-10 修）
+
+本脚本只能对**当前还在**的 CSV 求 Gram。原来的写法直接覆盖 json ——
+于是「删了 CSV → 再跑一次归档」会把之前存的全冲掉，正好毁掉这份存档存在的理由。
+08-10 就这么踩了一次（14 份被压成 4 份，靠 git 捞回来的）。
+现在 `merge_with_archive()` 把已删 CSV 的记录原样搬过来，
+**两份从未同时在场的 CSV 之间那一格是 `null`（不可知），不是 0** ——
+写 0 会让下游默默算出错的 B。
+
 用法：.venv/bin/python experiments/public_csv_fingerprints.py
 输出：outputs/experiments/public_csv_fingerprints.json
 """
@@ -93,10 +102,80 @@ MANIFEST: list[dict[str, Any]] = [
      "scale": 0.90, "public": 0.00213810, "certain": True, "note": "ledger 2026-08-09 第一点"},
     {"file": "submission_hybrid_scale130.csv", "model": "v3_hybrid_w050",
      "scale": 1.30, "public": 0.0022857726, "certain": True, "note": "ledger 2026-08-09 第二点"},
+
+    # ── replace 系列（blend_weight 1.0）。⚠️ **每个轮数是一个独立的 model 标签** ──
+    # 它们是嵌套的（480 棵的前 k 棵与 k 轮模型逐棵相同，lgbm_nested_check 验过），
+    # 但**预测向量不同** ⟹ 不能共用一个 model 标签，否则同模型一致性自检会误报。
+    # 嵌套关系体现在 Gram 里：corr(f160, f480) = 0.972，不是 1。
+    {"file": "submission_replace_r80_s116.csv", "model": "v3_hybrid_replace_r080",
+     "scale": 1.16, "public": 0.0023682898, "certain": True,
+     "note": "ledger 2026-08-09 免训练减轮数（只用前 80 棵）"},
+    {"file": "submission_replace_s116.csv", "model": "v3_hybrid_replace_r160",
+     "scale": 1.16, "public": 0.0024872338, "certain": True,
+     "note": "ledger 2026-08-09 replace 生产轮数。⚠️ B(160)=0.00179844 是**真值**，"
+             "整套无权 B 代理都拿它标定"},
+    {"file": "submission_r320_s116.csv", "model": "v3_hybrid_replace_r320",
+     "scale": 1.16, "public": 0.00256510, "certain": True,
+     "note": "ledger 2026-08-10 轮数梯子，出自 outputs/candidates/v3_hybrid_r480 的前 320 棵"},
+    {"file": "submission_r480_s116.csv", "model": "v3_hybrid_replace_r480",
+     "scale": 1.16, "public": 0.0025821304, "certain": True,
+     "note": "ledger 2026-08-10 当前最好成绩；峰值 0.00258931 @ scale 1.1020"},
 ]
 
 # 8 位小数版相对全精度版的舍入量级，同模型一致性自检按它定门限
 EIGHT_DP_TOLERANCE = 1e-7
+
+
+def merge_with_archive(
+    output: Path, fresh_names: list[str], fresh: np.ndarray,
+    entries: list[dict[str, Any]], checks: list[dict[str, Any]],
+) -> tuple[list[str], np.ndarray, list[dict[str, Any]], list[dict[str, Any]]]:
+    """把这次算出来的 Gram **并进**上一版存档，而不是覆盖它。
+
+    ## 为什么必须这样
+
+    这份存档的**全部意义**就是「CSV 删了之后还能算」。而本脚本只能对**当前还在**的
+    CSV 求 Gram —— 直接覆盖等于：删了 CSV → 跑一次归档 → 把之前存的全冲掉。
+    2026-08-10 就这么踩了一次（14 份被压成 4 份，靠 git 捞回来的）。
+
+    ## 不可知的元素必须是 null，不能是 0
+
+    两份从未同时在场的 CSV，它们的内积**谁也算不出来**（需要两条完整向量）。
+    写 0 会让下游默默算出错的 B —— 那正是这套方法最不该出错的地方。
+    """
+    if not output.exists():
+        return fresh_names, fresh, entries, checks
+
+    archive = json.loads(output.read_text(encoding="utf-8"))
+    old_names: list[str] = archive.get("gram_names", [])
+    old_gram = np.array([[np.nan if v is None else v for v in row]
+                         for row in archive.get("gram", [])], dtype=np.float64)
+
+    names = old_names + [n for n in fresh_names if n not in old_names]
+    index = {name: i for i, name in enumerate(names)}
+    merged = np.full((len(names), len(names)), np.nan, dtype=np.float64)
+
+    def paste(block_names: list[str], block: np.ndarray) -> None:
+        rows = [index[name] for name in block_names]
+        merged[np.ix_(rows, rows)] = block
+
+    if len(old_names):
+        paste(old_names, old_gram)
+    paste(fresh_names, fresh)          # 这次现算的覆盖旧值（同一份 CSV 结果应一致）
+
+    carried = [name for name in old_names if name not in fresh_names]
+    unknown = int(np.isnan(merged).sum())
+    print(f"\n并入上一版存档：沿用 {len(carried)} 份已删 CSV 的记录"
+          f"（{', '.join(carried) if carried else '无'}）")
+    print(f"  Gram {len(names)}×{len(names)}，其中 {unknown} 个元素不可知（null）"
+          f" —— 那些是从未同时在场的两份之间的内积")
+
+    known = {entry["file"] for entry in entries}
+    entries = entries + [e for e in archive.get("files", []) if e["file"] not in known]
+    seen = {(c["a"], c["b"]) for c in checks}
+    checks = checks + [c for c in archive.get("same_model_checks", [])
+                       if (c["a"], c["b"]) not in seen]
+    return names, merged, entries, checks
 
 
 def main() -> None:
@@ -166,26 +245,34 @@ def main() -> None:
     # ---- Gram 矩阵：Σfᵢfⱼ/n，用**除过 scale 的原始预测**
     usable = [index for index, column in enumerate(raw_columns) if column is not None]
     matrix = np.column_stack([raw_columns[index] for index in usable])
-    gram = (matrix.T @ matrix) / len(matrix)
-    names = [entries[index]["file"] for index in usable]
+    fresh = (matrix.T @ matrix) / len(matrix)
+    fresh_names = [entries[index]["file"] for index in usable]
+
+    output = EXPERIMENTS / "public_csv_fingerprints.json"
+    names, gram, entries, checks = merge_with_archive(
+        output, fresh_names, fresh, entries, checks)
 
     payload = {
         "why": "删 CSV 前把「预测向量↔公榜分数」的信息榨出来；Gram 矩阵让任何线性组合的 B 仍可算",
         "identity": "对 g = Σcᵢ·rawᵢ，有 Σg²/n = cᵀGc；B = (Σw·g²/Σw·y²) 的无权近似 ∝ 它",
         "unweighted_b_note":
             "无权近似实测在 B 的**比值**上误差约 1.6%（用 strict_ridge 与 v3_hybrid 的真值标定过）",
+        "merge_note":
+            "本文件是**累积**的：CSV 已删的那些从上一版存档原样搬过来。"
+            "两份从未同时在场的 CSV，它们之间的 Gram 元素是 null（不可知），不是 0",
         "rows": int(len(matrix)),
         "files": entries,
         "same_model_checks": checks,
         "gram_basis": "raw = target / prediction_scale",
         "gram_names": names,
-        "gram": gram.tolist(),
+        "gram": [[None if not np.isfinite(v) else float(v) for v in row] for row in gram],
     }
-    output = EXPERIMENTS / "public_csv_fingerprints.json"
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"\n{len(entries)} 份 CSV → {output}（{output.stat().st_size/1024:.1f} KB）")
-    print(f"原始 CSV 合计 {sum(e['bytes'] for e in entries)/1e9:.2f} GB，可以删了")
+    # 只统计**这次真的在场**的那些 —— 沿用的记录对应的文件早就不在了
+    present = sum(e["bytes"] for e in entries if (OUTPUTS / e["file"]).exists())
+    print(f"当前在场的 CSV 合计 {present/1e9:.2f} GB，已榨干，可以删了")
 
 
 if __name__ == "__main__":
