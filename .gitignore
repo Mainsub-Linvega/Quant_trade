@@ -36,3 +36,11 @@ strategies/**/model/*.bin
 
 # CodeGraph 本地索引
 /.codegraph/
+
+# 08-11：history 列数 80 的候选。公榜实测与 40 列打平（−0.0032%）却慢 0.44 分钟，
+# 已结案不采用；数字见 experiments/ledger.csv 与 NOTES.md。9.2MB 不值得入库。
+/outputs/candidates/v3_hybrid_r480_phasebal_hist_c80/
+# 接线期的冒烟产物（modulo 50 / 1 seed / 20 轮），只为验证代码路径
+/outputs/candidates/v3_hybrid_hist_smoke/
+/outputs/experiments/history_peak_smoke.json
+/outputs/experiments/history_peak_smoke.md
