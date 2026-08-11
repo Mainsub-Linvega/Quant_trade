@@ -1,0 +1,115 @@
+{
+  "question": "让 ê 的权重随截面离散度变化，比最优全局权重更好吗？",
+  "baseline_note": "基准是**训练段内解出的最优全局 c**（第①类纯后处理，本来就免费），不是 c=1 —— 否则会把①类的收益算成 A4 的功劳",
+  "leakage_guard": "系数与分箱边界只用训练段内层留出段；**同一批内层模型**预测外层（A0 multi 臂尺度失配的教训）",
+  "state_variable": "逐 time_id 的 ê 截面标准差（推理端可得）",
+  "configuration": {
+    "data_root": "/home/mainsub/Documents/Quant_trade/data",
+    "output_dir": "/home/mainsub/Documents/Quant_trade/outputs/experiments",
+    "label": "conditional_blend",
+    "n_folds": 3,
+    "train_window": 39480,
+    "embargo": 6,
+    "sample_modulo": 10,
+    "sampling": "periodic",
+    "feature_count": 200,
+    "history_count": 40,
+    "history_window": 5,
+    "ridge_alpha": 2000000.0,
+    "lgbm_rounds": 160,
+    "lgbm_seed": 2026,
+    "num_threads": 8,
+    "inner_fraction": 0.25,
+    "n_bins": 4,
+    "force": true
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "c_global": 0.3292286697332167,
+      "c_bins": [
+        0.40768081883699886,
+        0.33356725217420685,
+        0.42782525261199406,
+        0.265681084186303
+      ],
+      "bin_spread": 1.6102962464275066,
+      "global": {
+        "A": 0.0018935808401714079,
+        "B": 0.0025015492371621897,
+        "peak": 0.0014333711065914858,
+        "optimal_scale": 0.756963249829744
+      },
+      "conditional": {
+        "A": 0.0019205550687859212,
+        "B": 0.002529758849289283,
+        "peak": 0.001458056673376421,
+        "optimal_scale": 0.7591850382598669
+      }
+    },
+    {
+      "fold": 1,
+      "c_global": 0.8908249493114452,
+      "c_bins": [
+        0.996002231400208,
+        0.8500067349785609,
+        0.8012123286722557,
+        0.9352056647502575
+      ],
+      "bin_spread": 1.2431189533126035,
+      "global": {
+        "A": 0.002165387494725922,
+        "B": 0.0021245084565276145,
+        "peak": 0.0022070531128782346,
+        "optimal_scale": 1.0192416453192763
+      },
+      "conditional": {
+        "A": 0.002157761698732096,
+        "B": 0.0021331668045227138,
+        "peak": 0.002182640166087229,
+        "optimal_scale": 1.0115297566778352
+      }
+    },
+    {
+      "fold": 2,
+      "c_global": 0.9005101342159305,
+      "c_bins": [
+        0.6393050882715852,
+        1.06747202358199,
+        0.8782536835180734,
+        0.9093065178546537
+      ],
+      "bin_spread": 1.6697380376996371,
+      "global": {
+        "A": 0.001981164505544618,
+        "B": 0.002336216461427501,
+        "peak": 0.0016800724003252444,
+        "optimal_scale": 0.8480226632484494
+      },
+      "conditional": {
+        "A": 0.0019729701394869776,
+        "B": 0.0023365179144107023,
+        "peak": 0.0016659881558361718,
+        "optimal_scale": 0.8444061683920725
+      }
+    }
+  ],
+  "summary": {
+    "baseline_peak_mean": 0.0017734988732649882,
+    "conditional_peak_mean": 0.0017688949984332742,
+    "mean_delta": -4.603874831714319e-06,
+    "relative_gain": -0.002595927689110197,
+    "relative_gain_drop_best": -0.0108534580597746,
+    "positive_folds": 1,
+    "n_folds": 3,
+    "sign_test_p": 1.0
+  },
+  "verdict": {
+    "checks": {
+      "1_paired_delta_positive": false,
+      "2_survives_drop_best_fold": false,
+      "3_relative_gain_at_least_1pct": false
+    },
+    "pass": false
+  }
+}

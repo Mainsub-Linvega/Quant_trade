@@ -1,0 +1,272 @@
+{
+  "question": "每资产历史特征在尺度无关的 peak 口径下还提高样本外表现吗？",
+  "why": "原实验 walk_forward_history 是在固定 prediction_scale=0.5 下算绝对分的，而固定低 scale 对 B 膨胀的惩罚不到 peak 的一半；history 臂恰恰把设计矩阵从 400 列加到 560 列。这与 08-10 把「市场模型重建 13% 余量」判成幻觉的机制相同。",
+  "metric": "peak = A²/B（尺度无关）；同时报固定 scale 0.5 的旧口径作对照",
+  "pairing": "两臂共用同一折划分、同一变换统计量、同一选中的 200 列 —— 唯一变量是 history 块",
+  "alpha_rule": "fold_alpha = ridge_alpha × train_window / PROD_SAMPLED_WINDOW（行数归一）",
+  "classification": "③类结构改动，但加 160 列同时是②类拟合紧密度改动 —— 故必报整条 alpha 阶梯",
+  "prior": {
+    "source": "outputs/experiments/walk_forward_history.json",
+    "baseline_mean": 0.0008009714156413198,
+    "history_mean": 0.0008213024421204196,
+    "relative_gain": 0.02538,
+    "metric": "weighted_zero_mean_r2 @ prediction_scale 0.5",
+    "note": "3 折、按分区划分、legacy 求解器 tol 1e-4/max_iter 100"
+  },
+  "configuration": {
+    "n_folds": 3,
+    "train_window": 39480,
+    "embargo": 6,
+    "sample_modulo": 10,
+    "sampling": "periodic",
+    "lgbm_seeds": 1,
+    "feature_count": 200,
+    "history_count": 80,
+    "history_window": 5,
+    "history_columns": [
+      0,
+      3,
+      5,
+      8,
+      13,
+      14,
+      15,
+      17,
+      18,
+      28,
+      34,
+      36,
+      38,
+      39,
+      41,
+      42,
+      47,
+      50,
+      81,
+      90,
+      93,
+      95,
+      98,
+      100,
+      106,
+      109,
+      115,
+      127,
+      135,
+      144,
+      148,
+      151,
+      155,
+      157,
+      158,
+      160,
+      175,
+      185,
+      187,
+      188,
+      189,
+      190,
+      191,
+      192,
+      193,
+      194,
+      195,
+      199,
+      200,
+      202,
+      203,
+      204,
+      217,
+      218,
+      219,
+      236,
+      237,
+      244,
+      248,
+      250,
+      256,
+      258,
+      263,
+      266,
+      268,
+      271,
+      274,
+      284,
+      286,
+      287,
+      295,
+      296,
+      298,
+      305,
+      308,
+      311,
+      313,
+      316,
+      318,
+      321
+    ],
+    "history_scope": "lgbm_selected",
+    "lgbm_select": "residual",
+    "history_columns_note": "第 0 折训练窗上选一次，全折通用（预注册）；scope=lgbm_selected 时限定在按 e 选出的 200 列内，以保证 history 列 ⊂ LGBM 选中列（推理端已有其统计量）",
+    "ridge_alpha": 2000000.0,
+    "alpha_ladder": [
+      10000.0,
+      100000.0,
+      1000000.0,
+      10000000.0,
+      100000000.0,
+      1000000000.0
+    ],
+    "ridge_solver": "lsqr tol=1e-8 max_iter=2000（严格档，与 train.fit_model 一致）",
+    "lgbm": {
+      "rounds": 160,
+      "seeds": 1,
+      "spec": {
+        "num_leaves": 63,
+        "learning_rate": 0.03,
+        "feature_fraction": 0.7,
+        "lambda_l2": 1.0
+      },
+      "note": "实验档降规模（生产是 3 种子 × 480 轮），只用于判方向"
+    }
+  },
+  "equivalence_verification": null,
+  "results": {
+    "lgbm": {
+      "folds": [
+        {
+          "fold": 0,
+          "n_train_rows": 591864,
+          "n_valid_rows": 246706,
+          "arms": {
+            "baseline": {
+              "design_columns": 201,
+              "full": {
+                "A": 0.0022021424233457424,
+                "B": 0.0036632002089209015,
+                "peak": 0.0013238236995317257,
+                "optimal_scale": 0.6011526255056764,
+                "legacy_score_at_scale_0.5": 0.0012863423711155786
+              }
+            },
+            "history": {
+              "design_columns": 521,
+              "full": {
+                "A": 0.0023063197028944187,
+                "B": 0.0037313335984325564,
+                "peak": 0.0014255253334071846,
+                "optimal_scale": 0.6180952847162334,
+                "legacy_score_at_scale_0.5": 0.0013734863032861533
+              }
+            }
+          }
+        },
+        {
+          "fold": 1,
+          "n_train_rows": 591940,
+          "n_valid_rows": 241539,
+          "arms": {
+            "baseline": {
+              "design_columns": 201,
+              "full": {
+                "A": 0.002222195567469048,
+                "B": 0.0022958350083678017,
+                "peak": 0.0021509181287333924,
+                "optimal_scale": 0.9679247678381266,
+                "legacy_score_at_scale_0.5": 0.0016482368153775129
+              }
+            },
+            "history": {
+              "design_columns": 521,
+              "full": {
+                "A": 0.0024303785571038387,
+                "B": 0.002406892964513464,
+                "peak": 0.002454093313627738,
+                "optimal_scale": 1.0097576389713374,
+                "legacy_score_at_scale_0.5": 0.001828655315976091
+              }
+            }
+          }
+        },
+        {
+          "fold": 2,
+          "n_train_rows": 586800,
+          "n_valid_rows": 242585,
+          "arms": {
+            "baseline": {
+              "design_columns": 201,
+              "full": {
+                "A": 0.00196829467694361,
+                "B": 0.002326759378361157,
+                "peak": 0.001665055687027386,
+                "optimal_scale": 0.8459382157212878,
+                "legacy_score_at_scale_0.5": 0.001386604832353422
+              }
+            },
+            "history": {
+              "design_columns": 521,
+              "full": {
+                "A": 0.002142467766263095,
+                "B": 0.0023776437874385866,
+                "peak": 0.0019305533291937398,
+                "optimal_scale": 0.9010886229392484,
+                "legacy_score_at_scale_0.5": 0.0015480568194033983
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "comparisons": {
+    "lgbm": {
+      "peak": {
+        "mean_delta": 0.00022345815364538607,
+        "relative_gain": 0.13042818495117459,
+        "baseline_mean": 0.0017132658384308346,
+        "baseline_positive": true,
+        "positive_folds": 3,
+        "n_folds": 3,
+        "sign_test_p": 0.25,
+        "mean_delta_drop_best": 0.0001835996380209063,
+        "relative_gain_drop_best": 0.10716354339327959,
+        "per_fold": [
+          0.0001017016338754589,
+          0.00030317518489434564,
+          0.0002654976421663537
+        ]
+      },
+      "legacy_scale_0.5": {
+        "mean_delta": 0.0001430048066063764,
+        "relative_gain": 0.09928168250831616,
+        "baseline_mean": 0.0014403946729488377,
+        "baseline_positive": true,
+        "positive_folds": 3,
+        "n_folds": 3,
+        "sign_test_p": 0.25,
+        "mean_delta_drop_best": 0.00012429795961027557,
+        "relative_gain_drop_best": 0.08629437607944457,
+        "per_fold": [
+          8.71439321705747e-05,
+          0.0001804185005985781,
+          0.00016145198704997643
+        ]
+      },
+      "delta_A_relative": 0.076493348307755,
+      "delta_B_relative": 0.02961410062979179,
+      "mechanism_2dA_gt_dB": true,
+      "baseline_peak_mean": 0.0017132658384308346,
+      "history_peak_mean": 0.0019367239920762209
+    }
+  },
+  "verdicts": {
+    "lgbm": {
+      "checks": {
+        "1_paired_delta_positive": true,
+        "2_survives_drop_best_fold": true,
+        "3_relative_gain_at_least_1pct": true
+      },
+      "pass": true
+    }
+  }
+}

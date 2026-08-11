@@ -1,0 +1,86 @@
+{
+  "question": "本地把 A1′ 低估 2.3 倍，是口径差造成的吗？",
+  "public_lower_bound_pct": 23.47,
+  "arms": [
+    {
+      "label": "gap_A_base",
+      "name": "A 基准口径",
+      "note": "复现已知的 +10%",
+      "sample_modulo": 10,
+      "sampling": "periodic",
+      "lgbm_seeds": 1,
+      "train_window": 39480,
+      "baseline_peak_mean": 0.0017132658384308346,
+      "delta_peak_pct": 9.787907702662126,
+      "drop_best_pct": 9.13381031851875,
+      "positive_folds": 3,
+      "n_folds": 3,
+      "delta_A_pct": 5.859445593981002,
+      "delta_B_pct": 1.9758991332563092
+    },
+    {
+      "label": "gap_B_seeds3",
+      "name": "B +3 种子",
+      "note": "测 H3 种子数",
+      "sample_modulo": 10,
+      "sampling": "periodic",
+      "lgbm_seeds": 3,
+      "train_window": 39480,
+      "baseline_peak_mean": 0.0017492597116040027,
+      "delta_peak_pct": 8.1482224486369,
+      "drop_best_pct": 7.15565134110307,
+      "positive_folds": 3,
+      "n_folds": 3,
+      "delta_A_pct": 5.196784557893305,
+      "delta_B_pct": 2.0848097986966074
+    },
+    {
+      "label": "gap_C_prodsampling",
+      "name": "C m5/phase_balanced",
+      "note": "⚠️ 时间跨度被砍半，不能测 H2",
+      "sample_modulo": 5,
+      "sampling": "phase_balanced",
+      "lgbm_seeds": 1,
+      "train_window": 39480,
+      "baseline_peak_mean": 0.0007800214911579378,
+      "delta_peak_pct": 20.7155758857255,
+      "drop_best_pct": 18.476759711650367,
+      "positive_folds": 3,
+      "n_folds": 3,
+      "delta_A_pct": 11.65137890692564,
+      "delta_B_pct": 3.367625413881744
+    },
+    {
+      "label": "gap_D_prodall",
+      "name": "D 生产口径全套",
+      "note": "最接近生产：m5/phase/3 种子/1.8M 行",
+      "sample_modulo": 5,
+      "sampling": "phase_balanced",
+      "lgbm_seeds": 3,
+      "train_window": 120000,
+      "baseline_peak_mean": 0.0012713301334442058,
+      "delta_peak_pct": 13.075712654652213,
+      "drop_best_pct": 11.864779128386143,
+      "positive_folds": 3,
+      "n_folds": 3,
+      "delta_A_pct": 9.88045590420658,
+      "delta_B_pct": 6.641135371157181
+    }
+  ],
+  "baseline_strength_vs_gain_corr": -0.9863398618046033,
+  "multiple_vs_public": {
+    "gap_A_base": 2.3978566934807324,
+    "gap_B_seeds3": 2.8803828255727417,
+    "gap_C_prodsampling": 1.1329639170771253,
+    "gap_D_prodall": 1.7949308477385053
+  },
+  "log_gap_closed_by_production_caliber": 0.33114221234564856,
+  "verdict": {
+    "H3_seeds": "排除。3 种子把相对增益从 +9.79% 压到 +8.15%（种子同时抬了 baseline）",
+    "H2_sampling": "未能测。C 臂 train_window 以采样后 time_id 计，m10→m5 把时间跨度砍半，baseline 塌到 0.00078 —— 测的是弱 baseline，不是采样口径",
+    "H1_volume": "部分。D 臂 1.8M 行 + 生产采样给 +13.08%，仍远低于 +23.47%",
+    "residual": "大头未解。最接近生产口径只关掉 33% 的对数差距；剩余最可能是公榜测试期的时段/分布效应，本地无标签测不了，等 8/23 回补"
+  },
+  "generalizable_finding": "Δpeak 与 baseline 强度强烈反相关（r = -0.986）。baseline 越弱，history 的相对增益越大 ⟹ 读任何相对增益之前先看 baseline 是不是被削弱了",
+  "operational_rule": "在查清之前，对第③类结构改动一律按「本地会低估」处理 —— 看到正的点估计就值得上公榜确认，别被本地量级吓退"
+}
