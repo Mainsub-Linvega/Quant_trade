@@ -58,6 +58,10 @@ SPEC = {"num_leaves": 63, "learning_rate": 0.03,
         "feature_fraction": 0.7, "lambda_l2": 1.0}
 MIN_DATA_FRAC = 12000 / 3_500_000        # lgbm_blend 里 min_data_in_leaf 与行数的比例
 NUM_ITERATION = 160                       # 逐折 best_iteration 的折均（范围 44~302）
+# 每资产滚动历史特征（`history_peak`，08-11）。history 列**只从选中的 200 列里取**，
+# 这样推理端直接复用那 200 列的 lower/upper/center/scale，不必扩推理输入契约。
+HISTORY_COUNT = 40                        # 与 walk_forward_history 的 history_feature_count 同
+HISTORY_WINDOW = 5                        # 与 AssetHistory.window_size 的历史值同
 BLEND_WEIGHT = 0.5                        # blend50：ê 里 LGBM 占一半，不拟合权重
 
 
@@ -109,9 +113,19 @@ def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
     lraw = full_features[:, lgbm_indices].copy()
     lower, upper, center, scale = stats(meta)
     apply_robust_transform(lraw, lower, upper, center, scale)
-    design = np.column_stack([cross_sectional_deviation(lraw, time_ids),
-                              asset_ids.astype(np.float32)])
-    del lraw
+    blocks = [cross_sectional_deviation(lraw, time_ids)]
+    # ---- 每资产滚动历史（有状态）。这里从**空历史**起步，与 main.Model 新建时一致，
+    # check_consistency 两侧才可比。history.AssetHistory 的整块调用与逐 time_id 调用
+    # 逐位相同（定序直接求和，不用 cumsum），所以这条离线路径不会引入 ulp 级偏差。
+    if meta.get("history_positions"):
+        from history import history_design_blocks
+        hist, _ = history_design_blocks(lraw, asset_ids.astype(np.int64),
+                                        meta["history_positions"],
+                                        int(meta["history_window"]))
+        blocks.extend(hist)
+    blocks.append(asset_ids.astype(np.float32))       # ⚠️ asset_id 必须留在最后一列
+    design = np.column_stack(blocks)
+    del lraw, blocks
     paths = [model_dir / name for name in meta["lgbm_model_files"]]
     if backend == "lightgbm":
         import lightgbm as lgb
@@ -137,6 +151,44 @@ def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
     return np.clip(blended * np.float32(meta["prediction_scale"]), -clip, clip)
 
 
+def stream_history_blocks(data_root: Path, sample_modulo: int, sampling: str,
+                          history_names: list[str], history_stats: tuple[np.ndarray, ...],
+                          window: int):
+    """流式扫过**每一行**，只留下被采样行的 4 个历史块。
+
+    ⚠️ 历史状态必须在每一行上推进，而 `lgbm_xs.load_rows` 是**逐 batch 先掩码再拼接**、
+    未被选中的行根本不进内存 —— 所以历史块没法从它的输出里重建，只能自己再扫一遍。
+    好在只需要 history 那几列，一遍很快。
+
+    采样掩码走 `src.io.time_sample_mask`，与 `load_rows` 逐位同口径
+    （生产是 `phase_balanced` + modulo 5；写死 `% modulo == 0` 会与训练集错位）。
+    """
+    import pyarrow.parquet as pq
+    from src.io import time_sample_mask, train_files
+    from history import AssetHistory
+
+    lower, upper, center, scale = history_stats
+    history = AssetHistory(feature_count=len(history_names), window_size=window)
+    parts: list[list[np.ndarray]] = [[], [], [], []]
+    kept = 0
+    for path in train_files(data_root):
+        for batch in pq.ParquetFile(path).iter_batches(
+                batch_size=120_000, columns=["time_id", "asset_id", *history_names]):
+            frame = batch.to_pandas()
+            tid = frame["time_id"].to_numpy(dtype=np.int64, copy=False)
+            aid = frame["asset_id"].to_numpy(dtype=np.int64, copy=False)
+            current = frame.loc[:, history_names].to_numpy(dtype=np.float32, copy=True)
+            apply_robust_transform(current, lower, upper, center, scale)
+            blocks = history.transform(current, aid)          # 每一行都推进状态
+            mask = time_sample_mask(tid, sample_modulo, sampling=sampling)
+            if mask.any():
+                for slot, block in zip(parts, blocks):
+                    slot.append(block[mask])
+                kept += int(mask.sum())
+        print(f"  history {path.name}: 累计留下 {kept:,} 行", flush=True)
+    return [np.concatenate(slot) for slot in parts]
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train the LightGBM cross-sectional part of v3_hybrid.")
     p.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
@@ -144,6 +196,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sample-modulo", type=int, default=5)
     p.add_argument("--sampling", default="phase_balanced")
     p.add_argument("--feature-count", type=int, default=200)
+    p.add_argument("--history-count", type=int, default=HISTORY_COUNT)
+    p.add_argument("--history-window", type=int, default=HISTORY_WINDOW)
+    p.add_argument("--no-history", action="store_true",
+                   help="退回到 08-10 那版无历史特征的设计矩阵（回归对照用）")
     p.add_argument("--num-iteration", type=int, default=NUM_ITERATION)
     p.add_argument("--n-seeds", type=int, default=3)
     p.add_argument("--seed", type=int, default=2026)
@@ -191,8 +247,27 @@ def main() -> None:
                            stats["center"][selected], stats["scale"][selected])
     dev = cross_sectional_deviation(raw, tid)
     del raw
-    design = np.ascontiguousarray(np.column_stack([dev, aid.astype(np.float32)]))
-    del dev
+    blocks = [dev]
+
+    # ---- 每资产滚动历史。history 列在**选中的 200 列之内**按 e 选（无权，与选列同口径），
+    # 于是 history 列的统计量已经在 meta 的那 200 个里，推理端不用扩输入契约。
+    history_positions: list[int] = []
+    if not args.no_history:
+        inner = select_features(dev, e, np.ones_like(e), args.history_count)
+        history_positions = sorted(int(i) for i in inner)
+        history_names = [lgbm_features[i] for i in history_positions]
+        sl = np.asarray(history_positions, dtype=np.int64)
+        history_stats = tuple(stats[k][selected][sl] for k in ("lower", "upper", "center", "scale"))
+        print(f"history 列 {len(history_names)} 个（取自选中的 {args.feature_count} 列，"
+              f"窗长 {args.history_window}）；再扫一遍全量建历史块…", flush=True)
+        blocks.extend(stream_history_blocks(Path(args.data_root), args.sample_modulo,
+                                            args.sampling, history_names, history_stats,
+                                            args.history_window))
+
+    blocks.append(aid.astype(np.float32))          # ⚠️ asset_id 必须留在最后一列
+    design = np.ascontiguousarray(np.column_stack(blocks))
+    del dev, blocks
+    assert design.shape[0] == len(tid), "历史块与采样矩阵行数不一致 —— 两条读取路径口径不同"
     cat = design.shape[1] - 1
     min_data = max(20, int(round(MIN_DATA_FRAC * len(design))))
     print(f"设计矩阵 {design.shape[0]:,} × {design.shape[1]}，"
@@ -226,6 +301,15 @@ def main() -> None:
         "num_iteration_source": "lgbm_blend_unweighted 逐折 best_iteration 的折均（范围 44~302）",
         "lgbm_model_files": model_files,
         "lgbm_features": lgbm_features,
+        # history 块（`history_peak`，08-11）。下标是**在 lgbm_features 里的位置**（0..199），
+        # 不是 323 列里的下标 —— 推理端因此直接复用下面那 200 列的统计量。
+        # 设计矩阵列序固定为 [xs_dev ‖ previous ‖ difference ‖ rolling_mean ‖ rolling_deviation ‖ asset_id]，
+        # asset_id 永远是最后一列（train/main/lgbm_numpy 三处都假设）。
+        "history_positions": history_positions,
+        "history_window": int(args.history_window),
+        "history_note": ("本地 5 折配对 peak +10.10%、5/5 折、去掉最好一折 +9.10%、"
+                         "2ΔA>ΔB（outputs/experiments/history_peak_lgbm_scoped.md）；"
+                         "岭回归上同一改动是 −1.97%，只在截面块成立"),
         "lower": stats["lower"][selected].tolist(),
         "upper": stats["upper"][selected].tolist(),
         "center": stats["center"][selected].tolist(),

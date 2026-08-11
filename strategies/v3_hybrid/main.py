@@ -57,6 +57,7 @@ import numpy as np
 from features import (apply_robust_transform, cross_sectional_deviation,
                       single_time_deviation)
 from lgbm_numpy import NumpyForest
+from history import AssetHistory
 
 # 开机对拍的门限。两条路径只该差求和顺序（~1e-18）；真翻了一个分裂，输出会跳一个叶子值
 # （~1e-3）。1e-10 落在两者中间好几个数量级，怎么定都不会误判。
@@ -93,6 +94,13 @@ class Model:
         self.l_center = np.asarray(meta["center"], dtype=np.float32)
         self.l_scale = np.asarray(meta["scale"], dtype=np.float32)
         self.num_iteration = int(meta["num_iteration"])
+        # ---- 每资产滚动历史（**唯一的跨 predict 调用状态**，除 last_time_id 外）
+        # 下标是 lgbm_features 内的位置 ⟹ 统计量复用上面那套 l_*，不必另存。
+        self.history_positions = list(meta.get("history_positions") or [])
+        self.history_window = int(meta.get("history_window", 0) or 0)
+        self.history = (AssetHistory(feature_count=len(self.history_positions),
+                                     window_size=self.history_window)
+                        if self.history_positions else None)
         self.blend_weight = float(meta["blend_weight"])       # ê 里 LGBM 占的比重
         self.prediction_scale = np.float32(meta["prediction_scale"])
         self.prediction_clip = np.float32(meta["prediction_clip"])
@@ -183,7 +191,13 @@ class Model:
         #   所以它继续用 single_time_deviation，保持与 v1_ridge 生产路径逐位相同。）
         ldev = cross_sectional_deviation(lraw, test["time_id"].to_numpy(dtype=np.int64))
         asset_ids = test["asset_id"].to_numpy(dtype=np.int64)
-        design = np.column_stack([ldev, asset_ids.astype(np.float32)])
+        blocks = [ldev]
+        if self.history is not None:
+            # ⚠️ 有状态：每次 predict 都会推进。首个 time_id 无历史 ⟹ previous /
+            # rolling_mean 为 0（与训练端最前面那些行同口径，模型见过这种输入），不出 NaN。
+            blocks.extend(self.history.transform(lraw[:, self.history_positions], asset_ids))
+        blocks.append(asset_ids.astype(np.float32))   # ⚠️ asset_id 必须留在最后一列
+        design = np.column_stack(blocks)
         if self.boosters is not None:
             e_lgbm = np.zeros(len(design), dtype=np.float64)
             for booster in self.boosters:
