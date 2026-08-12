@@ -1,0 +1,41 @@
+{
+  "zip": "outputs/private_submissions/drill_20260812/v3_hybrid_submission_20260812.zip",
+  "sha256": "628572cfe299ca13a02151870439a108636540d84a0cdb6b1c4859c783beac95",
+  "bytes": 3748198,
+  "files": [
+    "features.py",
+    "history.py",
+    "lgbm_numpy.py",
+    "main.py",
+    "model/baseline_model.json",
+    "model/hybrid_meta.json",
+    "model/lgbm_seed2026.txt",
+    "model/lgbm_seed2027.txt",
+    "model/lgbm_seed2028.txt"
+  ],
+  "missing": [],
+  "forbidden": [],
+  "duplicates": [],
+  "absent_declared_models": [],
+  "meta_summary": {
+    "prediction_scale": 1.16,
+    "num_iteration": 480,
+    "history_window": 5,
+    "history_positions": 40,
+    "lgbm_model_files": [
+      "lgbm_seed2026.txt",
+      "lgbm_seed2027.txt",
+      "lgbm_seed2028.txt"
+    ]
+  },
+  "checks": {
+    "required_files_present": true,
+    "no_forbidden_files": true,
+    "no_duplicate_entries": true,
+    "all_declared_models_present": true,
+    "prediction_scale_matches": true,
+    "iterations_match": true,
+    "seed_count_matches": true
+  },
+  "passed": true
+}

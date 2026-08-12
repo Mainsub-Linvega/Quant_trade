@@ -30,7 +30,12 @@ EXCLUDED_MODULES = {"train.py"}
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Package a strategy directory for private submission.")
     parser.add_argument("--strategy", default="v1_ridge")
+    parser.add_argument("--model-dir", default=None,
+                        help="Optional model artifact directory. Strategy Python files still come from "
+                             "strategies/<strategy>; useful for packaging a validated staging model "
+                             "without promoting production first.")
     parser.add_argument("--output-dir", default=str(_REPO_ROOT / "outputs"))
+    parser.add_argument("--date-tag", default=None, help="Override YYYYMMDD output tag for reproducible drills.")
     return parser.parse_args()
 
 
@@ -70,7 +75,7 @@ def main() -> None:
     strategy_dir = _REPO_ROOT / "strategies" / args.strategy
     assert strategy_dir.is_dir(), f"策略目录不存在: {strategy_dir}"
 
-    date_tag = datetime.date.today().strftime("%Y%m%d")
+    date_tag = args.date_tag or datetime.date.today().strftime("%Y%m%d")
     output_dir = Path(args.output_dir)
     staging = output_dir / f"{args.strategy}_submission_{date_tag}"
     zip_path = output_dir / f"{args.strategy}_submission_{date_tag}.zip"
@@ -87,9 +92,11 @@ def main() -> None:
     assert any(path.name == "main.py" for path in sources), "策略目录里没有 main.py"
     for path in sources:
         shutil.copy2(path, staging / path.name)
-    model_dir = strategy_dir / "model"
+    model_dir = Path(args.model_dir) if args.model_dir else (strategy_dir / "model")
     if model_dir.is_dir():
-        shutil.copytree(model_dir, staging / "model")
+        shutil.copytree(model_dir, staging / "model",
+                        ignore=shutil.ignore_patterns("promotion_manifest.json",
+                                                     "consistency_*.json"))
 
     smoke_test(staging)
 

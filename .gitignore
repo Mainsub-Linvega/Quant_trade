@@ -44,3 +44,9 @@ strategies/**/model/*.bin
 /outputs/candidates/v3_hybrid_hist_smoke/
 /outputs/experiments/history_peak_smoke.json
 /outputs/experiments/history_peak_smoke.md
+
+# 可由已入库候选 + promotion/packaging 脚本重建的交付暂存物
+/outputs/promotions/**/baseline_model.json
+/outputs/promotions/**/hybrid_meta.json
+/outputs/promotions/**/*.txt
+/outputs/private_submissions/

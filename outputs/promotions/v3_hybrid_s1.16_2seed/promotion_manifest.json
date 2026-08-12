@@ -1,0 +1,68 @@
+{
+  "created_at": "2026-08-12T15:36:43.159253+00:00",
+  "source": "/home/mainsub/Documents/Quant_trade/outputs/candidates/v3_hybrid_r480_phasebal_hist",
+  "destination": "/home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_s1.16_2seed",
+  "configuration": {
+    "prediction_scale": 1.16,
+    "n_seeds": 2
+  },
+  "source_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "e4ceacdfd20176d18408ba572ca8ab277a245d8e9051c1f2fe816fa28523e688",
+    "lgbm_seed2026.txt": "2c0714422edd5334d8f116af9ff621927edfe4b42a23e56cf1ceaefd88b8059a",
+    "lgbm_seed2027.txt": "7771fd6f936b1d9ebf5ad14b8fc806fca2026515f78b8cf1c0ca97d79307fdd7",
+    "lgbm_seed2028.txt": "66a45e6dd98351d4c1fc7fa5b06728e08fe5b2109b3fdfdd997acb65f966244b"
+  },
+  "staged_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "840a59555598b45ef07e0a767e1af336df21d9ebf3a28000224a699036d761c4",
+    "lgbm_seed2026.txt": "2c0714422edd5334d8f116af9ff621927edfe4b42a23e56cf1ceaefd88b8059a",
+    "lgbm_seed2027.txt": "7771fd6f936b1d9ebf5ad14b8fc806fca2026515f78b8cf1c0ca97d79307fdd7"
+  },
+  "validation": {
+    "passed": true,
+    "backends": {
+      "numpy": {
+        "rows": 30,
+        "max_abs": 0.08770532134615701,
+        "mean": 0.07631983823513622
+      },
+      "lightgbm": {
+        "rows": 30,
+        "max_abs": 0.08770532134615701,
+        "mean": 0.0763198382351362
+      }
+    },
+    "files": {
+      "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+      "hybrid_meta.json": "840a59555598b45ef07e0a767e1af336df21d9ebf3a28000224a699036d761c4",
+      "lgbm_seed2026.txt": "2c0714422edd5334d8f116af9ff621927edfe4b42a23e56cf1ceaefd88b8059a",
+      "lgbm_seed2027.txt": "7771fd6f936b1d9ebf5ad14b8fc806fca2026515f78b8cf1c0ca97d79307fdd7"
+    }
+  },
+  "full_test_runner": {
+    "status": "ok",
+    "rows": 3217458,
+    "messages": [],
+    "model_init_seconds": 0.5903840609998952,
+    "predict_total_seconds": 536.8588531281675,
+    "predict_total_minutes": 8.947647552136125,
+    "predict_calls": 214538,
+    "predict_timeout_count": 0,
+    "max_predict_seconds": 0.8919354489999023,
+    "mean_predict_seconds": 0.002502395161361472,
+    "total_seconds": 604.9922041899999,
+    "output_path": "/tmp/v3_staged_2seed_full.csv (temporary, not retained)"
+  },
+  "comparison_to_3seed": {
+    "three_seed_predict_total_seconds": 567.7950390480046,
+    "seconds_saved": 30.936185919837044,
+    "relative_time_reduction": 0.05448477671045926,
+    "decision": "keep only as timeout fallback; speed gain is too small to justify unknown score loss"
+  },
+  "decision": {
+    "production_activated": false,
+    "role": "timeout fallback only",
+    "reason": "2 seeds saved only 30.94 seconds (5.45%) in the full runner; 3-seed score is publicly validated."
+  }
+}

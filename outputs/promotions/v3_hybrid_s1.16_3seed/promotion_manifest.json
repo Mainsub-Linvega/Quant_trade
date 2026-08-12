@@ -1,0 +1,64 @@
+{
+  "created_at": "2026-08-12T14:36:31.500262+00:00",
+  "source": "/home/mainsub/Documents/Quant_trade/outputs/candidates/v3_hybrid_r480_phasebal_hist",
+  "destination": "/home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_s1.16_3seed",
+  "configuration": {
+    "prediction_scale": 1.16,
+    "n_seeds": 3
+  },
+  "source_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "e4ceacdfd20176d18408ba572ca8ab277a245d8e9051c1f2fe816fa28523e688",
+    "lgbm_seed2026.txt": "2c0714422edd5334d8f116af9ff621927edfe4b42a23e56cf1ceaefd88b8059a",
+    "lgbm_seed2027.txt": "7771fd6f936b1d9ebf5ad14b8fc806fca2026515f78b8cf1c0ca97d79307fdd7",
+    "lgbm_seed2028.txt": "66a45e6dd98351d4c1fc7fa5b06728e08fe5b2109b3fdfdd997acb65f966244b"
+  },
+  "staged_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "e4fa42f98feafa4aa46a4d19cfaaa0788e07375b53ac7622ad778265eddac6cd",
+    "lgbm_seed2026.txt": "2c0714422edd5334d8f116af9ff621927edfe4b42a23e56cf1ceaefd88b8059a",
+    "lgbm_seed2027.txt": "7771fd6f936b1d9ebf5ad14b8fc806fca2026515f78b8cf1c0ca97d79307fdd7",
+    "lgbm_seed2028.txt": "66a45e6dd98351d4c1fc7fa5b06728e08fe5b2109b3fdfdd997acb65f966244b"
+  },
+  "validation": {
+    "passed": true,
+    "backends": {
+      "numpy": {
+        "rows": 30,
+        "max_abs": 0.08462271978695854,
+        "mean": 0.07631983823513622
+      },
+      "lightgbm": {
+        "rows": 30,
+        "max_abs": 0.08462271978695855,
+        "mean": 0.07631983823513622
+      }
+    },
+    "files": {
+      "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+      "hybrid_meta.json": "e4fa42f98feafa4aa46a4d19cfaaa0788e07375b53ac7622ad778265eddac6cd",
+      "lgbm_seed2026.txt": "2c0714422edd5334d8f116af9ff621927edfe4b42a23e56cf1ceaefd88b8059a",
+      "lgbm_seed2027.txt": "7771fd6f936b1d9ebf5ad14b8fc806fca2026515f78b8cf1c0ca97d79307fdd7",
+      "lgbm_seed2028.txt": "66a45e6dd98351d4c1fc7fa5b06728e08fe5b2109b3fdfdd997acb65f966244b"
+    }
+  },
+  "full_test_runner": {
+    "status": "ok",
+    "rows": 3217458,
+    "messages": [],
+    "model_init_seconds": 0.6879039799996463,
+    "predict_total_seconds": 567.7950390480046,
+    "predict_total_minutes": 9.463250650800076,
+    "predict_calls": 214538,
+    "predict_timeout_count": 0,
+    "max_predict_seconds": 0.7587623029994575,
+    "mean_predict_seconds": 0.0026465942585835824,
+    "total_seconds": 642.2949067339996,
+    "output_path": "/tmp/v3_staged_full.csv (temporary, not retained)"
+  },
+  "decision": {
+    "production_activated": false,
+    "reason": "Staging and validation complete; explicit production activation intentionally deferred.",
+    "recommended_command": ".venv/bin/python scripts/promote_v3_candidate.py --scale 1.16 --n-seeds 3 --activate --allow-production-overwrite --force"
+  }
+}
