@@ -46,13 +46,78 @@ class AssetHistory:
         self.feature_count = int(feature_count)
         self.window_size = int(window_size)
         self.values: dict[int, np.ndarray] = {}
+        # 在线快路径的状态（见 transform_online）。与 `values` **互斥**，混用会被拒。
+        self._ring: np.ndarray | None = None
+        self._seen: np.ndarray | None = None
+
+    # ------------------------------------------------------------------ 在线快路径
+
+    def _ensure_slots(self, n_slots: int) -> None:
+        """按 asset_id 开定槽位缓冲；出现更大的 asset_id 就补零扩容。"""
+        if self._ring is not None and len(self._ring) >= n_slots:
+            return
+        ring = np.zeros((n_slots, self.window_size, self.feature_count), dtype=np.float32)
+        seen = np.zeros(n_slots, dtype=np.int64)
+        if self._ring is not None:
+            ring[: len(self._ring)] = self._ring
+            seen[: len(self._seen)] = self._seen
+        self._ring, self._seen = ring, seen
+
+    def transform_online(self, current: np.ndarray, asset_ids: np.ndarray):
+        """与 `transform` **逐位相同**的在线版本：一次恰好一个 time_id。
+
+        为什么要另开一条：`transform` 每次都 `np.unique(asset_ids)` 再逐资产
+        `flatnonzero` / `vstack`，一次调用约上百个小 numpy 操作。离线整块只调几次无所谓，
+        在线要调 21.4 万次 —— 实测 **0.338 ms/次，占整次 `predict` 的 16%**，
+        比 1440 棵树的一半还贵。定槽位数组版实测 **0.019 ms**。
+
+        逐位相同的依据（不是「应该一样」，是构造上一样）：
+
+        1. 两条路径**共用 `_blocks`** —— float64 累加顺序、`counts<=j` 置零、
+           最后一次性 round 回 float32，全部是同一段代码；
+        2. 差别只在 `lags` 怎么取。在线每个 asset 至多一行 ⟹
+           `transform` 里 `position = len(buffer)`、`lags[j] = buffer[position-1-j]`，
+           恰好就是「最近一次在前」的环形缓冲第 j 格；`counts = min(已见次数, window)` 同理；
+        3. 存进去的都是**原样的 float32 值**，没有任何算术。
+
+        前提（官方 runner 满足）：本批内 asset_id 不重复。不满足直接抛，绝不静默算错。
+        """
+        current = np.asarray(current, dtype=np.float32)
+        if current.ndim != 2 or current.shape[1] != self.feature_count:
+            raise ValueError(f"current 形状应为 (n, {self.feature_count})，收到 {current.shape}")
+        asset_ids = np.asarray(asset_ids, dtype=np.int64)
+        if len(asset_ids) != len(current):
+            raise ValueError("asset_ids 与 current 行数不一致")
+        if self.values:
+            raise RuntimeError("同一个 AssetHistory 不能混用 transform() 与 transform_online()")
+        if not len(asset_ids):
+            raise ValueError("空批次")
+        if asset_ids.min() < 0:
+            raise ValueError("asset_id 不能为负")
+
+        self._ensure_slots(int(asset_ids.max()) + 1)
+        if len(asset_ids) > 1 and np.bincount(asset_ids, minlength=len(self._ring)).max() > 1:
+            raise ValueError("同一批内出现重复 asset_id —— 在线快路径要求一次一个 time_id")
+
+        lags = self._ring[asset_ids]                       # 高级索引 ⟹ 已是拷贝，随后写 ring 不会串
+        counts = np.minimum(self._seen[asset_ids], self.window_size)
+        if self.window_size > 1:                           # 整体右移一格（RHS 是拷贝，无别名问题）
+            self._ring[asset_ids, 1:] = self._ring[asset_ids, :-1]
+        self._ring[asset_ids, 0] = current
+        self._seen[asset_ids] += 1
+        return self._blocks(current, lags, counts)
 
     def transform(self, current: np.ndarray, asset_ids: np.ndarray):
         """返回 (previous, difference, rolling_mean, rolling_deviation) 并推进状态。
 
         `current` 必须是**已经过 apply_robust_transform** 的那 `feature_count` 列。
+
+        ⚠️ 这是**离线整块**路径（一次吃任意多行）。在线逐 time_id 请用
+        `transform_online` —— 逐位相同但快 18 倍。
         """
         current = np.asarray(current, dtype=np.float32)
+        if self._ring is not None:
+            raise RuntimeError("同一个 AssetHistory 不能混用 transform() 与 transform_online()")
         if current.ndim != 2 or current.shape[1] != self.feature_count:
             raise ValueError(f"current 形状应为 (n, {self.feature_count})，收到 {current.shape}")
         n = len(current)

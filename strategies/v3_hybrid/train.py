@@ -32,7 +32,9 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -63,6 +65,10 @@ NUM_ITERATION = 160                       # 逐折 best_iteration 的折均（�
 HISTORY_COUNT = 40                        # 与 walk_forward_history 的 history_feature_count 同
 HISTORY_WINDOW = 5                        # 与 AssetHistory.window_size 的历史值同
 BLEND_WEIGHT = 0.5                        # blend50：ê 里 LGBM 占一半，不拟合权重
+# 行级市场模型（`combo_market_weight`，08-13）。m̂ = (1−λ)·m̂_ridge + λ·m̂_lgbm，
+# λ 是先验、不拟合（ROADMAP §5）。设计矩阵 = [raw ‖ xs_dev ‖ history ‖ asset_id]（561 列），
+# 即行级岭回归基底的对应物；标签是 **y** 不是 e，取其逐 time_id 无权截面均值当市场分量。
+MARKET_LAMBDA = 0.5
 
 
 def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
@@ -125,25 +131,39 @@ def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
         blocks.extend(hist)
     blocks.append(asset_ids.astype(np.float32))       # ⚠️ asset_id 必须留在最后一列
     design = np.column_stack(blocks)
+    # 市场块的设计矩阵只是在同一批块前面多拼一个 raw（与 train 的 market_design 逐列对应）
+    market_design = (np.column_stack([lraw, *blocks])
+                     if meta.get("market_model_files") else None)
     del lraw, blocks
-    paths = [model_dir / name for name in meta["lgbm_model_files"]]
-    if backend == "lightgbm":
-        import lightgbm as lgb
-        e_lgbm = np.zeros(len(design), dtype=np.float64)
-        for path in paths:
-            e_lgbm += lgb.Booster(model_file=str(path)).predict(
-                design, num_iteration=int(meta["num_iteration"]))
-    elif backend == "numpy":
-        from lgbm_numpy import NumpyForest
-        forest = NumpyForest.from_files(paths, int(meta["num_iteration"]))
-        e_lgbm = np.concatenate([
-            forest.predict_sum(design[start:start + count],
-                               asset_ids[start:start + count].astype(np.int64))
-            for start, count in zip(starts, counts)])
-    else:
-        raise ValueError(f"未知 backend {backend!r}")
-    e_lgbm /= len(paths)
+
+    def run_forest(names: list[str], matrix: np.ndarray) -> np.ndarray:
+        paths = [model_dir / name for name in names]
+        if backend == "lightgbm":
+            import lightgbm as lgb
+            total = np.zeros(len(matrix), dtype=np.float64)
+            for path in paths:
+                total += lgb.Booster(model_file=str(path)).predict(
+                    matrix, num_iteration=int(meta["num_iteration"]))
+        elif backend == "numpy":
+            from lgbm_numpy import NumpyForest
+            forest = NumpyForest.from_files(paths, int(meta["num_iteration"]))
+            total = np.concatenate([
+                forest.predict_sum(matrix[start:start + count],
+                                   asset_ids[start:start + count].astype(np.int64))
+                for start, count in zip(starts, counts)])
+        else:
+            raise ValueError(f"未知 backend {backend!r}")
+        return total / len(paths)
+
+    e_lgbm = run_forest(meta["lgbm_model_files"], design)
     e_lgbm -= group_mean(e_lgbm)
+
+    # ---- 第二个市场分量：行级 LGBM 打 y，取逐 time_id 无权截面均值
+    if market_design is not None:
+        lam = np.float64(meta.get("market_lambda", 0.0))
+        market = (1.0 - lam) * market + lam * group_mean(
+            run_forest(meta["market_model_files"], market_design))
+        del market_design
 
     weight = float(meta["blend_weight"])
     blended = market + (1.0 - weight) * e_ridge + weight * e_lgbm
@@ -201,12 +221,40 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-history", action="store_true",
                    help="退回到 08-10 那版无历史特征的设计矩阵（回归对照用）")
     p.add_argument("--num-iteration", type=int, default=NUM_ITERATION)
+    # ---- 08-13 两个新开关，默认关闭 ⟹ 不传参数时产物与 08-11 的候选逐位相同
+    p.add_argument("--weighted-cross-section", action="store_true",
+                   help="截面块 ê 带 sample_weight 训练（与指标 Σw(y−ŷ)² 对齐）。"
+                        "本地 5 折 +4.50%%、机制是 B 缩 3.5%% 而非 A 涨（combo_market_weight）")
+    p.add_argument("--market-model", action="store_true",
+                   help="额外训一个行级 LGBM 打 y，取其截面均值当第二个市场分量。"
+                        "⚠️ 它**不带权** —— 带权反而掉 3.5 个百分点（combo_market_weight 的 mkt_wm 格）")
+    p.add_argument("--market-lambda", type=float, default=MARKET_LAMBDA)
+    # ---- ②类扫描用（08-13）。两片森林至今共用同一组 SPEC，而那组数出自 lgbm_xs 的
+    # `xs_loose`，是 2026-08-08 为「截面残差 e / 200 列 dev / 160 轮」挑的 ——
+    # 市场模型（标签 y / 561 列 / 480 轮）的超参**一个都没为它选过**。
+    p.add_argument("--xs-spec", default=None,
+                   help="覆盖截面块超参的 JSON，例如 '{\"num_leaves\":31}'；与 SPEC 合并")
+    p.add_argument("--market-spec", default=None, help="同上，作用于市场块")
+    p.add_argument("--xs-min-data-scale", type=float, default=1.0,
+                   help="截面块 min_data_in_leaf 的倍数（基数是行数 × MIN_DATA_FRAC）")
+    p.add_argument("--market-min-data-scale", type=float, default=1.0)
+    p.add_argument("--train-only", default="both",
+                   choices=["both", "cross_section", "market"],
+                   help="只训一片森林，另一片从 --reuse-from 原样复用 —— "
+                        "扫②类时只有被调的那片需要重训，成本减半")
+    p.add_argument("--reuse-from", default=None,
+                   help="被跳过那片森林的来源候选目录。会硬校验选列与预处理统计量逐位相同，"
+                        "对不上就退出（否则两片森林不在同一个特征空间里）")
     p.add_argument("--n-seeds", type=int, default=3)
     p.add_argument("--seed", type=int, default=2026)
     p.add_argument("--num-threads", type=int, default=16)
     # scale 是纯后处理旋钮，最终值由公榜两点法定；这里先写本地最优做占位
     p.add_argument("--prediction-scale", type=float, default=0.856)
     p.add_argument("--prediction-clip", type=float, default=0.5)
+    p.add_argument("--allow-production-overwrite", action="store_true",
+                   help="显式允许写入 strategies/v3_hybrid/model；默认拒绝。"
+                        "与 v1_ridge/train.py 同一条闸门 —— 候选一律走 --model-dir "
+                        "outputs/candidates/…，确认上榜后再由 scripts/promote_v3_candidate.py 转正")
     return p.parse_args()
 
 
@@ -217,6 +265,14 @@ def main() -> None:
 
     args = parse_args()
     model_dir = Path(args.model_dir)
+    production_dir = Path(__file__).resolve().parent / "model"
+    # ⚠️ --model-dir 的默认值就是生产目录，跑一次没带参数就把上榜模型覆盖了。
+    # v1_ridge/train.py 早有这条闸门，这里 2026-08-13 补上（伤疤清单：产物归属出过事）。
+    if model_dir.resolve() == production_dir.resolve() and not args.allow_production_overwrite:
+        raise SystemExit(
+            "拒绝覆盖正式模型目录；候选请传 --model-dir outputs/candidates/…，"
+            "确认上榜后走 scripts/promote_v3_candidate.py 转正，"
+            "真要直写请显式加 --allow-production-overwrite")
     model_dir.mkdir(parents=True, exist_ok=True)
     assert (model_dir / "baseline_model.json").exists(), \
         "model/baseline_model.json 缺失 —— 它是 v1_ridge 生产模型的冻结拷贝"
@@ -224,7 +280,11 @@ def main() -> None:
     print(f"加载训练数据（modulo {args.sample_modulo} / {args.sampling}）…", flush=True)
     d = load_rows(Path(args.data_root), args.sample_modulo, args.sampling)
     features, y, w, tid, aid = d["features"], d["target"], d["weight"], d["time_id"], d["asset_id"]
-    del d, w                                   # 权重只有训练端有，这里刻意不用（见模块注释）
+    del d
+    # ⚠️ weight 只有训练端有（推理端拿不到），所以它只能进**损失**，绝不能进特征。
+    # 截面块带权是 08-13 立的（+4.50%）；市场块**刻意不带权**（带权 −3.5%）。
+    sample_weight = np.maximum(w.astype(np.float64), 0.0) if args.weighted_cross_section else None
+    del w
     assert np.all(np.diff(tid) >= 0), "行未按 time_id 排序，截面聚合会算错"
 
     # 目标：无权截面残差
@@ -246,7 +306,8 @@ def main() -> None:
     apply_robust_transform(raw, stats["lower"][selected], stats["upper"][selected],
                            stats["center"][selected], stats["scale"][selected])
     dev = cross_sectional_deviation(raw, tid)
-    del raw
+    if not args.market_model:
+        del raw                                # 市场块要用它当前 200 列，别提前放掉
     blocks = [dev]
 
     # ---- 每资产滚动历史。history 列在**选中的 200 列之内**按 e 选（无权，与选列同口径），
@@ -266,32 +327,81 @@ def main() -> None:
 
     blocks.append(aid.astype(np.float32))          # ⚠️ asset_id 必须留在最后一列
     design = np.ascontiguousarray(np.column_stack(blocks))
-    del dev, blocks
     assert design.shape[0] == len(tid), "历史块与采样矩阵行数不一致 —— 两条读取路径口径不同"
-    cat = design.shape[1] - 1
     min_data = max(20, int(round(MIN_DATA_FRAC * len(design))))
-    print(f"设计矩阵 {design.shape[0]:,} × {design.shape[1]}，"
-          f"min_data_in_leaf={min_data:,}，{args.n_seeds} 种子 × {args.num_iteration} 轮", flush=True)
 
-    model_files = []
-    for s in range(args.n_seeds):
-        params = {
-            **SPEC, "objective": "regression", "metric": "l2", "verbosity": -1,
-            "num_threads": args.num_threads, "min_data_in_leaf": min_data,
-            "bagging_fraction": 0.7, "bagging_freq": 1,
-            "deterministic": True, "force_row_wise": True, "feature_pre_filter": False,
-            "seed": args.seed + s, "bagging_seed": args.seed + 1000 + s,
-            "feature_fraction_seed": args.seed + 2000 + s,
-        }
-        t0 = time.perf_counter()
-        ds = lgb.Dataset(design, label=e, params=params,
-                         categorical_feature=[cat], free_raw_data=False)
-        booster = lgb.train(params, ds, num_boost_round=args.num_iteration)
-        name = f"lgbm_seed{args.seed + s}.txt"
-        booster.save_model(str(model_dir / name), num_iteration=args.num_iteration)
-        model_files.append(name)
-        print(f"  种子 {args.seed + s}: {time.perf_counter()-t0:.0f}s → {name}", flush=True)
-        del booster, ds
+    def reuse_forest(prefix: str) -> list[str]:
+        """从 --reuse-from 复用一片森林，并硬校验它与本次跑在同一个特征空间里。"""
+        source = Path(args.reuse_from)
+        source_meta = json.loads((source / "hybrid_meta.json").read_text(encoding="utf-8"))
+        if list(source_meta["lgbm_features"]) != lgbm_features:
+            raise SystemExit(f"{source} 的选列与本次不同 —— 两片森林会不在同一个特征空间里")
+        for key in ("lower", "upper", "center", "scale"):
+            if not np.array_equal(np.asarray(source_meta[key], dtype=np.float64),
+                                  np.asarray(stats[key][selected], dtype=np.float64)):
+                raise SystemExit(f"{source} 的预处理统计量 {key} 与本次不同")
+        key = "market_model_files" if prefix.startswith("lgbm_market") else "lgbm_model_files"
+        names = list(source_meta[key])
+        for name in names:
+            if (source / name).resolve() != (model_dir / name).resolve():
+                shutil.copy2(source / name, model_dir / name)
+        print(f"  复用 {key}（来自 {source.name}）：{names}", flush=True)
+        return names
+
+    def train_forest(matrix: np.ndarray, label: np.ndarray, weight, prefix: str,
+                     spec: dict, min_data: int) -> list[str]:
+        """一组超参 × n_seeds 个种子，存盘并返回文件名。asset_id 恒为最后一列。"""
+        cat = matrix.shape[1] - 1
+        names = []
+        for s in range(args.n_seeds):
+            params = {
+                **spec, "objective": "regression", "metric": "l2", "verbosity": -1,
+                "num_threads": args.num_threads, "min_data_in_leaf": min_data,
+                "bagging_fraction": 0.7, "bagging_freq": 1,
+                "deterministic": True, "force_row_wise": True, "feature_pre_filter": False,
+                "seed": args.seed + s, "bagging_seed": args.seed + 1000 + s,
+                "feature_fraction_seed": args.seed + 2000 + s,
+            }
+            t0 = time.perf_counter()
+            ds = lgb.Dataset(matrix, label=label, weight=weight, params=params,
+                             categorical_feature=[cat], free_raw_data=False)
+            booster = lgb.train(params, ds, num_boost_round=args.num_iteration)
+            name = f"{prefix}{args.seed + s}.txt"
+            booster.save_model(str(model_dir / name), num_iteration=args.num_iteration)
+            names.append(name)
+            print(f"  {prefix} 种子 {args.seed + s}: {time.perf_counter()-t0:.0f}s → {name}", flush=True)
+            del booster, ds
+        return names
+
+    xs_spec = {**SPEC, **(json.loads(args.xs_spec) if args.xs_spec else {})}
+    market_spec = {**SPEC, **(json.loads(args.market_spec) if args.market_spec else {})}
+    xs_min_data = max(20, int(round(min_data * args.xs_min_data_scale)))
+    market_min_data = max(20, int(round(min_data * args.market_min_data_scale)))
+
+    print(f"截面块设计矩阵 {design.shape[0]:,} × {design.shape[1]}，"
+          f"min_data_in_leaf={xs_min_data:,}，{args.n_seeds} 种子 × {args.num_iteration} 轮"
+          f"{'，带 sample_weight' if sample_weight is not None else '，无权'}；{xs_spec}", flush=True)
+    model_files = (reuse_forest("lgbm_seed") if args.train_only == "market"
+                   else train_forest(design, e, sample_weight, "lgbm_seed", xs_spec, xs_min_data))
+    train_rows = len(design)          # ⚠️ 先取走再放 —— meta 在函数末尾才写
+    del design
+    gc.collect()
+
+    # ---- 行级市场模型：同一批块前面再拼上 raw，标签换成 y，**不带权**
+    market_files: list[str] = []
+    if args.market_model:
+        market_design = np.ascontiguousarray(np.column_stack([raw, *blocks]))
+        del raw
+        gc.collect()
+        print(f"市场块设计矩阵 {market_design.shape[0]:,} × {market_design.shape[1]}"
+              f"（= raw {len(selected)} 列 + 截面块 {market_design.shape[1] - len(selected)} 列），"
+              f"标签 y，无权", flush=True)
+        market_files = (reuse_forest("lgbm_market_seed") if args.train_only == "cross_section"
+                        else train_forest(market_design, y, None, "lgbm_market_seed",
+                                          market_spec, market_min_data))
+        del market_design
+        gc.collect()
+    del dev, blocks
 
     meta = {
         "strategy": "v3_hybrid_ridge_plus_lgbm_cross_section",
@@ -300,6 +410,21 @@ def main() -> None:
         "num_iteration": args.num_iteration,
         "num_iteration_source": "lgbm_blend_unweighted 逐折 best_iteration 的折均（范围 44~302）",
         "lgbm_model_files": model_files,
+        # ---- 截面块是否带权（`combo_market_weight` 的 w_e 格，08-13）
+        "cross_section_weighted": bool(sample_weight is not None),
+        "cross_section_weighted_note":
+            "带权 = 与指标 Σw(y−ŷ)² 对齐。本地 5 折 +4.50%、4/5 折、去最好折 +3.21%；"
+            "⚠️ 机制是 ΔB −3.53% 而非 ΔA（+0.08%）—— 减方差不是加信号",
+        # ---- 行级市场模型（`combo_market_weight` 的 mkt_we 格，08-13）
+        "market_model_files": market_files,
+        "market_lambda": float(args.market_lambda) if market_files else 0.0,
+        "market_design": "raw ‖ xs_dev ‖ history ‖ asset_id",
+        "market_note":
+            "m̂ = (1−λ)·m̂_ridge + λ·逐 time_id 无权截面均值(行级 LGBM 打 y)。"
+            "λ=0.5 是先验、不拟合（ROADMAP §5，本地实测优于 1.0）。"
+            "⚠️ 市场模型**不带权** —— 带权反而从 +15.18% 掉到 +11.63%"
+            "（combo_market_weight 的 mkt_wm 格）。"
+            "组合 mkt_we 本地 5 折 +18.30%、5/5 折、去最好折 +14.29%、2ΔA>ΔB",
         "lgbm_features": lgbm_features,
         # history 块（`history_peak`，08-11）。下标是**在 lgbm_features 里的位置**（0..199），
         # 不是 323 列里的下标 —— 推理端因此直接复用下面那 200 列的统计量。
@@ -321,9 +446,14 @@ def main() -> None:
         "cross_sectional_mean_note":
             "推理端拿不到 weight（test 无该列且 runner 的 forbidden 会剥掉），"
             "所以拆解、投影、训练目标一律无权。已在 lgbm_blend_unweighted 上重测，PASS 成立。",
-        "lgbm_params": {**SPEC, "min_data_in_leaf": min_data,
+        "lgbm_params": {**xs_spec, "min_data_in_leaf": xs_min_data,
                         "bagging_fraction": 0.7, "bagging_freq": 1},
-        "train_rows": int(len(design)),
+        "market_lgbm_params": ({**market_spec, "min_data_in_leaf": market_min_data,
+                                "bagging_fraction": 0.7, "bagging_freq": 1}
+                               if market_files else None),
+        "train_only": args.train_only,
+        "reuse_from": args.reuse_from,
+        "train_rows": int(train_rows),
         "sample_modulo": args.sample_modulo,
         "sampling": args.sampling,
         "ridge_model_sha_note": "baseline_model.json 是 v1_ridge 生产模型的冻结拷贝，不重训",

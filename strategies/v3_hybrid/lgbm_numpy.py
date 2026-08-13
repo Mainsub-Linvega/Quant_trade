@@ -149,10 +149,14 @@ def _tree_depth(tree: dict) -> int:
 class NumpyForest:
     """一组 LightGBM 回归树的纯 numpy 推理器（预测值按树**求和**，不做平均）。"""
 
-    def __init__(self, trees: list[dict], n_features: int, n_assets: int = _N_ASSETS):
+    def __init__(self, trees: list[dict], n_features: int, n_assets: int = _N_ASSETS,
+                 n_models: int = 1):
         self.n_trees = len(trees)
         self.n_features = int(n_features)
         self.n_assets = int(n_assets)
+        # 这片森林是由几个模型文件拼起来的 —— `predict_sum` 求的是**和**，
+        # 调用方要平均就得除以它（主路径那边是逐 booster 求和再除以 booster 数）。
+        self.n_models = int(n_models)
 
         # ---- 分类分裂 → 合成列。位集合去重，一个集合一列。
         bitsets: dict[tuple[int, ...], int] = {}
@@ -252,6 +256,7 @@ class NumpyForest:
         拼在一起是因为调用方要的就是「所有树求和再除以模型数」——
         与 `sum_k booster_k.predict()` 数学等价，只差 480 个 double 的求和顺序（~1e-19）。
         """
+        paths = list(paths)                    # 可能传进来生成器；下面要遍历两次（含计数）
         trees: list[dict] = []
         n_features = 0
         for path in paths:
@@ -263,7 +268,7 @@ class NumpyForest:
             max_feature = _header_value(text.split("\nTree=")[0], "max_feature_idx")
             n_features = max(n_features, int(max_feature) + 1)
             trees.extend(parsed[:num_iteration])
-        return cls(trees, n_features, n_assets)
+        return cls(trees, n_features, n_assets, n_models=len(paths))
 
     # ------------------------------------------------------------------ 推理
 

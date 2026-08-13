@@ -79,10 +79,16 @@ class LgbmNumpyEquivalenceTest(unittest.TestCase):
         return ratio
 
     def test_matches_on_synthetic_batches(self) -> None:
-        """随机输入，2 万行 / 15 行一批 —— 比真实数据更能扫到分裂阈值附近。"""
+        """随机输入，2 万行 / 15 行一批 —— 比真实数据更能扫到分裂阈值附近。
+
+        ⚠️ 列宽必须**从模型里读**（`forest.n_features`），不能写死。
+        原来写死 201（= 200 dev + asset_id）—— 那是 08-10 那版无 history 的生产模型；
+        08-13 生产换成 361 列（+ 4×40 history）后这条就炸了。
+        """
         rng = np.random.default_rng(20260809)
         groups = 1400
-        features = rng.normal(0.0, 1.0, (groups * N_ASSETS, 200)).astype(np.float32)
+        width = self.forest.n_features - 1                        # 最后一列是 asset_id
+        features = rng.normal(0.0, 1.0, (groups * N_ASSETS, width)).astype(np.float32)
         features[rng.random(features.shape) < 0.02] *= 8.0        # 造点尾部
         assets = np.tile(np.arange(N_ASSETS), groups)
         design = np.column_stack([features, assets.astype(np.float32)])
@@ -111,7 +117,19 @@ class LgbmNumpyEquivalenceTest(unittest.TestCase):
                    for name in ("lower", "upper", "center", "scale")))
         deviation = cross_sectional_deviation(raw, frame["time_id"].to_numpy(dtype=np.int64))
         assets = frame["asset_id"].to_numpy(dtype=np.int64)
-        design = np.column_stack([deviation, assets.astype(np.float32)])
+        # ⚠️ 设计矩阵必须与生产 `main.Model.predict` 逐列对应：
+        # `[xs_dev ‖ history 4 块 ‖ asset_id]`。原来这里只拼了 `[dev ‖ asset_id]`，
+        # 那是无 history 时代的形状；生产一换成 361 列就炸。
+        blocks = [deviation]
+        if self.meta.get("history_positions"):
+            from history import history_design_blocks
+            hist, _ = history_design_blocks(raw, assets, self.meta["history_positions"],
+                                            int(self.meta["history_window"]))
+            blocks.extend(hist)
+        blocks.append(assets.astype(np.float32))
+        design = np.column_stack(blocks)
+        self.assertEqual(design.shape[1], self.forest.n_features,
+                         "设计矩阵列数与模型不符 —— 测试的口径落后于生产了")
 
         time_ids = frame["time_id"].to_numpy(dtype=np.int64)
         starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
@@ -134,13 +152,24 @@ class LgbmNumpyEquivalenceTest(unittest.TestCase):
         """结构假设不成立时必须炸，绝不静默算错。"""
         from lgbm_numpy import _parse_model_text
 
+        import re
+
         text = self.paths[0].read_text(encoding="utf-8")
+        # ⚠️ 别写死 "decision_type=1 2" —— 那串取决于第一棵树长什么样，
+        # 换一批模型就可能不存在，`str.replace` 会**静默不替换**，
+        # 于是这条用例变成永远通过的空壳（08-13 换生产模型时正是这么暴露的）。
+        match = re.search(r"^decision_type=(\S+)(.*)$", text, re.M)
+        self.assertIsNotNone(match, "模型文本里没有 decision_type 行")
+        bad_decision = text[:match.start()] + f"decision_type=9{match.group(2)}" + text[match.end():]
+        self.assertNotEqual(bad_decision, text, "构造的坏样本与原文相同 —— 替换没生效")
+
         for broken, needle in (
             (text.replace("num_class=1", "num_class=2", 1), "num_class"),
             (text.replace("objective=regression", "objective=binary sigmoid:1", 1), "regression"),
             (text.replace("\nversion=v4", "\naverage_output=\nversion=v4", 1), "average_output"),
-            (text.replace("decision_type=1 2", "decision_type=9 2", 1), "decision_type"),
+            (bad_decision, "decision_type"),
         ):
+            self.assertNotEqual(broken, text, f"{needle} 的坏样本没造出来")
             with self.assertRaises(ValueError, msg=f"{needle} 没被拦下"):
                 _parse_model_text(broken)
 
