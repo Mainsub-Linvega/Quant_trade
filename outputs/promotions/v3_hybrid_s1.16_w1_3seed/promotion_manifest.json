@@ -1,0 +1,80 @@
+{
+  "created_at": "2026-08-13T08:38:46.654516+00:00",
+  "source": "/home/mainsub/Documents/Quant_trade/outputs/candidates/v3_hybrid_mkt_shrunk",
+  "destination": "/home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_s1.16_w1_3seed",
+  "configuration": {
+    "prediction_scale": 1.16,
+    "blend_weight": 1.0,
+    "num_iteration": 480,
+    "n_seeds": 3
+  },
+  "public_baseline": {
+    "blend_weight": 1.0,
+    "num_iteration": 480,
+    "history_window": 5,
+    "history_positions_count": 40,
+    "prediction_scale": 1.16,
+    "n_seeds": 3,
+    "market_lambda": 0.5,
+    "market_model_count": 3,
+    "cross_section_weighted": true
+  },
+  "source_meta": {
+    "blend_weight": 0.5,
+    "prediction_scale": 0.856,
+    "num_iteration": 480
+  },
+  "source_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "0d1f97e5848c7b0698944a61f34d1ed2120a07bc7f3022853c11d958659ac86c",
+    "lgbm_market_seed2026.txt": "c055f119b5539380c8e7b929f7bee0fe540657ae2e54e7c67708bef2ea86552c",
+    "lgbm_market_seed2027.txt": "591e13692eb283a69710050484545bf4deae56f6b88b2207fe08e8f0ff87458a",
+    "lgbm_market_seed2028.txt": "91dcef3a63fb6b8818d7757dedef8046e07d037023b12fce7dcae84401bce4f9",
+    "lgbm_seed2026.txt": "582a1e93117b1b1105b06899bdbab76e6c4d4f58643ff40101905953b4866168",
+    "lgbm_seed2027.txt": "9bdc8a5300a607c710199b0836a97b049d8543001128a1e3f65bdf84cfdcb195",
+    "lgbm_seed2028.txt": "5f57f744f48b352cb3841d05d070c74ac1d838f5fb349c7ba9cac8904b01557c"
+  },
+  "staged_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "777bbeaad1ccc6460670a8b7354d1fb9b739e81824a676938b611361f1016d20",
+    "lgbm_market_seed2026.txt": "c055f119b5539380c8e7b929f7bee0fe540657ae2e54e7c67708bef2ea86552c",
+    "lgbm_market_seed2027.txt": "591e13692eb283a69710050484545bf4deae56f6b88b2207fe08e8f0ff87458a",
+    "lgbm_market_seed2028.txt": "91dcef3a63fb6b8818d7757dedef8046e07d037023b12fce7dcae84401bce4f9",
+    "lgbm_seed2026.txt": "582a1e93117b1b1105b06899bdbab76e6c4d4f58643ff40101905953b4866168",
+    "lgbm_seed2027.txt": "9bdc8a5300a607c710199b0836a97b049d8543001128a1e3f65bdf84cfdcb195",
+    "lgbm_seed2028.txt": "5f57f744f48b352cb3841d05d070c74ac1d838f5fb349c7ba9cac8904b01557c"
+  },
+  "validation": {
+    "passed": true,
+    "backends": {
+      "numpy": {
+        "rows": 30,
+        "max_abs": 0.1124123472104759,
+        "mean": 0.017597700106326532,
+        "std": 0.03899196432354708
+      },
+      "lightgbm": {
+        "rows": 30,
+        "max_abs": 0.11241234721047615,
+        "mean": 0.017597700106326535,
+        "std": 0.0389919643235471
+      }
+    },
+    "numpy_vs_lightgbm_max_abs": 2.498001805406602e-16,
+    "blend_weight": 1.0,
+    "blend_weight_sensitivity_max_abs": 0.08164836923210203,
+    "market_lambda": 0.5,
+    "market_lambda_sensitivity_max_abs": 0.019701122700976285,
+    "cross_section_weighted": true,
+    "files": {
+      "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+      "hybrid_meta.json": "777bbeaad1ccc6460670a8b7354d1fb9b739e81824a676938b611361f1016d20",
+      "lgbm_market_seed2026.txt": "c055f119b5539380c8e7b929f7bee0fe540657ae2e54e7c67708bef2ea86552c",
+      "lgbm_market_seed2027.txt": "591e13692eb283a69710050484545bf4deae56f6b88b2207fe08e8f0ff87458a",
+      "lgbm_market_seed2028.txt": "91dcef3a63fb6b8818d7757dedef8046e07d037023b12fce7dcae84401bce4f9",
+      "lgbm_seed2026.txt": "582a1e93117b1b1105b06899bdbab76e6c4d4f58643ff40101905953b4866168",
+      "lgbm_seed2027.txt": "9bdc8a5300a607c710199b0836a97b049d8543001128a1e3f65bdf84cfdcb195",
+      "lgbm_seed2028.txt": "5f57f744f48b352cb3841d05d070c74ac1d838f5fb349c7ba9cac8904b01557c"
+    }
+  }
+}

@@ -1,14 +1,24 @@
 {
   "strategy": "v3_hybrid_ridge_plus_lgbm_cross_section",
-  "blend_weight": 0.5,
+  "blend_weight": 1.0,
   "blend_note": "最终 ê = (1−w)·ê_ridge + w·ê_lgbm，w=0.5 是先验、不拟合（ROADMAP §5）",
-  "num_iteration": 160,
+  "num_iteration": 480,
   "num_iteration_source": "lgbm_blend_unweighted 逐折 best_iteration 的折均（范围 44~302）",
   "lgbm_model_files": [
     "lgbm_seed2026.txt",
     "lgbm_seed2027.txt",
     "lgbm_seed2028.txt"
   ],
+  "cross_section_weighted": true,
+  "cross_section_weighted_note": "带权 = 与指标 Σw(y−ŷ)² 对齐。本地 5 折 +4.50%、4/5 折、去最好折 +3.21%；⚠️ 机制是 ΔB −3.53% 而非 ΔA（+0.08%）—— 减方差不是加信号",
+  "market_model_files": [
+    "lgbm_market_seed2026.txt",
+    "lgbm_market_seed2027.txt",
+    "lgbm_market_seed2028.txt"
+  ],
+  "market_lambda": 0.5,
+  "market_design": "raw ‖ xs_dev ‖ history ‖ asset_id",
+  "market_note": "m̂ = (1−λ)·m̂_ridge + λ·逐 time_id 无权截面均值(行级 LGBM 打 y)。λ=0.5 是先验、不拟合（ROADMAP §5，本地实测优于 1.0）。⚠️ 市场模型**不带权** —— 带权反而从 +15.18% 掉到 +11.63%（combo_market_weight 的 mkt_wm 格）。组合 mkt_we 本地 5 折 +18.30%、5/5 折、去最好折 +14.29%、2ΔA>ΔB",
   "lgbm_features": [
     "feature_000",
     "feature_001",
@@ -211,6 +221,50 @@
     "feature_321",
     "feature_322"
   ],
+  "history_positions": [
+    5,
+    8,
+    12,
+    13,
+    14,
+    15,
+    26,
+    30,
+    32,
+    35,
+    67,
+    69,
+    71,
+    104,
+    107,
+    117,
+    118,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    127,
+    142,
+    143,
+    144,
+    145,
+    152,
+    163,
+    166,
+    168,
+    171,
+    179,
+    181,
+    183,
+    195,
+    198
+  ],
+  "history_window": 5,
+  "history_note": "本地 5 折配对 peak +10.10%、5/5 折、去掉最好一折 +9.10%、2ΔA>ΔB（outputs/experiments/history_peak_lgbm_scoped.md）；岭回归上同一改动是 −1.97%，只在截面块成立",
   "lower": [
     -0.0707320123910904,
     -0.21278592944145203,
@@ -1019,7 +1073,7 @@
     0.125955730676651,
     0.04053134471178055
   ],
-  "prediction_scale": 0.856,
+  "prediction_scale": 1.16,
   "prediction_clip": 0.5,
   "scale_note": "scale 是纯后处理旋钮；此处为本地最优占位，最终值由公榜两点法定",
   "cross_sectional_mean": "unweighted",
@@ -1033,8 +1087,20 @@
     "bagging_fraction": 0.7,
     "bagging_freq": 1
   },
+  "market_lgbm_params": {
+    "num_leaves": 15,
+    "learning_rate": 0.02,
+    "feature_fraction": 0.4,
+    "lambda_l2": 30.0,
+    "min_data_in_leaf": 75580,
+    "bagging_fraction": 0.7,
+    "bagging_freq": 1
+  },
+  "train_only": "market",
+  "reuse_from": "outputs/candidates/v3_hybrid_r480_pb_hist_mktwe",
   "train_rows": 2645530,
   "sample_modulo": 5,
   "sampling": "phase_balanced",
-  "ridge_model_sha_note": "baseline_model.json 是 v1_ridge 生产模型的冻结拷贝，不重训"
+  "ridge_model_sha_note": "baseline_model.json 是 v1_ridge 生产模型的冻结拷贝，不重训",
+  "promotion_note": "Staged by scripts/promote_v3_candidate.py; source artifacts are unchanged. scale=1.16, blend_weight=1.0, seeds=3"
 }
