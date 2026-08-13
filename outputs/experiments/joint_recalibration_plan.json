@@ -1,0 +1,177 @@
+{
+  "classification": "post-refresh joint recalibration; no one-dimensional conclusions",
+  "selection_metric": "paired absolute peak against the fixed strong baseline",
+  "ridge": [
+    {
+      "name": "r_a1000000_f200_m5",
+      "ridge_alpha": 1000000.0,
+      "feature_count": 200,
+      "sample_modulo": 5
+    },
+    {
+      "name": "r_a1000000_f200_m3",
+      "ridge_alpha": 1000000.0,
+      "feature_count": 200,
+      "sample_modulo": 3
+    },
+    {
+      "name": "r_a1000000_f323_m5",
+      "ridge_alpha": 1000000.0,
+      "feature_count": 323,
+      "sample_modulo": 5
+    },
+    {
+      "name": "r_a1000000_f323_m3",
+      "ridge_alpha": 1000000.0,
+      "feature_count": 323,
+      "sample_modulo": 3
+    },
+    {
+      "name": "r_a2000000_f200_m5",
+      "ridge_alpha": 2000000.0,
+      "feature_count": 200,
+      "sample_modulo": 5
+    },
+    {
+      "name": "r_a2000000_f200_m3",
+      "ridge_alpha": 2000000.0,
+      "feature_count": 200,
+      "sample_modulo": 3
+    },
+    {
+      "name": "r_a2000000_f323_m5",
+      "ridge_alpha": 2000000.0,
+      "feature_count": 323,
+      "sample_modulo": 5
+    },
+    {
+      "name": "r_a2000000_f323_m3",
+      "ridge_alpha": 2000000.0,
+      "feature_count": 323,
+      "sample_modulo": 3
+    },
+    {
+      "name": "r_a4000000_f200_m5",
+      "ridge_alpha": 4000000.0,
+      "feature_count": 200,
+      "sample_modulo": 5
+    },
+    {
+      "name": "r_a4000000_f200_m3",
+      "ridge_alpha": 4000000.0,
+      "feature_count": 200,
+      "sample_modulo": 3
+    },
+    {
+      "name": "r_a4000000_f323_m5",
+      "ridge_alpha": 4000000.0,
+      "feature_count": 323,
+      "sample_modulo": 5
+    },
+    {
+      "name": "r_a4000000_f323_m3",
+      "ridge_alpha": 4000000.0,
+      "feature_count": 323,
+      "sample_modulo": 3
+    }
+  ],
+  "lgbm": [
+    {
+      "name": "l_stronger_r320",
+      "capacity": "stronger",
+      "num_iteration": 320,
+      "num_leaves": 31,
+      "min_data_fraction": 0.006,
+      "learning_rate": 0.02,
+      "feature_fraction": 0.5,
+      "lambda_l2": 10.0
+    },
+    {
+      "name": "l_stronger_r480",
+      "capacity": "stronger",
+      "num_iteration": 480,
+      "num_leaves": 31,
+      "min_data_fraction": 0.006,
+      "learning_rate": 0.02,
+      "feature_fraction": 0.5,
+      "lambda_l2": 10.0
+    },
+    {
+      "name": "l_stronger_r640",
+      "capacity": "stronger",
+      "num_iteration": 640,
+      "num_leaves": 31,
+      "min_data_fraction": 0.006,
+      "learning_rate": 0.02,
+      "feature_fraction": 0.5,
+      "lambda_l2": 10.0
+    },
+    {
+      "name": "l_current_r320",
+      "capacity": "current",
+      "num_iteration": 320,
+      "num_leaves": 63,
+      "min_data_fraction": 0.0034285714285714284,
+      "learning_rate": 0.03,
+      "feature_fraction": 0.7,
+      "lambda_l2": 1.0
+    },
+    {
+      "name": "l_current_r480",
+      "capacity": "current",
+      "num_iteration": 480,
+      "num_leaves": 63,
+      "min_data_fraction": 0.0034285714285714284,
+      "learning_rate": 0.03,
+      "feature_fraction": 0.7,
+      "lambda_l2": 1.0
+    },
+    {
+      "name": "l_current_r640",
+      "capacity": "current",
+      "num_iteration": 640,
+      "num_leaves": 63,
+      "min_data_fraction": 0.0034285714285714284,
+      "learning_rate": 0.03,
+      "feature_fraction": 0.7,
+      "lambda_l2": 1.0
+    },
+    {
+      "name": "l_looser_r320",
+      "capacity": "looser",
+      "num_iteration": 320,
+      "num_leaves": 95,
+      "min_data_fraction": 0.002,
+      "learning_rate": 0.025,
+      "feature_fraction": 0.8,
+      "lambda_l2": 0.5
+    },
+    {
+      "name": "l_looser_r480",
+      "capacity": "looser",
+      "num_iteration": 480,
+      "num_leaves": 95,
+      "min_data_fraction": 0.002,
+      "learning_rate": 0.025,
+      "feature_fraction": 0.8,
+      "lambda_l2": 0.5
+    },
+    {
+      "name": "l_looser_r640",
+      "capacity": "looser",
+      "num_iteration": 640,
+      "num_leaves": 95,
+      "min_data_fraction": 0.002,
+      "learning_rate": 0.025,
+      "feature_fraction": 0.8,
+      "lambda_l2": 0.5
+    }
+  ],
+  "gates": [
+    "data audit proves train changed",
+    "public-period metric ruler matches known CSV scores",
+    "all preprocessing fitted inside each training fold",
+    "report A/B/peak and runtime",
+    "select once; do not extend the matrix after reading outcomes"
+  ]
+}

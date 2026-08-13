@@ -1,0 +1,279 @@
+{
+  "question": "Can a target-only two-head MLP provide a useful low-correlation ensemble component?",
+  "configuration": {
+    "data_root": "/home/mainsub/Documents/Quant_trade/data",
+    "output_dir": "/home/mainsub/Documents/Quant_trade/outputs/experiments",
+    "label": "target_mlp_screen",
+    "baseline_cache": "/home/mainsub/Documents/Quant_trade/outputs/cache/temporal_v3_oof_1seed160.npz",
+    "candidate_meta": "/home/mainsub/Documents/Quant_trade/outputs/candidates/v3_hybrid_r480_phasebal_hist/hybrid_meta.json",
+    "n_folds": 5,
+    "train_window": 39480,
+    "embargo": 6,
+    "sample_modulo": 10,
+    "sampling": "phase_balanced",
+    "current_feature_count": 100,
+    "market_hidden": [
+      32
+    ],
+    "cross_hidden": [
+      64,
+      32
+    ],
+    "max_iter": 12,
+    "batch_size": 4096,
+    "learning_rate": 0.001,
+    "alpha": 0.001,
+    "seed": 2026,
+    "force": true
+  },
+  "architecture": {
+    "market": "time-level mean features -> MLP",
+    "cross": "current cross-sectional deviation + validated history40 + asset one-hot -> MLP",
+    "target": "market + demean(cross)",
+    "responders_used": false
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "train_rows": 591851,
+      "valid_rows": 148022,
+      "market_rows": 39480,
+      "design": {
+        "market_columns": 100,
+        "cross_columns": 275
+      },
+      "iterations": {
+        "market": 12,
+        "cross": 12
+      },
+      "numpy_parity": {
+        "market_max_abs": 0.0,
+        "cross_max_abs": 6.11867364552765e-07
+      },
+      "baseline": {
+        "A": 0.0013327206095314075,
+        "B": 0.0025378170629804194,
+        "peak": 0.0006998708649960205,
+        "optimal_scale": 0.5251444751365398,
+        "score_at_unit_scale": 0.0001276241560823955,
+        "denominator": 480325.63549029315
+      },
+      "mlp": {
+        "A": 0.0031155863114152786,
+        "B": 0.03446362685581567,
+        "peak": 0.00028165573241866284,
+        "optimal_scale": 0.09040216006428613,
+        "score_at_unit_scale": -0.028232454232985114,
+        "denominator": 480325.63549029315
+      },
+      "equal_blend": {
+        "A": 0.002224153460473343,
+        "B": 0.010775116976241225,
+        "peak": 0.0004591002238438066,
+        "optimal_scale": 0.20641571366487507,
+        "score_at_unit_scale": -0.0063268100552945385,
+        "denominator": 480325.63549029315
+      },
+      "prediction_correlation": 0.24233481465749418,
+      "elapsed_seconds": 16.38497866599937
+    },
+    {
+      "fold": 1,
+      "train_rows": 591902,
+      "valid_rows": 145244,
+      "market_rows": 39480,
+      "design": {
+        "market_columns": 100,
+        "cross_columns": 275
+      },
+      "iterations": {
+        "market": 12,
+        "cross": 12
+      },
+      "numpy_parity": {
+        "market_max_abs": 0.0,
+        "cross_max_abs": 6.928759357371916e-07
+      },
+      "baseline": {
+        "A": 0.0017763730874400707,
+        "B": 0.0017284199142610726,
+        "peak": 0.0018256566704338145,
+        "optimal_scale": 1.027743936981598,
+        "score_at_unit_scale": 0.0018243262606190689,
+        "denominator": 391766.19442163827
+      },
+      "mlp": {
+        "A": 0.004440017912722688,
+        "B": 0.02027669369709664,
+        "peak": 0.0009722373558427375,
+        "optimal_scale": 0.218971494024119,
+        "score_at_unit_scale": -0.011396657871651263,
+        "denominator": 391766.19442163827
+      },
+      "equal_blend": {
+        "A": 0.0031081955000813784,
+        "B": 0.0065796606294829295,
+        "peak": 0.0014682944623977273,
+        "optimal_scale": 0.4723945010406471,
+        "score_at_unit_scale": -0.00036326962932017263,
+        "denominator": 391766.19442163827
+      },
+      "prediction_correlation": 0.3213337784148894,
+      "elapsed_seconds": 16.60049813599835
+    },
+    {
+      "fold": 2,
+      "train_rows": 589147,
+      "valid_rows": 145640,
+      "market_rows": 39480,
+      "design": {
+        "market_columns": 100,
+        "cross_columns": 275
+      },
+      "iterations": {
+        "market": 12,
+        "cross": 12
+      },
+      "numpy_parity": {
+        "market_max_abs": 0.0,
+        "cross_max_abs": 4.210691758044227e-07
+      },
+      "baseline": {
+        "A": 0.0015142379112802295,
+        "B": 0.001713005865181414,
+        "peak": 0.0013385339178132259,
+        "optimal_scale": 0.8839653979350887,
+        "score_at_unit_scale": 0.001315469957379045,
+        "denominator": 392743.87037783867
+      },
+      "mlp": {
+        "A": 0.0014135004197883684,
+        "B": 0.024260498431670215,
+        "peak": 8.235541583653862e-05,
+        "optimal_scale": 0.058263453398102995,
+        "score_at_unit_scale": -0.021433497592093478,
+        "denominator": 392743.87037783867
+      },
+      "equal_blend": {
+        "A": 0.0014638691655343003,
+        "B": 0.007679535636429963,
+        "peak": 0.0002790419935857318,
+        "optimal_scale": 0.19061948988035674,
+        "score_at_unit_scale": -0.004751797305361362,
+        "denominator": 392743.87037783867
+      },
+      "prediction_correlation": 0.3420109540156991,
+      "elapsed_seconds": 16.7446677730004
+    },
+    {
+      "fold": 3,
+      "train_rows": 586774,
+      "valid_rows": 147753,
+      "market_rows": 39480,
+      "design": {
+        "market_columns": 100,
+        "cross_columns": 275
+      },
+      "iterations": {
+        "market": 12,
+        "cross": 12
+      },
+      "numpy_parity": {
+        "market_max_abs": 0.0,
+        "cross_max_abs": 5.985672925090668e-07
+      },
+      "baseline": {
+        "A": 0.001322250962037182,
+        "B": 0.0016529310123539408,
+        "peak": 0.001057725696681333,
+        "optimal_scale": 0.7999432233739525,
+        "score_at_unit_scale": 0.0009915709117204231,
+        "denominator": 468652.12415732414
+      },
+      "mlp": {
+        "A": 0.0020633736394869,
+        "B": 0.01622851865914406,
+        "peak": 0.00026234746778508304,
+        "optimal_scale": 0.1271449158623162,
+        "score_at_unit_scale": -0.01210177138017026,
+        "denominator": 468652.12415732414
+      },
+      "equal_blend": {
+        "A": 0.0016928123007620404,
+        "B": 0.0051077338575692965,
+        "peak": 0.0005610342209519468,
+        "optimal_scale": 0.3314213989934917,
+        "score_at_unit_scale": -0.0017221092560452157,
+        "denominator": 468652.12415732414
+      },
+      "prediction_correlation": 0.2396446517879338,
+      "elapsed_seconds": 17.022858782000185
+    },
+    {
+      "fold": 4,
+      "train_rows": 586719,
+      "valid_rows": 144181,
+      "market_rows": 39480,
+      "design": {
+        "market_columns": 100,
+        "cross_columns": 275
+      },
+      "iterations": {
+        "market": 12,
+        "cross": 12
+      },
+      "numpy_parity": {
+        "market_max_abs": 0.0,
+        "cross_max_abs": 6.197807351782103e-07
+      },
+      "baseline": {
+        "A": 0.0018426095100809573,
+        "B": 0.001640315244504638,
+        "peak": 0.002069852010468946,
+        "optimal_scale": 1.1233264558468519,
+        "score_at_unit_scale": 0.002044903775657277,
+        "denominator": 430560.5553449757
+      },
+      "mlp": {
+        "A": 0.001461175326378925,
+        "B": 0.021365327082488964,
+        "peak": 9.992982209799321e-05,
+        "optimal_scale": 0.06839002842022977,
+        "score_at_unit_scale": -0.01844297642973111,
+        "denominator": 430560.5553449757
+      },
+      "equal_blend": {
+        "A": 0.001651892418229942,
+        "B": 0.00658049966600273,
+        "peak": 0.00041467193980774435,
+        "optimal_scale": 0.25102841760850214,
+        "score_at_unit_scale": -0.0032767148295428455,
+        "denominator": 430560.5553449757
+      },
+      "prediction_correlation": 0.279641974066184,
+      "elapsed_seconds": 17.119107563999933
+    }
+  ],
+  "summary": {
+    "baseline_peak_mean": 0.0013983278320786681,
+    "mlp_peak_mean": 0.00033970515879620306,
+    "equal_blend_peak_mean": 0.0006364285681173914,
+    "mlp_relative_to_baseline": 0.24293670697465722,
+    "blend_relative_gain": -0.544864549272887,
+    "blend_positive_folds": 0,
+    "blend_mean_delta_drop_best": -0.0008921814196635423,
+    "prediction_correlation_mean": 0.2849932345884401,
+    "checks": {
+      "mlp_at_least_70pct_of_baseline": false,
+      "blend_gain_at_least_5pct": false,
+      "blend_positive_at_least_4of5_or_80pct": false,
+      "blend_survives_drop_best": false
+    },
+    "pass": false
+  },
+  "verdict": {
+    "pass": false,
+    "next": "stop MLP search"
+  },
+  "elapsed_seconds": 100.4786487099991
+}
