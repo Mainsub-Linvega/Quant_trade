@@ -119,3 +119,41 @@ def linear_predict(
     design = np.column_stack([raw, deviation])
     prediction = (intercept + design @ coef) * prediction_scale
     return np.clip(prediction, -prediction_clip, prediction_clip)
+
+
+def asset_scaled_zero_mean(
+    values: np.ndarray,
+    asset_ids: np.ndarray,
+    scales: np.ndarray,
+    time_ids: np.ndarray | None = None,
+) -> np.ndarray:
+    """Apply per-asset scales and project back to an unweighted zero-mean cross section.
+
+    ``time_ids=None`` is the online one-time-id path. Passing ordered ``time_ids`` handles an
+    offline block containing multiple complete cross sections. The returned array is float64
+    because LightGBM ensemble predictions are accumulated in float64.
+    """
+    values = np.asarray(values, dtype=np.float64)
+    asset_ids = np.asarray(asset_ids, dtype=np.int64)
+    scales = np.asarray(scales, dtype=np.float64)
+    if values.ndim != 1 or asset_ids.ndim != 1 or values.shape != asset_ids.shape:
+        raise ValueError("values and asset_ids must be matching 1D arrays")
+    if scales.ndim != 1 or len(scales) == 0 or not np.all(np.isfinite(scales)):
+        raise ValueError("scales must be a finite non-empty 1D array")
+    if len(asset_ids) == 0:
+        raise ValueError("empty cross section")
+    if asset_ids.min() < 0 or asset_ids.max() >= len(scales):
+        raise ValueError("asset_id is outside scales")
+
+    adjusted = values * scales[asset_ids]
+    if time_ids is None:
+        adjusted -= adjusted.mean()
+        return adjusted
+
+    time_ids = np.asarray(time_ids, dtype=np.int64)
+    if time_ids.shape != values.shape or np.any(np.diff(time_ids) < 0):
+        raise ValueError("time_ids must be a sorted 1D array matching values")
+    starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
+    counts = np.diff(np.r_[starts, len(time_ids)])
+    adjusted -= np.repeat(np.add.reduceat(adjusted, starts) / counts, counts)
+    return adjusted

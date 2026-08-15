@@ -65,6 +65,24 @@ _BACKEND_SELFCHECK_ATOL = 1e-10
 _BACKEND_SELFCHECK_SEED = 20260809
 
 
+def _asset_scaled_zero_mean(values: np.ndarray, asset_ids: np.ndarray, scales: np.ndarray,
+                            time_ids: np.ndarray | None = None) -> np.ndarray:
+    """Scale the cross block by asset and re-project to zero mean."""
+    values = np.asarray(values, dtype=np.float64)
+    asset_ids = np.asarray(asset_ids, dtype=np.int64)
+    scales = np.asarray(scales, dtype=np.float64)
+    if scales.ndim != 1 or len(scales) == 0 or not np.all(np.isfinite(scales)):
+        raise ValueError("asset_cross_scales must be a finite non-empty 1D array")
+    if asset_ids.min() < 0 or asset_ids.max() >= len(scales):
+        raise ValueError("asset_id is outside asset_cross_scales")
+    adjusted = values * scales[asset_ids]
+    if time_ids is None:
+        return adjusted - adjusted.mean()
+    starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
+    counts = np.diff(np.r_[starts, len(time_ids)])
+    return adjusted - np.repeat(np.add.reduceat(adjusted, starts) / counts, counts)
+
+
 class Model:
     """Sequential inference: production ridge + LightGBM cross-sectional blend."""
 
@@ -94,6 +112,9 @@ class Model:
         self.l_center = np.asarray(meta["center"], dtype=np.float32)
         self.l_scale = np.asarray(meta["scale"], dtype=np.float32)
         self.num_iteration = int(meta["num_iteration"])
+        self.market_num_iteration = int(meta.get("market_num_iteration", self.num_iteration))
+        if self.num_iteration <= 0 or self.market_num_iteration <= 0:
+            raise ValueError("num_iteration and market_num_iteration must be positive")
         # ---- 每资产滚动历史（**唯一的跨 predict 调用状态**，除 last_time_id 外）
         # 下标是 lgbm_features 内的位置 ⟹ 统计量复用上面那套 l_*，不必另存。
         self.history_positions = list(meta.get("history_positions") or [])
@@ -104,6 +125,15 @@ class Model:
         self.blend_weight = float(meta["blend_weight"])       # ê 里 LGBM 占的比重
         self.prediction_scale = np.float32(meta["prediction_scale"])
         self.prediction_clip = np.float32(meta["prediction_clip"])
+        # Optional OOF-fitted per-asset calibration for the cross-sectional block.
+        # Missing key keeps every historical model byte-for-byte equivalent at inference.
+        scales = meta.get("asset_cross_scales")
+        self.asset_cross_scales = (np.asarray(scales, dtype=np.float64) if scales is not None else None)
+        if self.asset_cross_scales is not None:
+            if self.asset_cross_scales.ndim != 1 or len(self.asset_cross_scales) == 0:
+                raise ValueError("asset_cross_scales must be a non-empty 1D array")
+            if not np.all(np.isfinite(self.asset_cross_scales)):
+                raise ValueError("asset_cross_scales must be finite")
 
         # ---- 第二个市场分量：行级 LGBM 打 y，取逐 time_id 无权截面均值（`combo_market_weight`）
         # 设计矩阵 = [raw ‖ xs_dev ‖ history ‖ asset_id]，只比截面块多前面那 200 列 raw。
@@ -115,7 +145,7 @@ class Model:
         self.model_files = [model_dir / name for name in meta["lgbm_model_files"]]
         self.n_models = len(self.model_files)
         self.forest = NumpyForest.from_files(self.model_files, self.num_iteration)
-        self.market_forest = (NumpyForest.from_files(self.market_files, self.num_iteration)
+        self.market_forest = (NumpyForest.from_files(self.market_files, self.market_num_iteration)
                               if self.market_files else None)
         self.boosters: list | None = None
         self.market_boosters: list | None = None
@@ -145,8 +175,9 @@ class Model:
             import lightgbm as lgb                # 延迟 import：只有推理时才需要
             boosters = [lgb.Booster(model_file=str(path)) for path in self.model_files]
             market_boosters = [lgb.Booster(model_file=str(path)) for path in self.market_files]
-            difference = max(self._selfcheck_difference(boosters, self.forest),
-                             (self._selfcheck_difference(market_boosters, self.market_forest)
+            difference = max(self._selfcheck_difference(boosters, self.forest, self.num_iteration),
+                             (self._selfcheck_difference(market_boosters, self.market_forest,
+                                                        self.market_num_iteration)
                               if self.market_forest is not None else 0.0))
         except Exception as error:                # noqa: BLE001 —— 任何失败都该退到兜底
             if strict:
@@ -175,7 +206,7 @@ class Model:
             pass
         return "lightgbm"
 
-    def _selfcheck_difference(self, boosters: list, forest: NumpyForest) -> float:
+    def _selfcheck_difference(self, boosters: list, forest: NumpyForest, num_iteration: int) -> float:
         """固定种子造一批合成设计矩阵，两条路径各跑一次，返回最大绝对差。
 
         合成而不是拿真数据：提交包里没有数据，这个自检必须在评测机上也能跑。
@@ -189,7 +220,7 @@ class Model:
         probe[:, -1] = assets                     # 最后一列是 asset_id（分类特征）
         reference = np.zeros(len(assets), dtype=np.float64)
         for booster in boosters:
-            reference += booster.predict(probe, num_iteration=self.num_iteration)
+            reference += booster.predict(probe, num_iteration=num_iteration)
         return float(np.max(np.abs(reference - forest.predict_sum(probe, assets))))
 
     def _feature_blocks(self, test):
@@ -260,27 +291,33 @@ class Model:
             blocks.extend(self.history.transform_online(lraw[:, self.history_positions], asset_ids))
         blocks.append(asset_ids.astype(np.float32))   # ⚠️ asset_id 必须留在最后一列
         design = np.column_stack(blocks)
-        e_lgbm = self._forest_mean(design, asset_ids, self.boosters, self.forest)
+        e_lgbm = self._forest_mean(design, asset_ids, self.boosters, self.forest,
+                                   self.num_iteration)
         e_lgbm -= e_lgbm.mean()
+        if self.asset_cross_scales is not None:
+            # Scaling reintroduces a group mean; project it out so the adapter cannot leak
+            # into the independently modelled market component.
+            e_lgbm = _asset_scaled_zero_mean(e_lgbm, asset_ids, self.asset_cross_scales)
 
         # ---- 第二个市场分量。设计矩阵只比上面多前面那 200 列 raw（与训练端逐列对应）。
         # `m̂_lgbm` 取无权截面均值 ⟹ 它是纯市场量，不碰截面块。λ 缺省 0 ⟹ 旧模型行为不变。
         if self.market_lambda:
             market_design = np.column_stack([lraw, *blocks])
             m_lgbm = self._forest_mean(market_design, asset_ids,
-                                       self.market_boosters, self.market_forest).mean()
+                                       self.market_boosters, self.market_forest,
+                                       self.market_num_iteration).mean()
             market = (1.0 - self.market_lambda) * market + self.market_lambda * m_lgbm
 
         blended = market + (1.0 - self.blend_weight) * e_ridge + self.blend_weight * e_lgbm
         return np.clip(blended * self.prediction_scale,
                        -self.prediction_clip, self.prediction_clip)
 
-    def _forest_mean(self, design, asset_ids, boosters, forest) -> np.ndarray:
+    def _forest_mean(self, design, asset_ids, boosters, forest, num_iteration: int) -> np.ndarray:
         """一片森林在这批行上的**平均**预测（lightgbm 主路径 / numpy 兜底两条）。"""
         if boosters is not None:
             total = np.zeros(len(design), dtype=np.float64)
             for booster in boosters:
-                total += booster.predict(design, num_iteration=self.num_iteration,
+                total += booster.predict(design, num_iteration=num_iteration,
                                          **self.predict_kwargs)
             return total / len(boosters)
         return forest.predict_sum(design, asset_ids) / forest.n_models

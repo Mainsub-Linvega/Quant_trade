@@ -71,6 +71,24 @@ BLEND_WEIGHT = 0.5                        # blend50：ê 里 LGBM 占一半，�
 MARKET_LAMBDA = 0.5
 
 
+def _asset_scaled_zero_mean(values: np.ndarray, asset_ids: np.ndarray, scales: np.ndarray,
+                            time_ids: np.ndarray | None = None) -> np.ndarray:
+    """Scale the cross block by asset and re-project to zero mean."""
+    values = np.asarray(values, dtype=np.float64)
+    asset_ids = np.asarray(asset_ids, dtype=np.int64)
+    scales = np.asarray(scales, dtype=np.float64)
+    if scales.ndim != 1 or len(scales) == 0 or not np.all(np.isfinite(scales)):
+        raise ValueError("asset_cross_scales must be a finite non-empty 1D array")
+    if asset_ids.min() < 0 or asset_ids.max() >= len(scales):
+        raise ValueError("asset_id is outside asset_cross_scales")
+    adjusted = values * scales[asset_ids]
+    if time_ids is None:
+        return adjusted - adjusted.mean()
+    starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
+    counts = np.diff(np.r_[starts, len(time_ids)])
+    return adjusted - np.repeat(np.add.reduceat(adjusted, starts) / counts, counts)
+
+
 def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
                   asset_ids: np.ndarray, backend: str = "lightgbm") -> np.ndarray:
     """离线全量口径的预测 —— 与 `main.Model.predict` 数学等价，但一次吃全部 time_id。
@@ -136,17 +154,17 @@ def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
                      if meta.get("market_model_files") else None)
     del lraw, blocks
 
-    def run_forest(names: list[str], matrix: np.ndarray) -> np.ndarray:
+    def run_forest(names: list[str], matrix: np.ndarray, num_iteration: int) -> np.ndarray:
         paths = [model_dir / name for name in names]
         if backend == "lightgbm":
             import lightgbm as lgb
             total = np.zeros(len(matrix), dtype=np.float64)
             for path in paths:
                 total += lgb.Booster(model_file=str(path)).predict(
-                    matrix, num_iteration=int(meta["num_iteration"]))
+                    matrix, num_iteration=num_iteration)
         elif backend == "numpy":
             from lgbm_numpy import NumpyForest
-            forest = NumpyForest.from_files(paths, int(meta["num_iteration"]))
+            forest = NumpyForest.from_files(paths, num_iteration)
             total = np.concatenate([
                 forest.predict_sum(matrix[start:start + count],
                                    asset_ids[start:start + count].astype(np.int64))
@@ -155,14 +173,18 @@ def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
             raise ValueError(f"未知 backend {backend!r}")
         return total / len(paths)
 
-    e_lgbm = run_forest(meta["lgbm_model_files"], design)
+    e_lgbm = run_forest(meta["lgbm_model_files"], design, int(meta["num_iteration"]))
     e_lgbm -= group_mean(e_lgbm)
+    asset_scales = meta.get("asset_cross_scales")
+    if asset_scales is not None:
+        e_lgbm = _asset_scaled_zero_mean(e_lgbm, asset_ids, asset_scales, time_ids)
 
     # ---- 第二个市场分量：行级 LGBM 打 y，取逐 time_id 无权截面均值
     if market_design is not None:
         lam = np.float64(meta.get("market_lambda", 0.0))
         market = (1.0 - lam) * market + lam * group_mean(
-            run_forest(meta["market_model_files"], market_design))
+            run_forest(meta["market_model_files"], market_design,
+                       int(meta.get("market_num_iteration", meta["num_iteration"]))))
         del market_design
 
     weight = float(meta["blend_weight"])
@@ -220,7 +242,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--history-window", type=int, default=HISTORY_WINDOW)
     p.add_argument("--no-history", action="store_true",
                    help="退回到 08-10 那版无历史特征的设计矩阵（回归对照用）")
-    p.add_argument("--num-iteration", type=int, default=NUM_ITERATION)
+    p.add_argument("--num-iteration", type=int, default=NUM_ITERATION,
+                   help="XS forest boosting rounds")
+    p.add_argument("--market-num-iteration", type=int, default=None,
+                   help="market forest rounds; defaults to --num-iteration for compatibility")
     # ---- 08-13 两个新开关，默认关闭 ⟹ 不传参数时产物与 08-11 的候选逐位相同
     p.add_argument("--weighted-cross-section", action="store_true",
                    help="截面块 ê 带 sample_weight 训练（与指标 Σw(y−ŷ)² 对齐）。"
@@ -264,6 +289,10 @@ def main() -> None:
     from lgbm_xs import load_rows                              # 流式加载（带 asset_id）
 
     args = parse_args()
+    market_num_iteration = (args.num_iteration if args.market_num_iteration is None
+                            else args.market_num_iteration)
+    if args.num_iteration <= 0 or market_num_iteration <= 0:
+        raise SystemExit("num iterations must be positive")
     model_dir = Path(args.model_dir)
     production_dir = Path(__file__).resolve().parent / "model"
     # ⚠️ --model-dir 的默认值就是生产目录，跑一次没带参数就把上榜模型覆盖了。
@@ -349,7 +378,7 @@ def main() -> None:
         return names
 
     def train_forest(matrix: np.ndarray, label: np.ndarray, weight, prefix: str,
-                     spec: dict, min_data: int) -> list[str]:
+                     spec: dict, min_data: int, num_iteration: int) -> list[str]:
         """一组超参 × n_seeds 个种子，存盘并返回文件名。asset_id 恒为最后一列。"""
         cat = matrix.shape[1] - 1
         names = []
@@ -365,9 +394,9 @@ def main() -> None:
             t0 = time.perf_counter()
             ds = lgb.Dataset(matrix, label=label, weight=weight, params=params,
                              categorical_feature=[cat], free_raw_data=False)
-            booster = lgb.train(params, ds, num_boost_round=args.num_iteration)
+            booster = lgb.train(params, ds, num_boost_round=num_iteration)
             name = f"{prefix}{args.seed + s}.txt"
-            booster.save_model(str(model_dir / name), num_iteration=args.num_iteration)
+            booster.save_model(str(model_dir / name), num_iteration=num_iteration)
             names.append(name)
             print(f"  {prefix} 种子 {args.seed + s}: {time.perf_counter()-t0:.0f}s → {name}", flush=True)
             del booster, ds
@@ -382,7 +411,8 @@ def main() -> None:
           f"min_data_in_leaf={xs_min_data:,}，{args.n_seeds} 种子 × {args.num_iteration} 轮"
           f"{'，带 sample_weight' if sample_weight is not None else '，无权'}；{xs_spec}", flush=True)
     model_files = (reuse_forest("lgbm_seed") if args.train_only == "market"
-                   else train_forest(design, e, sample_weight, "lgbm_seed", xs_spec, xs_min_data))
+                   else train_forest(design, e, sample_weight, "lgbm_seed", xs_spec, xs_min_data,
+                                      args.num_iteration))
     train_rows = len(design)          # ⚠️ 先取走再放 —— meta 在函数末尾才写
     del design
     gc.collect()
@@ -398,7 +428,8 @@ def main() -> None:
               f"标签 y，无权", flush=True)
         market_files = (reuse_forest("lgbm_market_seed") if args.train_only == "cross_section"
                         else train_forest(market_design, y, None, "lgbm_market_seed",
-                                          market_spec, market_min_data))
+                                          market_spec, market_min_data,
+                                          market_num_iteration))
         del market_design
         gc.collect()
     del dev, blocks
@@ -409,6 +440,7 @@ def main() -> None:
         "blend_note": "最终 ê = (1−w)·ê_ridge + w·ê_lgbm，w=0.5 是先验、不拟合（ROADMAP §5）",
         "num_iteration": args.num_iteration,
         "num_iteration_source": "lgbm_blend_unweighted 逐折 best_iteration 的折均（范围 44~302）",
+        "market_num_iteration": int(market_num_iteration),
         "lgbm_model_files": model_files,
         # ---- 截面块是否带权（`combo_market_weight` 的 w_e 格，08-13）
         "cross_section_weighted": bool(sample_weight is not None),
