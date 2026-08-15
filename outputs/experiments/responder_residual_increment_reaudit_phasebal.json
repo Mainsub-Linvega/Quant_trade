@@ -1,0 +1,635 @@
+{
+  "question": "Do strict OOF predictions of Stage-B-passed responder families add target residual signal?",
+  "configuration": {
+    "data_root": "data",
+    "output_dir": "outputs/experiments",
+    "stage_b": "outputs/experiments/responder_predictability_reaudit_phasebal.json",
+    "label": "responder_residual_increment_reaudit_phasebal",
+    "n_folds": 5,
+    "train_window": 39480,
+    "embargo": 6,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "feature_count": 200,
+    "ridge_alpha": 2000000.0,
+    "inner_fraction": 0.25,
+    "max_families": 8,
+    "force": true
+  },
+  "data_fingerprint": {
+    "stage_b": "outputs/experiments/responder_predictability_reaudit_phasebal.json",
+    "stage_b_sha256": "df38cb2784be9dade6f0535fb5141f5a653dcd299991a96c19457602942e28b5"
+  },
+  "frozen_families": [
+    {
+      "cluster": 13,
+      "members": [
+        "responder_25",
+        "responder_26",
+        "responder_27",
+        "responder_44",
+        "responder_45",
+        "responder_46"
+      ],
+      "representative": "responder_27"
+    },
+    {
+      "cluster": 12,
+      "members": [
+        "responder_07",
+        "responder_14",
+        "responder_21",
+        "responder_22",
+        "responder_23",
+        "responder_24"
+      ],
+      "representative": "responder_24"
+    },
+    {
+      "cluster": 1,
+      "members": [
+        "responder_31",
+        "responder_32",
+        "responder_33",
+        "responder_34",
+        "responder_35",
+        "responder_36",
+        "responder_37",
+        "responder_38",
+        "responder_39"
+      ],
+      "representative": "responder_37"
+    },
+    {
+      "cluster": 4,
+      "members": [
+        "responder_15",
+        "responder_16"
+      ],
+      "representative": "responder_15"
+    },
+    {
+      "cluster": 10,
+      "members": [
+        "responder_08",
+        "responder_09"
+      ],
+      "representative": "responder_08"
+    },
+    {
+      "cluster": 2,
+      "members": [
+        "responder_40",
+        "responder_41"
+      ],
+      "representative": "responder_40"
+    },
+    {
+      "cluster": 6,
+      "members": [
+        "responder_18",
+        "responder_19"
+      ],
+      "representative": "responder_18"
+    },
+    {
+      "cluster": 8,
+      "members": [
+        "responder_11",
+        "responder_12"
+      ],
+      "representative": "responder_11"
+    }
+  ],
+  "data_quality": {
+    "sampled_rows": 2645530,
+    "complete_rows": 2643656,
+    "excluded_rows": 1874
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "train_time_range": [
+        0,
+        197396
+      ],
+      "valid_time_range": [
+        197432,
+        335719
+      ],
+      "coefficients": {
+        "responder_27": -0.0410072438173877,
+        "responder_24": -0.5260304969263518,
+        "responder_37": 0.1999573754625944,
+        "responder_15": 0.6066476103937896,
+        "responder_08": -0.48823589814528684,
+        "responder_40": -0.3187884639972897,
+        "responder_18": -0.2549421990968589,
+        "responder_11": 0.10355081834296057
+      },
+      "responder_prediction_target_residual_correlation": {
+        "responder_27": -0.0008579122497203745,
+        "responder_24": -0.0005539188965857714,
+        "responder_37": 0.0052592803626092055,
+        "responder_15": -0.000648525236973555,
+        "responder_08": 0.0007088128193396683,
+        "responder_40": 0.005089038385280596,
+        "responder_18": -0.002455980809445793,
+        "responder_11": -0.0015983065547798792
+      },
+      "baseline": {
+        "A": 0.0011907678829125052,
+        "B": 0.001654688421897939,
+        "peak": 0.0008569154967250912,
+        "optimal_scale": 0.7196326916620872,
+        "score_at_unit_scale": 0.0007268473439270714,
+        "denominator": 776105.7784830822
+      },
+      "candidate": {
+        "A": 0.0009469897672030863,
+        "B": 0.0013999277681448388,
+        "peak": 0.0006405970647869686,
+        "optimal_scale": 0.6764561634905075,
+        "score_at_unit_scale": 0.0004940517662613338,
+        "denominator": 776105.7784830822
+      },
+      "delta_peak": -0.0002163184319381226,
+      "relative_gain": -0.2524384641949359,
+      "candidate_components": {
+        "overall": {
+          "A": 0.0009469897672030863,
+          "B": 0.0013999277681448388,
+          "peak": 0.0006405970647869686,
+          "optimal_scale": 0.6764561634905075,
+          "score_at_unit_scale": 0.0004940517662613338,
+          "denominator": 776105.7784830822
+        },
+        "market": {
+          "A": 0.0010176974649423731,
+          "B": 0.0012734291928796107,
+          "peak": 0.0008133221194718189,
+          "optimal_scale": 0.7991786827511388,
+          "score_at_unit_scale": 0.0007619657370051356,
+          "denominator": 542985.8967734036
+        },
+        "cross_section": {
+          "A": 0.0007822964669827138,
+          "B": 0.0016945699146113005,
+          "peak": 0.0003611463634381906,
+          "optimal_scale": 0.461648976673917,
+          "score_at_unit_scale": -0.00012997698064587285,
+          "denominator": 233119.88170967862
+        },
+        "pearson": 0.03389956009446795,
+        "cross_section_ic_mean": 0.022799228324834355,
+        "cross_section_icir": 0.07561974782943774,
+        "cross_section_positive_ic_rate": 0.5324670624004633,
+        "cross_section_count": 27628,
+        "valid_rows": 413995,
+        "asset_peaks": {
+          "0": 0.000946530827468662,
+          "1": 5.509805814026716e-06,
+          "2": 2.6290563318419233e-06,
+          "3": 2.052763070854916e-06,
+          "4": 0.000263463380700206,
+          "5": 0.0011964202548892322,
+          "6": 0.0002615987425610441,
+          "7": 1.790441513452246e-05,
+          "8": 0.0022644173957702377,
+          "9": 3.19331315709523e-05,
+          "10": 0.00048621140919267975,
+          "11": 0.0005683351896366649,
+          "12": 9.840609187349371e-05,
+          "13": 4.8510561091331466e-05,
+          "14": 0.001683203734927493
+        },
+        "positive_assets": 15,
+        "asset_count": 15
+      },
+      "elapsed_seconds": 15.652878246997716
+    },
+    {
+      "fold": 1,
+      "train_time_range": [
+        138141,
+        335687
+      ],
+      "valid_time_range": [
+        335723,
+        473969
+      ],
+      "coefficients": {
+        "responder_27": 0.03373106931652036,
+        "responder_24": -2.104677029566957,
+        "responder_37": 0.0660343205821174,
+        "responder_15": 1.449468396072986,
+        "responder_08": -0.5543031001687633,
+        "responder_40": -0.07278616950683246,
+        "responder_18": 0.27828481452074255,
+        "responder_11": -0.6590667841253393
+      },
+      "responder_prediction_target_residual_correlation": {
+        "responder_27": 0.0010496399153388342,
+        "responder_24": 0.0015183053980275388,
+        "responder_37": 0.002816222643272437,
+        "responder_15": 0.0014991530619282102,
+        "responder_08": -0.0014000322263242936,
+        "responder_40": 0.0019517551714104539,
+        "responder_18": 0.0007055054960666749,
+        "responder_11": -0.0010797279579837702
+      },
+      "baseline": {
+        "A": 0.00061570722597765,
+        "B": 0.0011842185383970842,
+        "peak": 0.00032012282853992715,
+        "optimal_scale": 0.5199270286809132,
+        "score_at_unit_scale": 4.7195913558215714e-05,
+        "denominator": 1185499.626874478
+      },
+      "candidate": {
+        "A": 0.0007323280573068008,
+        "B": 0.005272350362683947,
+        "peak": 0.00010172017157936775,
+        "optimal_scale": 0.13889973293315075,
+        "score_at_unit_scale": -0.003807694248070346,
+        "denominator": 1185499.626874478
+      },
+      "delta_peak": -0.00021840265696055939,
+      "relative_gain": -0.6822464300865043,
+      "candidate_components": {
+        "overall": {
+          "A": 0.0007323280573068008,
+          "B": 0.005272350362683947,
+          "peak": 0.00010172017157936775,
+          "optimal_scale": 0.13889973293315075,
+          "score_at_unit_scale": -0.003807694248070346,
+          "denominator": 1185499.626874478
+        },
+        "market": {
+          "A": 0.0007371068339970783,
+          "B": 0.006419682336450444,
+          "peak": 8.463448131073899e-05,
+          "optimal_scale": 0.11481982991772731,
+          "score_at_unit_scale": -0.0049454686684562875,
+          "denominator": 801561.4750963005
+        },
+        "cross_section": {
+          "A": 0.0007223512334999603,
+          "B": 0.002877024175228737,
+          "peak": 0.00018136493569694434,
+          "optimal_scale": 0.2510758302691461,
+          "score_at_unit_scale": -0.0014323217082288164,
+          "denominator": 383938.1517781777
+        },
+        "pearson": 0.0215999013122261,
+        "cross_section_ic_mean": 0.02817173483282317,
+        "cross_section_icir": 0.08669046115161867,
+        "cross_section_positive_ic_rate": 0.5356160416968293,
+        "cross_section_count": 27628,
+        "valid_rows": 413898,
+        "asset_peaks": {
+          "0": 7.286575605462361e-05,
+          "1": 5.999099487125364e-06,
+          "2": 2.3406726728025045e-07,
+          "3": 6.631994258268392e-06,
+          "4": 5.564377478134076e-06,
+          "5": 0.0005375869564257454,
+          "6": 0.0007361452686366181,
+          "7": 1.1018736320054747e-05,
+          "8": 0.001052393164701247,
+          "9": 4.87548939407419e-07,
+          "10": 3.4095203612987986e-05,
+          "11": 9.498193027358853e-05,
+          "12": 0.004285130422124208,
+          "13": 1.3127951162707836e-05,
+          "14": 0.00043128275123404893
+        },
+        "positive_assets": 15,
+        "asset_count": 15
+      },
+      "elapsed_seconds": 15.2807487329992
+    },
+    {
+      "fold": 2,
+      "train_time_range": [
+        276282,
+        473937
+      ],
+      "valid_time_range": [
+        473973,
+        612105
+      ],
+      "coefficients": {
+        "responder_27": 0.40584542176359917,
+        "responder_24": 0.7626862086345138,
+        "responder_37": 0.02892093755612135,
+        "responder_15": 0.4384567272141791,
+        "responder_08": 0.4718288544473563,
+        "responder_40": -0.10853403428749597,
+        "responder_18": -0.9706580071477954,
+        "responder_11": 0.7533579393334892
+      },
+      "responder_prediction_target_residual_correlation": {
+        "responder_27": -0.006454739229280059,
+        "responder_24": -0.005729461040808686,
+        "responder_37": 0.00043569193164757336,
+        "responder_15": -0.005569247532606861,
+        "responder_08": 0.00514125436257252,
+        "responder_40": -0.00030858513021720025,
+        "responder_18": -0.008834368372332315,
+        "responder_11": 0.002974695382513955
+      },
+      "baseline": {
+        "A": 0.0006652567481421557,
+        "B": 0.0006683134347379628,
+        "peak": 0.0006622140420118897,
+        "optimal_scale": 0.9954262679202228,
+        "score_at_unit_scale": 0.0006622000615463486,
+        "denominator": 894918.4600209951
+      },
+      "candidate": {
+        "A": 0.000714069975279112,
+        "B": 0.0018894486362214026,
+        "peak": 0.00026986493298638837,
+        "optimal_scale": 0.377925052626537,
+        "score_at_unit_scale": -0.0004613086856631785,
+        "denominator": 894918.4600209951
+      },
+      "delta_peak": -0.0003923491090255013,
+      "relative_gain": -0.592480805501338,
+      "candidate_components": {
+        "overall": {
+          "A": 0.000714069975279112,
+          "B": 0.0018894486362214026,
+          "peak": 0.00026986493298638837,
+          "optimal_scale": 0.377925052626537,
+          "score_at_unit_scale": -0.0004613086856631785,
+          "denominator": 894918.4600209951
+        },
+        "market": {
+          "A": 0.0006311006407741074,
+          "B": 0.0012414587837474838,
+          "peak": 0.0003208225871045122,
+          "optimal_scale": 0.508354082339374,
+          "score_at_unit_scale": 2.0742497800731e-05,
+          "denominator": 647273.0551060961
+        },
+        "cross_section": {
+          "A": 0.0009309276821427954,
+          "B": 0.00358310562788928,
+          "peak": 0.0002418645832359304,
+          "optimal_scale": 0.25981028158837227,
+          "score_at_unit_scale": -0.0017212502636036893,
+          "denominator": 247645.4049148992
+        },
+        "pearson": 0.021375413391931778,
+        "cross_section_ic_mean": 0.016270883072803,
+        "cross_section_icir": 0.054265120274729337,
+        "cross_section_positive_ic_rate": 0.5218618792529318,
+        "cross_section_count": 27628,
+        "valid_rows": 404853,
+        "asset_peaks": {
+          "0": 0.00012369828009948575,
+          "1": 5.607670898126274e-07,
+          "2": 0.00011705164028147527,
+          "3": 2.2953412653113015e-06,
+          "4": 3.6923894498052714e-05,
+          "5": 0.000782789773731788,
+          "6": 0.0005038601270928759,
+          "7": 9.886472660041979e-06,
+          "8": 0.0022487541843539704,
+          "9": 0.0002338457628079568,
+          "10": 0.00017458261745786533,
+          "11": 0.0007197154608489521,
+          "12": 0.003481367294248658,
+          "13": 0.00023522435658271062,
+          "14": 0.0007388336798016338
+        },
+        "positive_assets": 15,
+        "asset_count": 15
+      },
+      "elapsed_seconds": 15.195885453998926
+    },
+    {
+      "fold": 3,
+      "train_time_range": [
+        414573,
+        612078
+      ],
+      "valid_time_range": [
+        612114,
+        750246
+      ],
+      "coefficients": {
+        "responder_27": -0.5920364965464053,
+        "responder_24": -0.6156652374165283,
+        "responder_37": 0.1543801868438787,
+        "responder_15": -0.02573713404662701,
+        "responder_08": -0.7175057507488649,
+        "responder_40": -0.2711756039959538,
+        "responder_18": 0.3559256705177729,
+        "responder_11": -0.8446506750869023
+      },
+      "responder_prediction_target_residual_correlation": {
+        "responder_27": 0.0030272986541045868,
+        "responder_24": 0.003102537197061626,
+        "responder_37": 0.0014274529619558289,
+        "responder_15": 0.0025326231626610915,
+        "responder_08": -0.003180802023339579,
+        "responder_40": 0.0037236903580771816,
+        "responder_18": 0.000663366809032691,
+        "responder_11": -0.005077228778427329
+      },
+      "baseline": {
+        "A": 0.0010099296180013705,
+        "B": 0.001115664914322343,
+        "peak": 0.0009142152094438843,
+        "optimal_scale": 0.9052266545594504,
+        "score_at_unit_scale": 0.0009041943216803979,
+        "denominator": 999879.5414756634
+      },
+      "candidate": {
+        "A": 0.0011755537054885426,
+        "B": 0.0020238368990727748,
+        "peak": 0.0006828250414452744,
+        "optimal_scale": 0.5808539739675292,
+        "score_at_unit_scale": 0.00032727051190431034,
+        "denominator": 999879.5414756634
+      },
+      "delta_peak": -0.00023139016799860997,
+      "relative_gain": -0.25310251416552587,
+      "candidate_components": {
+        "overall": {
+          "A": 0.0011755537054885426,
+          "B": 0.0020238368990727748,
+          "peak": 0.0006828250414452744,
+          "optimal_scale": 0.5808539739675292,
+          "score_at_unit_scale": 0.00032727051190431034,
+          "denominator": 999879.5414756634
+        },
+        "market": {
+          "A": 0.0013765586371727848,
+          "B": 0.0021291846903087335,
+          "peak": 0.0008899714948167462,
+          "optimal_scale": 0.6465191316837726,
+          "score_at_unit_scale": 0.000623932584036836,
+          "denominator": 711362.5503216418
+        },
+        "cross_section": {
+          "A": 0.0006799593896799547,
+          "B": 0.0017640931898908192,
+          "peak": 0.0002620863649740359,
+          "optimal_scale": 0.3854441440942458,
+          "score_at_unit_scale": -0.0004041744105309098,
+          "denominator": 288516.99115402147
+        },
+        "pearson": 0.03294934399832553,
+        "cross_section_ic_mean": 0.01971971418697865,
+        "cross_section_icir": 0.05885553801264901,
+        "cross_section_positive_ic_rate": 0.5269653974229043,
+        "cross_section_count": 27628,
+        "valid_rows": 413232,
+        "asset_peaks": {
+          "0": 0.00030842760583977235,
+          "1": 7.041345111223897e-06,
+          "2": 0.00028182189138018096,
+          "3": 9.837650211737977e-07,
+          "4": 0.00011899416003158472,
+          "5": 0.0015059399129453237,
+          "6": 0.000641435360035321,
+          "7": 0.00020899510411449303,
+          "8": 0.0035745275314412535,
+          "9": 0.000157221357349889,
+          "10": 1.2565928265196996e-05,
+          "11": 0.0008899848262620437,
+          "12": 3.659660516634898e-05,
+          "13": 3.168152265306904e-05,
+          "14": 0.0010308951487643786
+        },
+        "positive_assets": 15,
+        "asset_count": 15
+      },
+      "elapsed_seconds": 15.138704682991374
+    },
+    {
+      "fold": 4,
+      "train_time_range": [
+        552823,
+        750219
+      ],
+      "valid_time_range": [
+        750250,
+        888478
+      ],
+      "coefficients": {
+        "responder_27": -0.47607317529156323,
+        "responder_24": 1.594732195515541,
+        "responder_37": 0.25179361029690356,
+        "responder_15": -0.469825201525039,
+        "responder_08": 0.5537203159758595,
+        "responder_40": -0.31385353044518643,
+        "responder_18": -0.2765481559519732,
+        "responder_11": 0.231004290510108
+      },
+      "responder_prediction_target_residual_correlation": {
+        "responder_27": -0.00489494201425039,
+        "responder_24": -0.003854316259916628,
+        "responder_37": -5.617496519156937e-05,
+        "responder_15": -0.0032628734238362646,
+        "responder_08": 0.0034102726633950366,
+        "responder_40": 0.00017643543304304122,
+        "responder_18": -0.0055860383539152745,
+        "responder_11": 0.0026881672095507517
+      },
+      "baseline": {
+        "A": 0.0010263642537465215,
+        "B": 0.0011436719331910648,
+        "peak": 0.000921088951120274,
+        "optimal_scale": 0.8974289076787674,
+        "score_at_unit_scale": 0.0009090565743019783,
+        "denominator": 1014676.7150005838
+      },
+      "candidate": {
+        "A": 0.0011559117700514036,
+        "B": 0.0017520809164893686,
+        "peak": 0.0007625972108757208,
+        "optimal_scale": 0.6597365219681152,
+        "score_at_unit_scale": 0.0005597426236134387,
+        "denominator": 1014676.7150005838
+      },
+      "delta_peak": -0.00015849174024455323,
+      "relative_gain": -0.1720699613775496,
+      "candidate_components": {
+        "overall": {
+          "A": 0.0011559117700514036,
+          "B": 0.0017520809164893686,
+          "peak": 0.0007625972108757208,
+          "optimal_scale": 0.6597365219681152,
+          "score_at_unit_scale": 0.0005597426236134387,
+          "denominator": 1014676.7150005838
+        },
+        "market": {
+          "A": 0.0014206307304890002,
+          "B": 0.0019056104438341399,
+          "peak": 0.0010590788263885951,
+          "optimal_scale": 0.7454990263543333,
+          "score_at_unit_scale": 0.0009356510171438606,
+          "denominator": 740176.7455970887
+        },
+        "cross_section": {
+          "A": 0.00044210907251256127,
+          "B": 0.001338095493649228,
+          "peak": 0.0001460736045563245,
+          "optimal_scale": 0.3304017348618745,
+          "score_at_unit_scale": -0.0004538773486241054,
+          "denominator": 274499.9694034951
+        },
+        "pearson": 0.02685036446719871,
+        "cross_section_ic_mean": 0.007868488097786822,
+        "cross_section_icir": 0.024667770372527285,
+        "cross_section_positive_ic_rate": 0.5132913226133565,
+        "cross_section_count": 27612,
+        "valid_rows": 406317,
+        "asset_peaks": {
+          "0": 0.0007547137885637805,
+          "1": 8.976867963688198e-05,
+          "2": 0.0005207135564643604,
+          "3": 0.0007747030536249073,
+          "4": 0.0003733222594426087,
+          "5": 0.0013376855820339496,
+          "6": 0.0009009088120962265,
+          "7": 0.0004496297035008064,
+          "8": 0.0016306620469244274,
+          "9": 0.0005929004863686493,
+          "10": 0.00016265385357789108,
+          "11": 0.0007832175928175871,
+          "12": 0.000340026541886221,
+          "13": 0.00020800417425866798,
+          "14": 0.0012464961124063882
+        },
+        "positive_assets": 15,
+        "asset_count": 15
+      },
+      "elapsed_seconds": 15.01172854800825
+    }
+  ],
+  "summary": {
+    "baseline_peak_mean": 0.0007349113055682133,
+    "candidate_peak_mean": 0.000491520884334744,
+    "mean_delta": -0.0002433904212334693,
+    "relative_gain": -0.3311833950428705,
+    "positive_folds": 0,
+    "mean_delta_drop_best": -0.0002646150914806983
+  },
+  "verdict": {
+    "checks": {
+      "mean_delta_positive": false,
+      "positive_4of5_or_80pct": false,
+      "survives_drop_best": false,
+      "relative_gain_at_least_1pct": false
+    },
+    "pass": false,
+    "next": "stop responder NN line"
+  },
+  "elapsed_seconds": 106.59608111600392
+}

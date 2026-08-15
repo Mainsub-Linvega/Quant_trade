@@ -1,0 +1,20 @@
+{
+  "configuration": {
+    "data_root": "data",
+    "output": "outputs/cache/responder_oof_phasebal_m10_prodwindow_f323.npz",
+    "report": "outputs/experiments/responder_oof_phasebal_m10_prodwindow_f323.json",
+    "sample_modulo": 10,
+    "sampling": "phase_balanced",
+    "train_window": 39480,
+    "n_folds": 5,
+    "embargo": 6,
+    "feature_count": 323,
+    "ridge_alpha": 2000000.0
+  },
+  "complete_case_rows": 1321725,
+  "excluded_rows": 1056,
+  "oof_rows": 730443,
+  "elapsed_seconds": 84.47204974900524,
+  "output": "outputs/cache/responder_oof_phasebal_m10_prodwindow_f323.npz",
+  "bytes": 137639841
+}

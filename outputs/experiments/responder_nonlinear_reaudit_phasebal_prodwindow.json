@@ -1,0 +1,261 @@
+{
+  "question": "Do nonlinear combinations of strict OOF responder predictions add target signal?",
+  "configuration": {
+    "stage": "audit",
+    "data_root": "/home/mainsub/Documents/Quant_trade/data",
+    "cache": "outputs/cache/responder_oof_phasebal_prodwindow_f323.npz",
+    "output_dir": "outputs/experiments",
+    "label": "responder_nonlinear_reaudit_phasebal_prodwindow",
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "train_window": 78960,
+    "n_folds": 5,
+    "embargo": 6,
+    "feature_count": 323,
+    "ridge_alpha": 2000000.0,
+    "force": true
+  },
+  "cache": {
+    "path": "outputs/cache/responder_oof_phasebal_prodwindow_f323.npz",
+    "bytes": 275195946,
+    "build": null
+  },
+  "audit": {
+    "method": "all 323 features -> strict multi-target Ridge OOF predictions; nonlinear level-2 models fit once on the earliest OOF fold and frozen for all later folds",
+    "calibration_fold": 0,
+    "evaluation_folds": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "specs": {
+      "strong": {
+        "max_leaf_nodes": 7,
+        "min_samples_leaf": 1000,
+        "l2_regularization": 30.0,
+        "learning_rate": 0.04,
+        "max_iter": 120
+      },
+      "current": {
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 500,
+        "l2_regularization": 10.0,
+        "learning_rate": 0.05,
+        "max_iter": 150
+      }
+    },
+    "folds": [
+      {
+        "fold": 1,
+        "arms": {
+          "strong": {
+            "target_only": {
+              "A": 0.0011747532954695058,
+              "B": 0.0010675224421805999,
+              "peak": 0.0012927553095722108,
+              "optimal_scale": 1.1004483363083855,
+              "score_at_unit_scale": 0.0012819841487584117,
+              "denominator": 786069.3376386792
+            },
+            "with_responders": {
+              "A": 0.0011688920833743445,
+              "B": 0.0013903656861109592,
+              "peak": 0.0009826973696373115,
+              "optimal_scale": 0.8407083798535719,
+              "score_at_unit_scale": 0.0009474184806377297,
+              "denominator": 786069.3376386792
+            }
+          },
+          "current": {
+            "target_only": {
+              "A": 0.001341332965916284,
+              "B": 0.0014705882892509094,
+              "peak": 0.0012234383604198572,
+              "optimal_scale": 0.9121063833573259,
+              "score_at_unit_scale": 0.0012120776425816587,
+              "denominator": 786069.3376386792
+            },
+            "with_responders": {
+              "A": 0.0014359754798284694,
+              "B": 0.0026870526256807543,
+              "peak": 0.0007673930755807943,
+              "optimal_scale": 0.5344054173351631,
+              "score_at_unit_scale": 0.00018489833397618456,
+              "denominator": 786069.3376386792
+            }
+          }
+        }
+      },
+      {
+        "fold": 2,
+        "arms": {
+          "strong": {
+            "target_only": {
+              "A": 0.000922023720387518,
+              "B": 0.001386865235711403,
+              "peak": 0.000612985111362432,
+              "optimal_scale": 0.6648257499327676,
+              "score_at_unit_scale": 0.00045718220506363295,
+              "denominator": 788326.2809948166
+            },
+            "with_responders": {
+              "A": 0.0011077275908338595,
+              "B": 0.0016794299762775337,
+              "peak": 0.0007306410108353388,
+              "optimal_scale": 0.6595854584477193,
+              "score_at_unit_scale": 0.0005360252053901852,
+              "denominator": 788326.2809948166
+            }
+          },
+          "current": {
+            "target_only": {
+              "A": 0.00107102171310805,
+              "B": 0.0018864949851750698,
+              "peak": 0.0006080522444868575,
+              "optimal_scale": 0.5677310152025966,
+              "score_at_unit_scale": 0.00025554844104103006,
+              "denominator": 788326.2809948166
+            },
+            "with_responders": {
+              "A": 0.001437702373983523,
+              "B": 0.0030422502902294228,
+              "peak": 0.000679427370849879,
+              "optimal_scale": 0.47257859703420485,
+              "score_at_unit_scale": -0.0001668455422623766,
+              "denominator": 788326.2809948166
+            }
+          }
+        }
+      },
+      {
+        "fold": 3,
+        "arms": {
+          "strong": {
+            "target_only": {
+              "A": 0.000873723863613468,
+              "B": 0.0012053126843212878,
+              "peak": 0.0006333571361007565,
+              "optimal_scale": 0.7248939424423816,
+              "score_at_unit_scale": 0.0005421350429056482,
+              "denominator": 937653.8278013659
+            },
+            "with_responders": {
+              "A": 0.0008708022875292242,
+              "B": 0.0015424992805755044,
+              "peak": 0.0004916025786950192,
+              "optimal_scale": 0.564539833823669,
+              "score_at_unit_scale": 0.0001991052944829441,
+              "denominator": 937653.8278013659
+            }
+          },
+          "current": {
+            "target_only": {
+              "A": 0.0010029567404310773,
+              "B": 0.0016726691375672528,
+              "peak": 0.0006013874475134725,
+              "optimal_scale": 0.5996145429512664,
+              "score_at_unit_scale": 0.00033324434329490174,
+              "denominator": 937653.8278013659
+            },
+            "with_responders": {
+              "A": 0.0011204044799937648,
+              "B": 0.0029457016852267974,
+              "peak": 0.0004261484471036819,
+              "optimal_scale": 0.3803523233913287,
+              "score_at_unit_scale": -0.0007048927252392679,
+              "denominator": 937653.8278013659
+            }
+          }
+        }
+      },
+      {
+        "fold": 4,
+        "arms": {
+          "strong": {
+            "target_only": {
+              "A": 0.0012583794625203432,
+              "B": 0.0015369011376532178,
+              "peak": 0.0010303322919722432,
+              "optimal_scale": 0.8187771039338514,
+              "score_at_unit_scale": 0.0009798577873874686,
+              "denominator": 845073.0332673152
+            },
+            "with_responders": {
+              "A": 0.0012882272682354207,
+              "B": 0.0017527292138199623,
+              "peak": 0.0009468259452402548,
+              "optimal_scale": 0.7349836232990098,
+              "score_at_unit_scale": 0.0008237253226508791,
+              "denominator": 845073.0332673152
+            }
+          },
+          "current": {
+            "target_only": {
+              "A": 0.0013268379427205748,
+              "B": 0.0020745849169916198,
+              "peak": 0.000848602972008438,
+              "optimal_scale": 0.6395679115630698,
+              "score_at_unit_scale": 0.0005790909684495298,
+              "denominator": 845073.0332673152
+            },
+            "with_responders": {
+              "A": 0.001628598387726022,
+              "B": 0.003121424194132421,
+              "peak": 0.0008497187641108153,
+              "optimal_scale": 0.5217484989023352,
+              "score_at_unit_scale": 0.00013577258131962323,
+              "denominator": 845073.0332673152
+            }
+          }
+        }
+      }
+    ],
+    "summary": {
+      "strong": {
+        "target_only_peak_mean": 0.0008923574622519107,
+        "with_responders_peak_mean": 0.0007879417261019811,
+        "responder_relative_gain": -0.11701110885141365,
+        "positive_folds": 1,
+        "drop_best_relative": -0.1999642769172046,
+        "per_fold_delta": [
+          -0.0003100579399348993,
+          0.00011765589947290679,
+          -0.00014175455740573736,
+          -8.35063467319884e-05
+        ],
+        "checks": {
+          "mean_increment_positive": false,
+          "positive_at_least_3of4": false,
+          "survives_drop_best": false,
+          "relative_increment_at_least_3pct": false
+        },
+        "pass": false
+      },
+      "current": {
+        "target_only_peak_mean": 0.0008203702561071564,
+        "with_responders_peak_mean": 0.0006806719144112927,
+        "responder_relative_gain": -0.1702869413607998,
+        "positive_folds": 2,
+        "drop_best_relative": -0.25605043919915266,
+        "per_fold_delta": [
+          -0.0004560452848390629,
+          7.137512636302154e-05,
+          -0.00017523900040979058,
+          1.1157921023772794e-06
+        ],
+        "checks": {
+          "mean_increment_positive": false,
+          "positive_at_least_3of4": false,
+          "survives_drop_best": false,
+          "relative_increment_at_least_3pct": false
+        },
+        "pass": false
+      }
+    },
+    "verdict": {
+      "pass": false,
+      "next": "do not open responder multi-task training"
+    }
+  }
+}

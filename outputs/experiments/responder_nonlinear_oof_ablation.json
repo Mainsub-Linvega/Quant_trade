@@ -1,0 +1,285 @@
+{
+  "question": "Which component of strict OOF responder predictions adds nonlinear target information?",
+  "method": "calibrator for fold f trains only on earlier OOF folds; fixed HistGB parameters; identity target-Ridge prediction is baseline",
+  "folds": [
+    {
+      "fold": 1,
+      "arms": {
+        "identity": {
+          "A": 0.0008848276264547769,
+          "B": 0.0008643648857039866,
+          "peak": 0.0009057747966010222,
+          "optimal_scale": 1.0236737297977165,
+          "score_at_unit_scale": 0.0009052903672055672,
+          "denominator": 786069.3376386792
+        },
+        "target_only": {
+          "A": 0.0015563907317994738,
+          "B": 0.0027844097886265203,
+          "peak": 0.0008699696861883923,
+          "optimal_scale": 0.5589661184775544,
+          "score_at_unit_scale": 0.0003283716749724274,
+          "denominator": 786069.3376386792
+        },
+        "target_plus_market_responders": {
+          "A": 0.0022749933745151584,
+          "B": 0.01216236758876995,
+          "peak": 0.0004255417225562827,
+          "optimal_scale": 0.18705185136944555,
+          "score_at_unit_scale": -0.007612380839739633,
+          "denominator": 786069.3376386792
+        },
+        "target_plus_cross_responders": {
+          "A": 0.001961263692804333,
+          "B": 0.0030811068702864502,
+          "peak": 0.0012484329283764424,
+          "optimal_scale": 0.6365451687892911,
+          "score_at_unit_scale": 0.0008414205153222157,
+          "denominator": 786069.3376386792
+        },
+        "target_plus_split_responders": {
+          "A": 0.003202962877978658,
+          "B": 0.010856488163339706,
+          "peak": 0.0009449622238203989,
+          "optimal_scale": 0.2950275291410029,
+          "score_at_unit_scale": -0.00445056240738239,
+          "denominator": 786069.3376386792
+        },
+        "responders_only_split": {
+          "A": 0.0025053859149882954,
+          "B": 0.009137893984297076,
+          "peak": 0.000686915233839254,
+          "optimal_scale": 0.274175419335533,
+          "score_at_unit_scale": -0.004127122154320485,
+          "denominator": 786069.3376386792
+        }
+      }
+    },
+    {
+      "fold": 2,
+      "arms": {
+        "identity": {
+          "A": 0.0008519704784097353,
+          "B": 0.0008305239112562383,
+          "peak": 0.0008739708589290314,
+          "optimal_scale": 1.0258229376214554,
+          "score_at_unit_scale": 0.0008734170455632323,
+          "denominator": 788326.2809948166
+        },
+        "target_only": {
+          "A": 0.0011789881432601648,
+          "B": 0.0030764843612902538,
+          "peak": 0.0004518186601036678,
+          "optimal_scale": 0.383225787881368,
+          "score_at_unit_scale": -0.0007185080747699243,
+          "denominator": 788326.2809948166
+        },
+        "target_plus_market_responders": {
+          "A": 0.00048106783622454643,
+          "B": 0.004222536128889659,
+          "peak": 5.4807408624972955e-05,
+          "optimal_scale": 0.11392864893048199,
+          "score_at_unit_scale": -0.0032604004564405664,
+          "denominator": 788326.2809948166
+        },
+        "target_plus_cross_responders": {
+          "A": 0.0013908490554983965,
+          "B": 0.003143097335138935,
+          "peak": 0.0006154633117956789,
+          "optimal_scale": 0.44250906262084194,
+          "score_at_unit_scale": -0.000361399224142142,
+          "denominator": 788326.2809948166
+        },
+        "target_plus_split_responders": {
+          "A": 0.0006872532710649343,
+          "B": 0.0040554323831476875,
+          "peak": 0.000116465277673513,
+          "optimal_scale": 0.1694648575379555,
+          "score_at_unit_scale": -0.002680925841017819,
+          "denominator": 788326.2809948166
+        },
+        "responders_only_split": {
+          "A": 0.0007795662708828759,
+          "B": 0.0038756621194780193,
+          "peak": 0.00015680509599739895,
+          "optimal_scale": 0.2011440230986568,
+          "score_at_unit_scale": -0.0023165295777122672,
+          "denominator": 788326.2809948166
+        }
+      }
+    },
+    {
+      "fold": 3,
+      "arms": {
+        "identity": {
+          "A": 0.0008513286835699973,
+          "B": 0.0008202659163091541,
+          "peak": 0.0008835677712053879,
+          "optimal_scale": 1.0378691429733085,
+          "score_at_unit_scale": 0.0008823914508308405,
+          "denominator": 937653.8278013659
+        },
+        "target_only": {
+          "A": 0.0013244996002327808,
+          "B": 0.0016197793720938074,
+          "peak": 0.0010830482356057553,
+          "optimal_scale": 0.8177037089444267,
+          "score_at_unit_scale": 0.0010292198283717543,
+          "denominator": 937653.8278013659
+        },
+        "target_plus_market_responders": {
+          "A": 0.0006463012507931724,
+          "B": 0.0020810677406709376,
+          "peak": 0.00020071682368309198,
+          "optimal_scale": 0.31056233209631345,
+          "score_at_unit_scale": -0.0007884652390845927,
+          "denominator": 937653.8278013659
+        },
+        "target_plus_cross_responders": {
+          "A": 0.0013594106468689867,
+          "B": 0.0018525624945158923,
+          "peak": 0.0009975357442954557,
+          "optimal_scale": 0.7338001556726026,
+          "score_at_unit_scale": 0.000866258799222081,
+          "denominator": 937653.8278013659
+        },
+        "target_plus_split_responders": {
+          "A": 0.0009166283713704104,
+          "B": 0.002122079710947938,
+          "peak": 0.00039593591459665214,
+          "optimal_scale": 0.43194813401281257,
+          "score_at_unit_scale": -0.0002888229682071171,
+          "denominator": 937653.8278013659
+        },
+        "responders_only_split": {
+          "A": 0.0007398454068023316,
+          "B": 0.002322566579511257,
+          "peak": 0.000235675149550155,
+          "optimal_scale": 0.31854647928242336,
+          "score_at_unit_scale": -0.0008428757659065939,
+          "denominator": 937653.8278013659
+        }
+      }
+    },
+    {
+      "fold": 4,
+      "arms": {
+        "identity": {
+          "A": 0.0011169164409522568,
+          "B": 0.0010042088608865766,
+          "peak": 0.001242273778552487,
+          "optimal_scale": 1.1122351977318494,
+          "score_at_unit_scale": 0.001229624021017937,
+          "denominator": 845073.0332673152
+        },
+        "target_only": {
+          "A": 0.0013043906767569186,
+          "B": 0.002134919971338678,
+          "peak": 0.0007969549493433732,
+          "optimal_scale": 0.6109787225134321,
+          "score_at_unit_scale": 0.00047386138217515904,
+          "denominator": 845073.0332673152
+        },
+        "target_plus_market_responders": {
+          "A": 0.0012394653655204246,
+          "B": 0.003786849792564097,
+          "peak": 0.00040568664628349573,
+          "optimal_scale": 0.32730777121243454,
+          "score_at_unit_scale": -0.0013079190615232477,
+          "denominator": 845073.0332673152
+        },
+        "target_plus_cross_responders": {
+          "A": 0.0013654575778650055,
+          "B": 0.0023076160265167,
+          "peak": 0.0008079656127901633,
+          "optimal_scale": 0.5917178430790049,
+          "score_at_unit_scale": 0.00042329912921331087,
+          "denominator": 845073.0332673152
+        },
+        "target_plus_split_responders": {
+          "A": 0.0015769624792698386,
+          "B": 0.0037166615321339,
+          "peak": 0.000669097963192007,
+          "optimal_scale": 0.42429542363101186,
+          "score_at_unit_scale": -0.0005627365735942228,
+          "denominator": 845073.0332673152
+        },
+        "responders_only_split": {
+          "A": 0.001414959214087155,
+          "B": 0.0032780841142595117,
+          "peak": 0.0006107560110556825,
+          "optimal_scale": 0.4316421314304136,
+          "score_at_unit_scale": -0.0004481656860852016,
+          "denominator": 845073.0332673152
+        }
+      }
+    }
+  ],
+  "summary": {
+    "target_only": {
+      "baseline_peak_mean": 0.0009763968013219821,
+      "candidate_peak_mean": 0.0008004478828102971,
+      "relative_gain": -0.18020226845628823,
+      "positive_folds": 1,
+      "drop_best_relative": -0.3083705781720867,
+      "per_fold_delta": [
+        -3.580511041262986e-05,
+        -0.0004221521988253636,
+        0.00019948046440036737,
+        -0.0004453188292091137
+      ]
+    },
+    "target_plus_market_responders": {
+      "baseline_peak_mean": 0.0009763968013219821,
+      "candidate_peak_mean": 0.00027168815028696085,
+      "relative_gain": -0.7217441209156855,
+      "positive_folds": 0,
+      "drop_best_relative": -0.7983781207698278,
+      "per_fold_delta": [
+        -0.00048023307404473946,
+        -0.0008191634503040584,
+        -0.0006828509475222959,
+        -0.0008365871322689912
+      ]
+    },
+    "target_plus_cross_responders": {
+      "baseline_peak_mean": 0.0009763968013219821,
+      "candidate_peak_mean": 0.0009173493993144351,
+      "relative_gain": -0.06047480074453377,
+      "positive_folds": 2,
+      "drop_best_relative": -0.19761355868907787,
+      "per_fold_delta": [
+        0.00034265813177542024,
+        -0.00025850754713335246,
+        0.00011396797309006781,
+        -0.0004343081657623236
+      ]
+    },
+    "target_plus_split_responders": {
+      "baseline_peak_mean": 0.0009763968013219821,
+      "candidate_peak_mean": 0.0005316153448206428,
+      "relative_gain": -0.45553350430801515,
+      "positive_folds": 1,
+      "drop_best_relative": -0.6207562508612783,
+      "per_fold_delta": [
+        3.9187427219376726e-05,
+        -0.0007575055812555183,
+        -0.00048763185660873575,
+        -0.00057317581536048
+      ]
+    },
+    "responders_only_split": {
+      "baseline_peak_mean": 0.0009763968013219821,
+      "candidate_peak_mean": 0.0004225378726106226,
+      "relative_gain": -0.5672477910225311,
+      "positive_folds": 0,
+      "drop_best_relative": -0.6816136463442003,
+      "per_fold_delta": [
+        -0.00021885956276176813,
+        -0.0007171657629316324,
+        -0.0006478926216552329,
+        -0.0006315177674968045
+      ]
+    }
+  }
+}

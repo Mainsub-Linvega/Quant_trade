@@ -1,0 +1,156 @@
+{
+  "question": "Can nonlinear calibration of strict OOF responder predictions beat target-only Ridge predictions?",
+  "method": "calibrator for fold f trains only on earlier OOF folds; inputs target/responder OOF predictions + asset one-hot",
+  "folds": [
+    {
+      "fold": 1,
+      "train_rows": 295886,
+      "valid_rows": 290352,
+      "arms": {
+        "target_ridge": {
+          "A": 0.0008848276264547769,
+          "B": 0.0008643648857039866,
+          "peak": 0.0009057747966010222,
+          "optimal_scale": 1.0236737297977165,
+          "score_at_unit_scale": 0.0009052903672055672,
+          "denominator": 786069.3376386792
+        },
+        "ridge": {
+          "A": 0.0009383889888955548,
+          "B": 0.003063839782600547,
+          "peak": 0.0002874085973689532,
+          "optimal_scale": 0.3062787402346028,
+          "score_at_unit_scale": -0.0011870618048094373,
+          "denominator": 786069.3376386792
+        },
+        "histgb": {
+          "A": 0.0014621259646232444,
+          "B": 0.0026979651941545155,
+          "peak": 0.0007923795092157955,
+          "optimal_scale": 0.5419365556646639,
+          "score_at_unit_scale": 0.00022628673509197342,
+          "denominator": 786069.3376386792
+        }
+      }
+    },
+    {
+      "fold": 2,
+      "train_rows": 586238,
+      "valid_rows": 291138,
+      "arms": {
+        "target_ridge": {
+          "A": 0.0008519704784097353,
+          "B": 0.0008305239112562383,
+          "peak": 0.0008739708589290314,
+          "optimal_scale": 1.0258229376214554,
+          "score_at_unit_scale": 0.0008734170455632323,
+          "denominator": 788326.2809948166
+        },
+        "ridge": {
+          "A": 0.0008276138118553584,
+          "B": 0.001562054686585552,
+          "peak": 0.0004384895275791888,
+          "optimal_scale": 0.5298238396918191,
+          "score_at_unit_scale": 9.317293712516467e-05,
+          "denominator": 788326.2809948166
+        },
+        "histgb": {
+          "A": 0.0015575639091591018,
+          "B": 0.002379282857328876,
+          "peak": 0.0010196372085993005,
+          "optimal_scale": 0.6546358724694531,
+          "score_at_unit_scale": 0.0007358449609893279,
+          "denominator": 788326.2809948166
+        }
+      }
+    },
+    {
+      "fold": 3,
+      "train_rows": 877376,
+      "valid_rows": 295397,
+      "arms": {
+        "target_ridge": {
+          "A": 0.0008513286835699973,
+          "B": 0.0008202659163091541,
+          "peak": 0.0008835677712053879,
+          "optimal_scale": 1.0378691429733085,
+          "score_at_unit_scale": 0.0008823914508308405,
+          "denominator": 937653.8278013659
+        },
+        "ridge": {
+          "A": 0.0008733122049800393,
+          "B": 0.0012349308327331413,
+          "peak": 0.0006175845538483742,
+          "optimal_scale": 0.7071749946085889,
+          "score_at_unit_scale": 0.0005116935772269374,
+          "denominator": 937653.8278013659
+        },
+        "histgb": {
+          "A": 0.0016453003095809051,
+          "B": 0.0019256451712475798,
+          "peak": 0.001405769426853034,
+          "optimal_scale": 0.8544150989743111,
+          "score_at_unit_scale": 0.0013649554479142304,
+          "denominator": 937653.8278013659
+        }
+      }
+    },
+    {
+      "fold": 4,
+      "train_rows": 1172773,
+      "valid_rows": 288139,
+      "arms": {
+        "target_ridge": {
+          "A": 0.0011169164409522568,
+          "B": 0.0010042088608865766,
+          "peak": 0.001242273778552487,
+          "optimal_scale": 1.1122351977318494,
+          "score_at_unit_scale": 0.001229624021017937,
+          "denominator": 845073.0332673152
+        },
+        "ridge": {
+          "A": 0.0012632340651219094,
+          "B": 0.0016342848151270147,
+          "peak": 0.0009764272962178896,
+          "optimal_scale": 0.7729583322498975,
+          "score_at_unit_scale": 0.0008921833151168041,
+          "denominator": 845073.0332673152
+        },
+        "histgb": {
+          "A": 0.0016071339307126965,
+          "B": 0.0021165143272865276,
+          "peak": 0.001220345847863651,
+          "optimal_scale": 0.7593305228285976,
+          "score_at_unit_scale": 0.0010977535341388654,
+          "denominator": 845073.0332673152
+        }
+      }
+    }
+  ],
+  "summary": {
+    "ridge": {
+      "baseline_peak_mean": 0.0009763968013219821,
+      "candidate_peak_mean": 0.0005799774937536014,
+      "relative_gain": -0.4060022595646082,
+      "positive_folds": 0,
+      "per_fold_delta": [
+        -0.000618366199232069,
+        -0.00043548133134984257,
+        -0.0002659832173570137,
+        -0.0002658464823345973
+      ]
+    },
+    "histgb": {
+      "baseline_peak_mean": 0.0009763968013219821,
+      "candidate_peak_mean": 0.0011095329981329453,
+      "relative_gain": 0.1363546015623001,
+      "positive_folds": 2,
+      "per_fold_delta": [
+        -0.0001133952873852267,
+        0.0001456663496702691,
+        0.000522201655647646,
+        -2.1927930688835822e-05
+      ]
+    }
+  }
+}

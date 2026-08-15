@@ -1,0 +1,59 @@
+{
+  "experiment": "v3_confirm_3s480",
+  "oof": "/home/mainsub/Documents/Quant_trade/outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+  "market_480_vs_160": {
+    "baseline_mean": 0.0015590886117055858,
+    "candidate_mean": 0.00160443752608143,
+    "relative_gain": 0.029086810098775843,
+    "positive_folds": 4,
+    "n_folds": 5,
+    "drop_best_relative_gain": 0.020487193423802223,
+    "per_fold_delta": [
+      5.37821744765782e-05,
+      9.897917206778376e-05,
+      -2.279993618184385e-05,
+      8.332899082655765e-07,
+      9.594987160843854e-05
+    ],
+    "pass": true
+  },
+  "asset_adapter_vs_market480": {
+    "peak": {
+      "baseline_mean": 0.0017415581629809363,
+      "candidate_mean": 0.0017762111933241622,
+      "mean_delta": 3.4653030343225865e-05,
+      "relative_gain": 0.019897716355284995,
+      "positive_folds": 3,
+      "n_folds": 4,
+      "mean_delta_drop_best": 2.3309933919473155e-05,
+      "relative_gain_drop_best": 0.013384527956031471,
+      "per_fold_delta": [
+        -4.693932778158157e-06,
+        4.297868788102075e-05,
+        3.164504665555687e-05,
+        6.8682319614484e-05
+      ],
+      "pass": true
+    },
+    "frozen_scale_score": {
+      "baseline_mean": 0.001589875331179741,
+      "candidate_mean": 0.0016638897381748008,
+      "mean_delta": 7.40144069950599e-05,
+      "relative_gain": 0.04655359168327917,
+      "positive_folds": 4,
+      "n_folds": 4,
+      "mean_delta_drop_best": 6.44048022307997e-05,
+      "relative_gain_drop_best": 0.04050934118400917,
+      "per_fold_delta": [
+        5.109867019392755e-05,
+        7.214435322455692e-05,
+        6.997138327391461e-05,
+        0.00010284322128784051
+      ],
+      "pass": true
+    },
+    "pass": true
+  },
+  "decision": "market480_plus_asset_adapter",
+  "submission_generated": false
+}

@@ -1,0 +1,14 @@
+{
+  "strategy": "v3_hybrid",
+  "backend": "lightgbm",
+  "model_path": "outputs/candidates/v3_asset_cross_3s480_shrink500/baseline_model.json",
+  "model_sha256": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+  "partition": "train_partition_008.parquet",
+  "time_ids": 20,
+  "rows": 300,
+  "atol": 1e-06,
+  "max_abs_diff": 3.961225250592726e-09,
+  "online_pred_std": 0.04586510651791409,
+  "online_pred_absmax": 0.23397719650439502,
+  "passed": true
+}

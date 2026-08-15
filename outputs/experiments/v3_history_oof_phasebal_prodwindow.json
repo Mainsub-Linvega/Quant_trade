@@ -1,0 +1,170 @@
+{
+  "question": "Do pre-registered multi-scale temporal states beat the validated v3 history block?",
+  "configuration": {
+    "data_root": "data",
+    "output_dir": "outputs/experiments",
+    "label": "v3_history_oof_phasebal_prodwindow",
+    "arms": [
+      "baseline"
+    ],
+    "n_folds": 5,
+    "train_window": 78960,
+    "embargo": 6,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "feature_count": 200,
+    "history_count": 40,
+    "ridge_alpha": 2000000.0,
+    "lgbm_rounds": 160,
+    "lgbm_seeds": 1,
+    "seed": 2026,
+    "num_threads": 8,
+    "cache_batch_size": 20000,
+    "transform_chunk": 10000,
+    "prediction_cache": "outputs/cache/v3_history_oof_phasebal_prodwindow.npz",
+    "force": true
+  },
+  "history_columns": [
+    5,
+    13,
+    14,
+    15,
+    17,
+    34,
+    36,
+    39,
+    41,
+    90,
+    95,
+    98,
+    100,
+    135,
+    157,
+    160,
+    175,
+    187,
+    188,
+    189,
+    190,
+    192,
+    193,
+    194,
+    195,
+    202,
+    204,
+    218,
+    219,
+    250,
+    256,
+    258,
+    268,
+    284,
+    286,
+    296,
+    298,
+    305,
+    308,
+    318
+  ],
+  "arm_definitions": {
+    "baseline": "lag1+difference+mean5+deviation5",
+    "t1_lags": "baseline+lag2+lag5",
+    "t2_state": "baseline+EWM3/EWM10/std5/std20/slope5/slope20",
+    "t3_full": "T1+T2+observation_gap",
+    "t4_regime": "baseline+20D current compressed regime+lag1+difference"
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "train_rows": 1183708,
+      "valid_rows": 296059,
+      "arms": {
+        "baseline": {
+          "A": 0.0013679895243975423,
+          "B": 0.002145485424846769,
+          "peak": 0.0008722479850894674,
+          "optimal_scale": 0.637613058823387,
+          "score_at_unit_scale": 0.0005904936239483159,
+          "denominator": 957660.3665208269,
+          "design_columns": 361
+        }
+      },
+      "elapsed_seconds": 81.84682615300699
+    },
+    {
+      "fold": 1,
+      "train_rows": 1183810,
+      "valid_rows": 290502,
+      "arms": {
+        "baseline": {
+          "A": 0.0013921060640350897,
+          "B": 0.0014756680698708442,
+          "peak": 0.0013132758870989779,
+          "optimal_scale": 0.9433734404492006,
+          "score_at_unit_scale": 0.0013085440581993351,
+          "denominator": 786232.0720616432,
+          "design_columns": 361
+        }
+      },
+      "elapsed_seconds": 78.74577240200597
+    },
+    {
+      "fold": 2,
+      "train_rows": 1178295,
+      "valid_rows": 291290,
+      "arms": {
+        "baseline": {
+          "A": 0.0013449180817898124,
+          "B": 0.0014582801794620853,
+          "peak": 0.0012403683957306483,
+          "optimal_scale": 0.9222631567864491,
+          "score_at_unit_scale": 0.0012315559841175395,
+          "denominator": 788715.0673500127,
+          "design_columns": 361
+        }
+      },
+      "elapsed_seconds": 76.67858792899642
+    },
+    {
+      "fold": 3,
+      "train_rows": 1173545,
+      "valid_rows": 295522,
+      "arms": {
+        "baseline": {
+          "A": 0.0014002088767702098,
+          "B": 0.0014343890417152564,
+          "peak": 0.0013668431935603788,
+          "optimal_scale": 0.9761709243789443,
+          "score_at_unit_scale": 0.0013660287118251633,
+          "denominator": 938543.1555987413,
+          "design_columns": 361
+        }
+      },
+      "elapsed_seconds": 76.84083841599931
+    },
+    {
+      "fold": 4,
+      "train_rows": 1173433,
+      "valid_rows": 288359,
+      "arms": {
+        "baseline": {
+          "A": 0.0015944343916316677,
+          "B": 0.001503495919391241,
+          "peak": 0.0016908732484270264,
+          "optimal_scale": 1.060484681779015,
+          "score_at_unit_scale": 0.0016853728638720944,
+          "denominator": 845796.26310946,
+          "design_columns": 361
+        }
+      },
+      "elapsed_seconds": 75.88617356801115
+    }
+  ],
+  "comparisons": {},
+  "verdict": {
+    "passed_arms": [],
+    "enter_confirmation": false,
+    "next": "stop temporal expansion"
+  },
+  "elapsed_seconds": 442.13478788100474
+}
