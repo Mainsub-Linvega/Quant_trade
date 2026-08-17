@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from experiments.v3_adaptive_selection import (
     aggregate_path_support,
@@ -152,3 +153,115 @@ def test_select_task_features_accepts_stable_tree_gain_above_shadow() -> None:
 
     assert result["selected_indices"] == [1]
     assert result["reasons"] == {"1": ["tree_gain"]}
+
+
+def test_path_only_candidate_cannot_displace_stable_cluster_representative() -> None:
+    result = select_task_features(
+        block_correlations=np.array(
+            [
+                [0.20, 100.0, 0.01, 0.01],
+                [0.18, -100.0, 0.01, 0.01],
+                [0.21, 100.0, 0.01, 0.01],
+                [0.19, -100.0, 0.01, 0.01],
+            ]
+        ),
+        shadow_block_correlations=np.full((4, 2), 0.05),
+        cluster_labels=np.array([10, 10, 20, 30]),
+        block_tree_gains=np.zeros((4, 4)),
+        shadow_block_tree_gains=np.full((4, 2), 0.1),
+        paths_by_block=[
+            [(1, 2, 3)],
+            [(3, 1, 2)],
+            [(1, 2, 3)],
+        ],
+        shadow_quantile=1.0,
+    )
+
+    assert result["representatives"] == [0, 2, 3]
+    assert result["alternates"] == [1]
+    assert result["selected_indices"] == [0, 1, 2, 3]
+    assert result["evidence"][1]["linear_passed"] is False
+
+
+def test_zero_shadow_floor_representative_is_invariant_to_evidence_scaling() -> None:
+    def select(linear_scale: float) -> dict[str, object]:
+        return select_task_features(
+            block_correlations=np.array(
+                [
+                    [0.20 * linear_scale, 0.0],
+                    [0.18 * linear_scale, 0.0],
+                    [0.21 * linear_scale, 0.0],
+                    [0.19 * linear_scale, 0.0],
+                ]
+            ),
+            shadow_block_correlations=np.zeros((4, 2)),
+            cluster_labels=np.array([10, 10]),
+            block_tree_gains=np.array(
+                [
+                    [0.0, 0.30],
+                    [0.0, 0.35],
+                    [0.0, 0.32],
+                    [0.0, 0.31],
+                ]
+            ),
+            shadow_block_tree_gains=np.zeros((4, 2)),
+            paths_by_block=[],
+            shadow_quantile=1.0,
+        )
+
+    baseline = select(1.0)
+    scaled = select(10.0)
+
+    assert baseline["representatives"] == [0]
+    assert scaled["representatives"] == baseline["representatives"]
+    assert scaled["selected_indices"] == baseline["selected_indices"]
+
+
+def test_linear_evidence_rejects_nonfinite_shadow_measurements() -> None:
+    feature_correlations = np.array(
+        [
+            [0.2, np.nan],
+            [0.2, np.nan],
+            [0.2, np.nan],
+            [0.2, np.nan],
+        ]
+    )
+    finite_shadows = np.full((4, 2), 0.05)
+
+    evidence = linear_evidence(
+        feature_correlations,
+        finite_shadows,
+        shadow_quantile=1.0,
+    )
+
+    np.testing.assert_array_equal(evidence["passed"], [True, False])
+    with pytest.raises(ValueError, match="shadow_block_correlations.*finite"):
+        linear_evidence(
+            feature_correlations,
+            np.array(
+                [
+                    [0.05, np.nan],
+                    [0.05, 0.05],
+                    [0.05, 0.05],
+                    [0.05, 0.05],
+                ]
+            ),
+        )
+
+
+def test_selector_rejects_nonfinite_shadow_tree_gains() -> None:
+    with pytest.raises(ValueError, match="shadow_block_tree_gains.*finite"):
+        select_task_features(
+            block_correlations=np.full((4, 2), 0.2),
+            shadow_block_correlations=np.full((4, 2), 0.05),
+            cluster_labels=np.arange(2),
+            block_tree_gains=np.full((4, 2), 0.3),
+            shadow_block_tree_gains=np.array(
+                [
+                    [0.1, np.inf],
+                    [0.1, 0.1],
+                    [0.1, 0.1],
+                    [0.1, 0.1],
+                ]
+            ),
+        )

@@ -36,13 +36,22 @@ def circular_shift_shadows(
     return {"shifts": shifts, "targets": targets}
 
 
-def _block_matrix(values: np.ndarray, name: str) -> np.ndarray:
+def _block_matrix(
+    values: np.ndarray,
+    name: str,
+    *,
+    require_finite: bool = False,
+) -> np.ndarray:
+    """Validate a block matrix, conservatively zeroing non-finite feature values."""
     matrix = np.asarray(values, dtype=np.float64)
     if matrix.ndim != 2:
         raise ValueError(f"{name} must be two-dimensional")
     if matrix.shape[0] == 0 or matrix.shape[1] == 0:
         raise ValueError(f"{name} must not be empty")
-    return np.where(np.isfinite(matrix), matrix, 0.0)
+    finite = np.isfinite(matrix)
+    if require_finite and not np.all(finite):
+        raise ValueError(f"{name} must contain only finite values")
+    return np.where(finite, matrix, 0.0)
 
 
 def _quantile(values: np.ndarray, quantile: float) -> float:
@@ -61,7 +70,9 @@ def linear_evidence(
     """Score stable marginal correlation against a training-only shadow floor."""
     correlations = _block_matrix(block_correlations, "block_correlations")
     shadows = _block_matrix(
-        shadow_block_correlations, "shadow_block_correlations"
+        shadow_block_correlations,
+        "shadow_block_correlations",
+        require_finite=True,
     )
     if shadows.shape[0] != correlations.shape[0]:
         raise ValueError("feature and shadow correlations must use the same blocks")
@@ -255,7 +266,9 @@ def _tree_gain_evidence(
     gains = np.maximum(_block_matrix(block_tree_gains, "block_tree_gains"), 0.0)
     shadows = np.maximum(
         _block_matrix(
-            shadow_block_tree_gains, "shadow_block_tree_gains"
+            shadow_block_tree_gains,
+            "shadow_block_tree_gains",
+            require_finite=True,
         ),
         0.0,
     )
@@ -285,11 +298,20 @@ def _tree_gain_evidence(
     }
 
 
-def _excess_ratio(scores: np.ndarray, floor: float) -> np.ndarray:
-    excess = np.maximum(scores - floor, 0.0)
-    if floor > 0.0:
-        return excess / floor
-    return excess
+def _normalized_accepted_strength(
+    scores: np.ndarray,
+    passed: np.ndarray,
+) -> np.ndarray:
+    """Return dimensionless, gate-masked strengths for representative ranking."""
+    score_array = np.asarray(scores, dtype=np.float64)
+    passed_array = np.asarray(passed, dtype=bool)
+    if score_array.shape != passed_array.shape:
+        raise ValueError("scores and passed must have the same shape")
+    accepted = np.where(passed_array, np.maximum(score_array, 0.0), 0.0)
+    maximum = float(np.max(accepted))
+    if maximum <= 0.0:
+        return np.zeros_like(accepted)
+    return accepted / maximum
 
 
 def select_task_features(
@@ -355,11 +377,11 @@ def select_task_features(
     path_passed = path_support > 0
 
     passed = linear["passed"] | tree["passed"] | path_passed
-    linear_strength = _excess_ratio(
-        linear["score"], float(linear["shadow_floor"])
+    linear_strength = _normalized_accepted_strength(
+        linear["score"], linear["passed"]
     )
-    tree_strength = _excess_ratio(
-        tree["score"], float(tree["shadow_floor"])
+    tree_strength = _normalized_accepted_strength(
+        tree["score"], tree["passed"]
     )
     scores = np.maximum(linear_strength, tree_strength)
     scores = scores + path_support * 1e-6
