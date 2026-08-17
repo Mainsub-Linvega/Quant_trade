@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 import time
@@ -60,6 +61,31 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, float) and not np.isfinite(value):
         return None
     return value
+
+
+def extract_dense_matrices(
+    report: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
+    """Move dense redundancy matrices into a stable-keyed NPZ payload."""
+    summary = copy.deepcopy(report)
+    matrices: dict[str, np.ndarray] = {}
+    for fold in summary.get("folds", []):
+        fold_index = fold.get("fold")
+        for task_name, task in fold.get("tasks", {}).items():
+            redundancy = task.get("redundancy")
+            if not isinstance(redundancy, dict):
+                continue
+            for name, value in list(redundancy.items()):
+                array = np.asarray(value)
+                if array.ndim != 2 or min(array.shape) <= 16:
+                    continue
+                key = f"fold_{fold_index}.{task_name}.redundancy.{name}"
+                matrices[key] = array.astype(np.float32, copy=False)
+                redundancy[name] = {
+                    "npz_key": key,
+                    "shape": [int(size) for size in array.shape],
+                }
+    return summary, matrices
 
 
 def _format_number(value: Any) -> str:

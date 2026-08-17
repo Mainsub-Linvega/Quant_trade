@@ -18,7 +18,10 @@ from experiments.v3_feature_structure import (
     stable_redundancy,
     weighted_component_gram,
 )
-from experiments.v3_feature_structure_audit import render_markdown
+from experiments.v3_feature_structure_audit import (
+    extract_dense_matrices,
+    render_markdown,
+)
 
 
 def test_build_task_views_separates_market_and_cross_section() -> None:
@@ -170,3 +173,34 @@ def test_stable_redundancy_row_cap_preserves_duplicate_cluster() -> None:
     )
 
     assert result.labels[0] == result.labels[1]
+
+    assert result.sampled_rows_per_block == [25, 25, 25, 25]
+
+def test_extract_dense_matrices_replaces_arrays_with_npz_references() -> None:
+    report = {
+        "folds": [
+            {
+                "fold": 0,
+                "tasks": {
+                    "ridge": {
+                        "redundancy": {
+                            "stability": np.eye(20),
+                            "labels": np.array([1, 2]),
+                        }
+                    }
+                },
+            }
+        ]
+    }
+
+    summary, matrices = extract_dense_matrices(report)
+
+    key = "fold_0.ridge.redundancy.stability"
+    assert key in matrices
+    assert summary["folds"][0]["tasks"]["ridge"]["redundancy"]["stability"] == {
+        "npz_key": key,
+        "shape": [20, 20],
+    }
+    np.testing.assert_array_equal(
+        summary["folds"][0]["tasks"]["ridge"]["redundancy"]["labels"], [1, 2]
+    )
