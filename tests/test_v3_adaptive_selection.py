@@ -155,7 +155,7 @@ def test_select_task_features_accepts_stable_tree_gain_above_shadow() -> None:
     assert result["reasons"] == {"1": ["tree_gain"]}
 
 
-def test_path_only_candidate_cannot_displace_stable_cluster_representative() -> None:
+def test_lower_index_stable_passer_beats_path_only_cluster_member() -> None:
     result = select_task_features(
         block_correlations=np.array(
             [
@@ -181,6 +181,34 @@ def test_path_only_candidate_cannot_displace_stable_cluster_representative() -> 
     assert result["alternates"] == [1]
     assert result["selected_indices"] == [0, 1, 2, 3]
     assert result["evidence"][1]["linear_passed"] is False
+
+
+def test_higher_index_stable_passer_beats_path_only_cluster_member() -> None:
+    result = select_task_features(
+        block_correlations=np.array(
+            [
+                [100.0, 0.20, 0.01, 0.01],
+                [-100.0, 0.18, 0.01, 0.01],
+                [100.0, 0.21, 0.01, 0.01],
+                [-100.0, 0.19, 0.01, 0.01],
+            ]
+        ),
+        shadow_block_correlations=np.full((4, 2), 0.05),
+        cluster_labels=np.array([10, 10, 20, 30]),
+        block_tree_gains=np.zeros((4, 4)),
+        shadow_block_tree_gains=np.full((4, 2), 0.1),
+        paths_by_block=[
+            [(0, 2, 3)],
+            [(3, 0, 2)],
+            [(0, 2, 3)],
+        ],
+        shadow_quantile=1.0,
+    )
+
+    assert result["representatives"] == [1, 2, 3]
+    assert result["alternates"] == [0]
+    assert result["selected_indices"] == [0, 1, 2, 3]
+    assert result["evidence"][0]["linear_passed"] is False
 
 
 def test_zero_shadow_floor_representative_is_invariant_to_evidence_scaling() -> None:

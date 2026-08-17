@@ -327,6 +327,43 @@ def _cluster_ranked_accepted_strength(
     return strength
 
 
+def _combine_cluster_strengths(
+    linear_strength: np.ndarray,
+    tree_strength: np.ndarray,
+    path_strength: np.ndarray,
+    stable_passed: np.ndarray,
+    cluster_labels: np.ndarray,
+) -> np.ndarray:
+    """Prioritize stable marginal/tree evidence over path-only evidence."""
+    linear_array = np.asarray(linear_strength, dtype=np.float64)
+    tree_array = np.asarray(tree_strength, dtype=np.float64)
+    path_array = np.asarray(path_strength, dtype=np.float64)
+    stable_array = np.asarray(stable_passed, dtype=bool)
+    labels = np.asarray(cluster_labels)
+    expected_shape = stable_array.shape
+    if any(
+        values.shape != expected_shape
+        for values in (linear_array, tree_array, path_array, labels)
+    ):
+        raise ValueError("strengths, stable_passed, and cluster_labels must align")
+
+    stable_strength = np.maximum(linear_array, tree_array)
+    scores = np.zeros_like(stable_strength)
+    for label in dict.fromkeys(labels.tolist()):
+        cluster_mask = labels == label
+        stable_mask = cluster_mask & stable_array
+        if np.any(stable_mask):
+            scores[cluster_mask] = path_array[cluster_mask] * 1e-6
+            scores[stable_mask] = (
+                2.0
+                + stable_strength[stable_mask]
+                + path_array[stable_mask] * 1e-6
+            )
+        else:
+            scores[cluster_mask] = path_array[cluster_mask]
+    return scores
+
+
 def select_task_features(
     *,
     block_correlations: np.ndarray,
@@ -401,8 +438,13 @@ def select_task_features(
         path_passed,
         labels,
     )
-    scores = np.maximum.reduce(
-        (linear_strength, tree_strength, path_strength)
+    stable_passed = linear["passed"] | tree["passed"]
+    scores = _combine_cluster_strengths(
+        linear_strength,
+        tree_strength,
+        path_strength,
+        stable_passed,
+        labels,
     )
     cluster_selection = select_from_clusters(
         passed,
