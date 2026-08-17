@@ -1,0 +1,39 @@
+{
+  "experiment": "v3 asset adapter public verdict on fork-local 0.7/1.17 baseline",
+  "date": "2026-08-17",
+  "baseline": {
+    "market_lambda": 0.7,
+    "blend_weight": 1.17,
+    "prediction_scale": 1.16,
+    "asset_cross_scales": null,
+    "public_score": 0.00407075,
+    "submission_sha256": "74e441dbeddfbc18a40021929717e03e40d385304c2f67e000ab0886b54408c1"
+  },
+  "candidate": {
+    "market_lambda": 0.7,
+    "blend_weight": 1.17,
+    "prediction_scale": 1.16,
+    "asset_shrink": 100.0,
+    "meta_fold": 0,
+    "eval_folds": [1, 2, 3, 4],
+    "public_score": 0.0039613753,
+    "submission_sha256": "19ab9e80c12a44a5d44a119eee502834313b88fd9c97c48bb75a1c67b10fd3c2"
+  },
+  "public_delta": {
+    "absolute": -0.0001093747,
+    "relative": -0.026868439476754793
+  },
+  "runner_audit": {
+    "status": "ok",
+    "rows": 3217458,
+    "predict_calls": 214538,
+    "predict_total_seconds": 400.5,
+    "timeouts": 0,
+    "non_finite": 0,
+    "clipped_rows": 0,
+    "max_absolute_prediction": 0.4961
+  },
+  "decision": "REJECTED_PUBLIC",
+  "active_fork_candidate": "market_lambda=0.7, blend_weight=1.17, prediction_scale=1.16, no asset_cross_scales",
+  "production_modified": false
+}

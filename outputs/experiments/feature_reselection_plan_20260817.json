@@ -1,0 +1,75 @@
+{
+  "classification": "pre-registered task-aligned feature reselection screen",
+  "created": "2026-08-17",
+  "baseline": {
+    "feature_universe": 323,
+    "xs_feature_count": 200,
+    "market_feature_count": 200,
+    "history_feature_count": 40,
+    "history_window": 5,
+    "selector": "absolute pooled Pearson correlation",
+    "market_lambda": 0.7,
+    "blend_weight": 1.17,
+    "prediction_scale": 1.16,
+    "prediction_clip": 0.5,
+    "cross_num_iteration": 480,
+    "market_num_iteration": 480,
+    "n_seeds": 3
+  },
+  "screening_protocol": {
+    "n_folds": 5,
+    "train_window": 78960,
+    "embargo": 6,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "fit_preprocessing_inside_each_fold": true,
+    "fit_selection_inside_each_fold": true,
+    "change_one_selection_stage_at_a_time": true
+  },
+  "arms": [
+    {
+      "name": "baseline_corr",
+      "change": "none",
+      "xs_selection": "top 200 absolute unweighted correlation with training-fold cross target",
+      "market_selection": "reuse XS-selected 200 columns",
+      "history_selection": "top 40 contemporaneous deviation correlation within XS 200"
+    },
+    {
+      "name": "market_task_aligned",
+      "change": "market selection only",
+      "xs_selection": "unchanged baseline",
+      "market_selection": "top 200 training-only correlation between per-time unweighted feature means and per-time unweighted target mean",
+      "history_selection": "unchanged baseline"
+    },
+    {
+      "name": "xs_time_stable",
+      "change": "XS selection only",
+      "xs_selection": "rank by median absolute correlation across contiguous training-time blocks multiplied by sign-consistency rate",
+      "market_selection": "unchanged baseline",
+      "history_selection": "unchanged baseline"
+    },
+    {
+      "name": "history_lag_aligned",
+      "change": "history selection only",
+      "xs_selection": "unchanged baseline",
+      "market_selection": "unchanged baseline",
+      "history_selection": "rank candidate columns using causal previous, difference, rolling mean and rolling deviation association with the training-fold cross target"
+    }
+  ],
+  "gates": [
+    "paired mean Peak delta > 0",
+    "positive in at least 4 of 5 folds",
+    "drop-best mean Peak delta > 0",
+    "2 * relative delta_A > relative delta_B",
+    "screening result must be confirmed with 3 seeds before any candidate packaging",
+    "do not expand the arm matrix after reading outcomes",
+    "do not generate a public CSV automatically"
+  ],
+  "explicitly_excluded": [
+    "feature-count grids",
+    "simultaneous tree or blend tuning",
+    "same-sample LightGBM gain or SHAP selection without nested validation",
+    "asset-specific calibration",
+    "leaderboard-driven feature selection"
+  ]
+}

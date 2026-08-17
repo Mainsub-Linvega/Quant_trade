@@ -209,8 +209,8 @@ def main() -> None:
 
     n = len(target)
     oof = {name: np.full(n, np.nan, dtype=np.float64) for name in (
-        "prediction", "prediction_raw", "market_ridge", "market_lgbm", "market", "e_lgbm",
-        "e_target", "xs_lgbm")}
+        "prediction", "prediction_raw", "market_ridge", "market_lgbm", "market", "e_ridge",
+        "e_lgbm", "e_target", "xs_lgbm")}
     for checkpoint in checkpoints:
         oof[f"prediction_raw_checkpoint_{checkpoint}"] = np.full(n, np.nan, dtype=np.float64)
         oof[f"market_checkpoint_{checkpoint}"] = np.full(n, np.nan, dtype=np.float64)
@@ -245,6 +245,7 @@ def main() -> None:
         ridge = fit_ridge(ridge_train_design, y_tr, w_tr, fold_alpha)
         ridge_raw = ridge.predict(ridge_valid_design).astype(np.float64)
         market_ridge = group_mean(ridge_raw, va_starts, va_counts)
+        e_ridge = ridge_raw - market_ridge
         del ridge_train_design, ridge_valid_design, ridge, ridge_raw
 
         # Cross-sectional target and selected LGBM raw features.
@@ -296,7 +297,7 @@ def main() -> None:
         out_slice = np.arange(va.start, va.stop)
         for name, value in (("prediction", prediction), ("prediction_raw", prediction_raw),
                             ("market_ridge", market_ridge), ("market_lgbm", market_lgbm),
-                            ("market", market), ("e_lgbm", e_lgbm),
+                            ("market", market), ("e_ridge", e_ridge), ("e_lgbm", e_lgbm),
                             ("e_target", e_tr[:0]), ("xs_lgbm", e_lgbm)):
             if name == "e_target":
                 continue
@@ -348,7 +349,7 @@ def main() -> None:
     np.savez_compressed(npz_path, **arrays)
     pooled = {name: metric_payload(target[valid_mask], oof[name][valid_mask], weight[valid_mask])
               for name in ("prediction", "prediction_raw", "market", "market_ridge",
-                           "market_lgbm", "e_lgbm")}
+                           "market_lgbm", "e_ridge", "e_lgbm")}
     payload = {
         "experiment": "v3_production_oof",
         "config": {k: getattr(args, k) for k in (

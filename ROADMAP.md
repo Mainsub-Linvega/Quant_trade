@@ -1,6 +1,6 @@
 # ROADMAP.md — 当前状态与行动面板
 
-> **状态日期：2026-08-13。** 本文件只描述当前有效状态和未来动作。完整探索过程见
+> **状态日期：2026-08-17。** 本文件只描述当前有效状态和未来动作。完整探索过程见
 > [`NOTES.md`](NOTES.md) 与 [`research_history/`](research_history/README.md)。生产真值以模型产物、
 > promotion manifest 和 [`experiments/ledger.csv`](experiments/ledger.csv) 为准。
 
@@ -8,8 +8,9 @@
 
 - **8/23**：公榜停止更新并等待主办方标签/数据回补；收到更新包后先审计，不先训练。
 - **8/31**：私榜策略文件提交截止；私榜共 10 次机会，至少保留 3 次余量。
-- **当前主目标**：守住已转正的 `v3_hybrid_mkt_shrunk`，完成交付风险闭环；若数据更新真实存在，
-  再按预注册矩阵重训和重标定。
+- **当前主目标**：守住已转正的 `v3_hybrid_mkt_shrunk`，完成交付风险闭环；fork 本地实验继续保留
+  `market_lambda=0.7 / blend_weight=1.17` 作为未转正候选。若数据更新真实存在，再按预注册矩阵
+  重训和重标定。
 - **研究原则**：当前结构轴已经带来主要收益，普通容量和轮数旋钮接近耗尽；不再用无边界网格搜索
   追逐小波动。
 
@@ -31,6 +32,20 @@
 当前生产文件 hash 与 promotion staging 一致；详见
 [`research_history/delivery-and-incidents.md`](research_history/delivery-and-incidents.md)。
 
+### Fork 本地最佳候选（未转正）
+
+| 项目 | 当前值 | 说明 |
+|---|---|---|
+| 候选身份 | `market_lambda=0.7 / blend_weight=1.17` | 只改融合元数据，不复制或修改六片森林 |
+| 公榜分数 | **0.00407075**（2026-08-17） | 当前 fork 最佳；高于上游生产 0.0039977510 |
+| 市场融合 | `market_lambda=0.7` | 0.8 已回落，保留较稳健的 0.7 |
+| 截面融合 | `blend_weight=1.17` | 0.6 下的 1.1/1.17/1.2 梯子显示平台区，取 1.17 |
+| 后处理 | `prediction_scale=1.16`，clip=0.5 | 沿用已验证公榜口径 |
+| 资产缩放 | **关闭** | strict OOF 通过但公榜降至 0.0039613753，已否决 |
+
+该候选尚未 promotion，不得把它写成协作者主仓库的生产真值。完整记录见
+[`research_history/local-calibration-and-feature-reselection-2026-08-17.md`](research_history/local-calibration-and-feature-reselection-2026-08-17.md)。
+
 ### 性能风险
 
 - 最近同结构前身 `mkt_we` 的完整 runner 实测 `predict_total=6.23` 分钟；当前 `mkt_shrunk` 的精确
@@ -49,6 +64,12 @@
 7. **V4 中只有压缩 market regime 值得在扩展数据上原规格复验一次。** 多尺度 history 与 target-only
    MLP 均已否决。
 8. **Scale 1.16 已足够接近峰值。** 当前没有为第二个 scale 点消耗额度的经济性。
+9. **融合参数存在小幅公榜余量。** `0.5/1.0` 到 `0.7/1.17` 提升约 1.83%，但属于后处理平台区，
+   不再继续细搜小数点。
+10. **每资产截面缩放不迁移。** fold 0 拟合、folds 1--4 冻结的 OOF 门禁通过，但公榜相对
+    `0.7/1.17` 下降 2.69%；同类资产条件化参数停止公榜尝试。
+11. **当前选列是单变量相关性过滤。** 市场森林仍复用按截面目标选择的 200 列，任务目标不对齐；
+    下一结构实验应检查选列方法，而不是扩大特征数或继续调树参数。
 
 ## 4. 行动面板
 
@@ -90,12 +111,31 @@
 
 ### P3 — 市场森林独立轮数
 
-- **状态**：`BACKLOG_NOT_SCHEDULED`
-- **目标**：验证“市场模型需要更少容量”是否也意味着更少 boosting 轮数。
-- **候选设计**：只截短市场森林到 160/240/320，截面森林保持 480；树嵌套使其无需重训。
-- **进入条件**：P0 交付风险已闭环，且不会挤占 8/23 审计和最终打包。
-- **门槛**：必须增加独立 `market_num_iteration` 元数据与一致性测试；没有公榜或回补标签裁决时，
-  不替换当前生产模型。
+- **状态**：`COMPLETED_KEEP_480`
+- **结果**：1-seed screening 的 240/320/400/480 均未通过预注册门槛；生产容量 3-seed 确认中，
+  480 相对 160 的 mean Peak `+2.91%`、4/5 折为正、drop-best `+2.05%`。
+- **决策**：市场和截面森林都保留 480 轮。该轴已经结案，不再测试 240/320/400，也不新增
+  `market_num_iteration` 覆盖。
+- **证据**：`outputs/experiments/v3_market_round_scan_phasebal_prodwindow.*`、
+  `outputs/experiments/v3_confirm_3s480_decision.*`。
+
+### P4 — 任务对齐的特征重新筛选
+
+- **状态**：`READY_FOR_LOCAL_SCREEN`
+- **目标**：保持模型容量、融合参数和特征数量不变，只检查当前相关性选列是否错过稳定信号。
+- **冻结候选**：
+  1. `baseline_corr`：现行 pooled absolute correlation，XS/market 共用 200 列，history40 从中二选。
+  2. `market_task_aligned`：XS 200 与 history40 不动；市场森林独立按逐 `time_id` 无权市场目标选择
+     200 列。
+  3. `xs_time_stable`：保持 200 列；按连续时间块的相关性中位数和方向一致率排序，市场与 history
+     暂不改变。
+  4. `history_lag_aligned`：主 200 列不动；history40 按 previous/difference/rolling 特征对未来截面
+     目标的训练期时序相关性重选。
+- **固定项**：`market_lambda=0.7`、`blend_weight=1.17`、scale=1.16、XS/market 480 轮、3 种子、
+  feature count 200、history count 40；每次只改一个筛选环节。
+- **门槛**：strict rolling OOF mean Peak > 0、至少 4/5 同号、drop-best > 0、`2ΔA>ΔB`；screening
+  通过后才做 3-seed 确认，不因结果扩充候选矩阵，不自动生成公榜 CSV。
+- **预注册文件**：`outputs/experiments/feature_reselection_plan_20260817.json`。
 
 ## 5. 已结案项目
 
@@ -110,6 +150,9 @@
 | 8/11 | 每资产 history40 | 公榜大幅提升，已进入生产 | `history_peak_lgbm_scoped.md` / ledger |
 | 8/10 | phase-balanced Ridge | 公榜 +1.97%，已进入生产 Ridge | ledger |
 | 8/8–10 | 验证框架、严格求解器、A/B 分解 | 已形成当前研究判定规则 | `research_history/validation-and-calibration.md` |
+| 8/14 | 市场独立轮数 | 3-seed 确认保留 480；较少轮数不采用 | `v3_confirm_3s480_decision.md` |
+| 8/17 | 融合参数平台 | fork 本地最佳为 0.7/1.17，公榜 0.00407075；停止细搜 | `experiments/ledger.csv` |
+| 8/17 | 每资产截面缩放 | OOF 通过但公榜 -2.69%，否决并恢复无 adapter 基线 | `v3_asset_adapter_public_verdict_local_07_117.md` |
 
 完整失败路径和结论翻转见 [`research_history/`](research_history/README.md)，不要从本表反推实验细节。
 
@@ -123,3 +166,4 @@
 | 日期 | 更新 |
 |---|---|
 | 2026-08-13 | 文档体系重构；以已转正的 `mkt_shrunk` 和公榜 0.0039977510 重建当前状态。 |
+| 2026-08-17 | 记录 fork 融合参数公榜梯子、否决 per-asset adapter、结案市场独立轮数，并预注册特征重筛。 |

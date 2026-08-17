@@ -40,6 +40,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--market-ridge-alpha", type=float, default=10.0)
     p.add_argument("--asset-shrink", type=float, default=50_000.0,
                    help="pseudo weighted energy pulling each asset slope toward 1")
+    p.add_argument("--market-lambda", type=float, default=0.5)
+    p.add_argument("--blend-weight", type=float, default=1.0)
     p.add_argument("--force", action="store_true")
     return p.parse_args()
 
@@ -52,6 +54,15 @@ def starts_counts(ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 def group_mean(values: np.ndarray, starts: np.ndarray, counts: np.ndarray) -> np.ndarray:
     return np.repeat(np.add.reduceat(values, starts) / counts, counts)
+
+
+def compose_hybrid_prediction(market_ridge: np.ndarray, market_lgbm: np.ndarray,
+                              e_ridge: np.ndarray, e_lgbm: np.ndarray,
+                              market_lambda: float,
+                              blend_weight: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    market = (1.0 - market_lambda) * market_ridge + market_lambda * market_lgbm
+    cross = (1.0 - blend_weight) * e_ridge + blend_weight * e_lgbm
+    return market, cross, market + cross
 
 
 def market_features(time_id: np.ndarray, asset_id: np.ndarray, e_pred: np.ndarray,
@@ -94,9 +105,15 @@ def predict_market(model, time_id: np.ndarray, asset_id: np.ndarray, e_pred: np.
 
 
 def fit_asset_slopes(time_id: np.ndarray, target: np.ndarray, weight: np.ndarray,
-                     asset_id: np.ndarray, e_pred: np.ndarray, shrink: float) -> np.ndarray:
+                     asset_id: np.ndarray, e_pred: np.ndarray, shrink: float,
+                     fixed_cross: np.ndarray | None = None,
+                     variable_weight: float = 1.0) -> np.ndarray:
     starts, counts = starts_counts(time_id)
     target_cross = target - group_mean(target, starts, counts)
+    if fixed_cross is not None:
+        if variable_weight == 0.0:
+            raise ValueError("variable_weight must be non-zero")
+        target_cross = (target_cross - fixed_cross) / variable_weight
     n_assets = int(asset_id.max()) + 1
     slopes = np.ones(n_assets, dtype=np.float64)
     for asset in range(n_assets):
@@ -143,18 +160,20 @@ def main() -> None:
         fold = d["fold"].astype(np.int16)
         valid = fold >= 0
         arrays = {name: d[name][valid] for name in (
-            "target", "weight", "time_id", "asset_id", "fold", "market",
-            "market_ridge", "market_lgbm", "e_lgbm", "prediction_raw")}
+            "target", "weight", "time_id", "asset_id", "fold",
+            "market_ridge", "market_lgbm", "e_ridge", "e_lgbm")}
     target = arrays["target"].astype(np.float64)
     weight = np.maximum(arrays["weight"].astype(np.float64), 0.0)
     time_id = arrays["time_id"].astype(np.int64)
     asset_id = arrays["asset_id"].astype(np.int64)
     fold = arrays["fold"].astype(np.int16)
-    market = arrays["market"].astype(np.float64)
     market_ridge = arrays["market_ridge"].astype(np.float64)
     market_lgbm = arrays["market_lgbm"].astype(np.float64)
+    e_ridge = arrays["e_ridge"].astype(np.float64)
     e_pred = arrays["e_lgbm"].astype(np.float64)
-    baseline = arrays["prediction_raw"].astype(np.float64)
+    market, base_cross, baseline = compose_hybrid_prediction(
+        market_ridge, market_lgbm, e_ridge, e_pred,
+        args.market_lambda, args.blend_weight)
 
     meta = fold == args.meta_fold
     if not meta.any():
@@ -162,8 +181,11 @@ def main() -> None:
     linear, hgb = fit_market_experts(
         time_id[meta], asset_id[meta], target[meta], weight[meta], e_pred[meta],
         market_ridge[meta], market_lgbm[meta], args.market_ridge_alpha)
-    slopes = fit_asset_slopes(time_id[meta], target[meta], weight[meta], asset_id[meta],
-                              e_pred[meta], args.asset_shrink)
+    fixed_cross = (1.0 - args.blend_weight) * e_ridge
+    slopes = fit_asset_slopes(
+        time_id[meta], target[meta], weight[meta], asset_id[meta],
+        e_pred[meta], args.asset_shrink, fixed_cross=fixed_cross[meta],
+        variable_weight=args.blend_weight)
 
     # A single release scale is learned on meta fold and frozen for all later folds.
     arms: dict[str, np.ndarray] = {
@@ -180,9 +202,12 @@ def main() -> None:
                                        market_ridge[mask], market_lgbm[mask])
         market_hgb = predict_market(hgb, time_id[mask], asset_id[mask], e_pred[mask],
                                     market_ridge[mask], market_lgbm[mask])
-        cross_asset = apply_asset_slopes(time_id[mask], asset_id[mask], e_pred[mask], slopes)
-        arms["market_linear"][mask] = market_linear + e_pred[mask]
-        arms["market_hgb"][mask] = market_hgb + e_pred[mask]
+        adjusted_lgbm = apply_asset_slopes(
+            time_id[mask], asset_id[mask], e_pred[mask], slopes)
+        cross_asset = ((1.0 - args.blend_weight) * e_ridge[mask]
+                       + args.blend_weight * adjusted_lgbm)
+        arms["market_linear"][mask] = market_linear + base_cross[mask]
+        arms["market_hgb"][mask] = market_hgb + base_cross[mask]
         arms["cross_asset"][mask] = market[mask] + cross_asset
         arms["linear_plus_asset"][mask] = market_linear + cross_asset
         arms["hgb_plus_asset"][mask] = market_hgb + cross_asset
@@ -223,7 +248,9 @@ def main() -> None:
         "experiment": "v3_residual_adapters", "oof": str(args.oof),
         "meta_fold": args.meta_fold, "eval_folds": eval_folds,
         "config": {"market_ridge_alpha": args.market_ridge_alpha,
-                   "asset_shrink": args.asset_shrink},
+                   "asset_shrink": args.asset_shrink,
+                   "market_lambda": args.market_lambda,
+                   "blend_weight": args.blend_weight},
         "asset_slopes": [float(v) for v in slopes],
         "meta_scales": meta_scales,
         "folds": fold_rows, "summary": summary,

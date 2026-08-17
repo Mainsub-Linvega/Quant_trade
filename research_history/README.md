@@ -27,6 +27,7 @@
 | [`v3-market-round-and-asset-confirm-2026-08-14.md`](v3-market-round-and-asset-confirm-2026-08-14.md) | market480 在 3-seed 确认中通过；per-asset XS adapter 稳定通过 |
 | [`v3-residual-signal-search-2026-08-14.md`](v3-residual-signal-search-2026-08-14.md) | asset×magnitude/regime 条件化跨时期不稳；静态 PCA 因子失败 |
 | [`v3-sparse-and-raw-state-search-2026-08-14.md`](v3-sparse-and-raw-state-search-2026-08-14.md) | sparse asset×feature 与 raw dispersion gate 均失败；当前最佳仍为基础 per-asset XS scale |
+| [`local-calibration-and-feature-reselection-2026-08-17.md`](local-calibration-and-feature-reselection-2026-08-17.md) | fork 融合参数公榜梯子、per-asset adapter 公榜否决，以及下一轮任务对齐特征重筛计划 |
 
 主题文件是便于检索的整理版，不替代原始实验报告。需要核对细节时，按以下顺序查看：
 
