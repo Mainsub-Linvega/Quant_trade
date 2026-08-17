@@ -15,6 +15,7 @@ from experiments.v3_feature_structure import (
     contiguous_time_blocks,
     feature_quality_by_blocks,
     stable_redundancy,
+    weighted_component_gram,
 )
 
 
@@ -102,3 +103,18 @@ def test_stable_redundancy_clusters_duplicate_columns() -> None:
     assert result.spearman.shape == (4, 4)
     assert result.labels[0] == result.labels[1] == result.labels[2]
     assert result.labels[3] != result.labels[0]
+
+
+def test_weighted_component_gram_exposes_market_cross_coupling() -> None:
+    target = np.array([1.0, -1.0, 2.0, -2.0])
+    baseline = np.array([0.2, -0.2, 0.3, -0.3])
+    market_delta = np.array([1.0, 0.0, 1.0, 0.0])
+    cross_delta = np.array([1.0, 0.0, 1.0, 0.0])
+
+    result = weighted_component_gram(
+        target, np.ones(4), baseline, market_delta, cross_delta
+    )
+
+    assert result["labels"] == ["b", "u", "v", "y"]
+    assert result["gram"][1, 2] > 0.0
+    np.testing.assert_allclose(result["gram"], result["gram"].T)

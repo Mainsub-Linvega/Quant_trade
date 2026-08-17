@@ -298,3 +298,40 @@ def stable_redundancy(
         distance=distance,
         labels=labels,
     )
+
+
+def weighted_component_gram(
+    target: np.ndarray,
+    weight: np.ndarray,
+    baseline: np.ndarray,
+    market_delta: np.ndarray,
+    cross_delta: np.ndarray,
+) -> dict[str, object]:
+    """Return the target-energy-normalized weighted Gram matrix for ``[b, u, v, y]``."""
+    arrays = [
+        np.asarray(values, dtype=np.float64)
+        for values in (target, weight, baseline, market_delta, cross_delta)
+    ]
+    target64, weight64, baseline64, market64, cross64 = arrays
+    if target64.ndim != 1:
+        raise ValueError("component arrays must be one-dimensional")
+    if any(values.shape != target64.shape for values in arrays[1:]):
+        raise ValueError("component arrays must have identical shapes")
+    if not all(np.all(np.isfinite(values)) for values in arrays):
+        raise ValueError("component arrays must be finite")
+
+    nonnegative_weight = np.maximum(weight64, 0.0)
+    denominator = float(np.dot(nonnegative_weight, target64 * target64))
+    if denominator <= 0.0:
+        raise ValueError("target must have positive weighted energy")
+    components = np.column_stack(
+        [baseline64, market64, cross64, target64]
+    )
+    gram = components.T @ (nonnegative_weight[:, None] * components) / denominator
+    gram = (gram + gram.T) * 0.5
+    return {
+        "labels": ["b", "u", "v", "y"],
+        "gram": gram,
+        "uv_coupling": float(gram[1, 2]),
+        "target_energy": denominator,
+    }
