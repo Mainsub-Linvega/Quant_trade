@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 from experiments.v3_feature_structure import (
     build_task_views,
     contiguous_time_blocks,
+    evenly_spaced_rows,
     feature_quality_by_blocks,
     stable_redundancy,
     weighted_component_gram,
@@ -148,3 +149,24 @@ def test_build_task_views_preserves_float32_feature_storage() -> None:
     )
     assert views.raw_features.dtype == np.float32
     assert views.cross_features.dtype == np.float32
+
+
+def test_evenly_spaced_rows_is_deterministic_and_keeps_endpoints() -> None:
+    np.testing.assert_array_equal(evenly_spaced_rows(10, 4), [0, 3, 6, 9])
+    np.testing.assert_array_equal(evenly_spaced_rows(10, 4), evenly_spaced_rows(10, 4))
+
+
+def test_stable_redundancy_row_cap_preserves_duplicate_cluster() -> None:
+    base = np.arange(400, dtype=float)
+    features = np.column_stack([base, base * 2.0, np.sin(base)])
+    time_ids = np.repeat(np.arange(200), 2)
+
+    result = stable_redundancy(
+        features,
+        time_ids,
+        n_blocks=4,
+        threshold=0.05,
+        max_rows_per_block=25,
+    )
+
+    assert result.labels[0] == result.labels[1]

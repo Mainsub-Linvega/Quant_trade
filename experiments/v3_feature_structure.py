@@ -219,6 +219,20 @@ from scipy.spatial.distance import squareform
 from scipy.stats import rankdata
 
 
+def evenly_spaced_rows(n_rows: int, limit: int | None) -> np.ndarray:
+    """Return deterministic, approximately even row positions including both endpoints."""
+    if n_rows <= 0:
+        raise ValueError("n_rows must be positive")
+    if limit is None or limit >= n_rows:
+        return np.arange(n_rows, dtype=np.int64)
+    if limit < 2:
+        raise ValueError("limit must be at least two")
+    positions = np.rint(np.linspace(0, n_rows - 1, limit)).astype(np.int64)
+    if len(np.unique(positions)) != limit:
+        raise AssertionError("even sampling produced duplicate positions")
+    return positions
+
+
 @dataclass(frozen=True)
 class RedundancyResult:
     pearson: np.ndarray
@@ -226,6 +240,7 @@ class RedundancyResult:
     stability: np.ndarray
     distance: np.ndarray
     labels: np.ndarray
+    sampled_rows_per_block: list[int]
 
 
 def _correlation_matrix(values: np.ndarray) -> np.ndarray:
@@ -264,6 +279,7 @@ def stable_redundancy(
     time_ids: np.ndarray,
     n_blocks: int = 4,
     threshold: float = 0.15,
+    max_rows_per_block: int | None = None,
 ) -> RedundancyResult:
     """Cluster columns whose Pearson and Spearman relationships persist across time blocks."""
     x = np.asarray(features)
@@ -273,9 +289,15 @@ def stable_redundancy(
         raise ValueError("threshold must be between zero and one")
 
     blocks = contiguous_time_blocks(time_ids, n_blocks)
-    pearson_blocks = np.stack([_correlation_matrix(x[block]) for block in blocks])
+    sampled_blocks = [
+        block[evenly_spaced_rows(len(block), max_rows_per_block)] for block in blocks
+    ]
+    sampled_rows_per_block = [int(len(block)) for block in sampled_blocks]
+    pearson_blocks = np.stack(
+        [_correlation_matrix(x[block]) for block in sampled_blocks]
+    )
     spearman_blocks = np.stack(
-        [_correlation_matrix(_rank_columns(x[block])) for block in blocks]
+        [_correlation_matrix(_rank_columns(x[block])) for block in sampled_blocks]
     )
     pearson = np.median(np.abs(pearson_blocks), axis=0)
     spearman = np.median(np.abs(spearman_blocks), axis=0)
@@ -300,6 +322,7 @@ def stable_redundancy(
         stability=stability,
         distance=distance,
         labels=labels,
+        sampled_rows_per_block=sampled_rows_per_block,
     )
 
 
