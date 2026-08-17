@@ -267,35 +267,55 @@ def test_selector_rejects_nonfinite_shadow_tree_gains() -> None:
         )
 
 
-def test_unrelated_tree_gain_outlier_does_not_flip_cluster_representative() -> None:
-    def select(unrelated_tree_gain: float) -> dict[str, object]:
+def test_unrelated_cluster_rank_changes_do_not_flip_representative() -> None:
+    cluster_labels = np.array([10, 10, 20, 20, 20, 20, 20])
+
+    def select(
+        unrelated_linear: list[float],
+        unrelated_tree: list[float],
+        paths_by_block: list[list[tuple[int, ...]]],
+    ) -> dict[str, object]:
+        correlations = np.array([0.20, 0.0, *unrelated_linear])
+        tree_gains = np.array([0.0, 0.60, *unrelated_tree])
         return select_task_features(
-            block_correlations=np.array(
-                [
-                    [0.20, 0.0, 0.40],
-                    [0.20, 0.0, 0.40],
-                    [0.20, 0.0, 0.40],
-                    [0.20, 0.0, 0.40],
-                ]
-            ),
+            block_correlations=np.tile(correlations, (4, 1)),
             shadow_block_correlations=np.zeros((4, 2)),
-            cluster_labels=np.array([10, 10, 20]),
-            block_tree_gains=np.array(
-                [
-                    [0.0, 0.60, unrelated_tree_gain],
-                    [0.0, 0.60, unrelated_tree_gain],
-                    [0.0, 0.60, unrelated_tree_gain],
-                    [0.0, 0.60, unrelated_tree_gain],
-                ]
-            ),
+            cluster_labels=cluster_labels,
+            block_tree_gains=np.tile(tree_gains, (4, 1)),
             shadow_block_tree_gains=np.zeros((4, 2)),
-            paths_by_block=[],
+            paths_by_block=paths_by_block,
             shadow_quantile=1.0,
         )
 
-    baseline = select(0.80)
-    extreme = select(1e12)
+    baseline = select(
+        unrelated_linear=[0.40, 0.40, 0.40, 0.40, 0.40],
+        unrelated_tree=[0.80, 0.80, 0.80, 0.80, 0.80],
+        paths_by_block=[
+            [(2, 3, 4, 5, 6)],
+            [(2, 3, 4, 5, 6)],
+        ],
+    )
+    changed = select(
+        unrelated_linear=[0.40, 0.50, 1e12, 0.50, 0.40],
+        unrelated_tree=[0.10, 0.20, 0.20, 0.30, 0.10],
+        paths_by_block=[
+            [(2, 3, 4), (4, 5, 6)],
+            [(2, 3, 4), (4, 5, 6)],
+            [(2, 3, 4)],
+        ],
+    )
 
-    assert baseline["representatives"] == [0, 2]
-    assert extreme["representatives"] == baseline["representatives"]
-    assert extreme["selected_indices"] == baseline["selected_indices"]
+    def representative_for(
+        result: dict[str, object],
+        cluster: int,
+    ) -> int:
+        representatives = result["representatives"]
+        assert isinstance(representatives, list)
+        return next(
+            feature
+            for feature in representatives
+            if cluster_labels[feature] == cluster
+        )
+
+    assert representative_for(baseline, 10) == 0
+    assert representative_for(changed, 10) == 0

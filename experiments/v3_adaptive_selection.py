@@ -298,24 +298,32 @@ def _tree_gain_evidence(
     }
 
 
-def _ranked_accepted_strength(
+def _cluster_ranked_accepted_strength(
     scores: np.ndarray,
     passed: np.ndarray,
+    cluster_labels: np.ndarray,
 ) -> np.ndarray:
-    """Return gate-masked dense percentile ranks among accepted scores."""
+    """Return gate-masked dense percentile ranks within each redundancy cluster."""
     score_array = np.asarray(scores, dtype=np.float64)
     passed_array = np.asarray(passed, dtype=bool)
-    if score_array.shape != passed_array.shape:
-        raise ValueError("scores and passed must have the same shape")
+    labels = np.asarray(cluster_labels)
+    if (
+        score_array.shape != passed_array.shape
+        or labels.shape != passed_array.shape
+    ):
+        raise ValueError("scores, passed, and cluster_labels must have the same shape")
+
     strength = np.zeros_like(score_array)
     accepted_indices = np.flatnonzero(passed_array)
     if len(accepted_indices) == 0:
         return strength
 
-    accepted_scores = np.maximum(score_array[accepted_indices], 0.0)
-    unique_scores = np.unique(accepted_scores)
-    dense_ranks = np.searchsorted(unique_scores, accepted_scores) + 1
-    strength[accepted_indices] = dense_ranks / len(unique_scores)
+    for label in dict.fromkeys(labels[accepted_indices].tolist()):
+        cluster_indices = accepted_indices[labels[accepted_indices] == label]
+        cluster_scores = np.maximum(score_array[cluster_indices], 0.0)
+        unique_scores = np.unique(cluster_scores)
+        dense_ranks = np.searchsorted(unique_scores, cluster_scores) + 1
+        strength[cluster_indices] = dense_ranks / len(unique_scores)
     return strength
 
 
@@ -382,14 +390,20 @@ def select_task_features(
     path_passed = path_support > 0
 
     passed = linear["passed"] | tree["passed"] | path_passed
-    linear_strength = _ranked_accepted_strength(
-        linear["score"], linear["passed"]
+    linear_strength = _cluster_ranked_accepted_strength(
+        linear["score"], linear["passed"], labels
     )
-    tree_strength = _ranked_accepted_strength(
-        tree["score"], tree["passed"]
+    tree_strength = _cluster_ranked_accepted_strength(
+        tree["score"], tree["passed"], labels
     )
-    scores = np.maximum(linear_strength, tree_strength)
-    scores = scores + path_support * 1e-6
+    path_strength = _cluster_ranked_accepted_strength(
+        path_support.astype(np.float64),
+        path_passed,
+        labels,
+    )
+    scores = np.maximum.reduce(
+        (linear_strength, tree_strength, path_strength)
+    )
     cluster_selection = select_from_clusters(
         passed,
         labels,
