@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from experiments.v3_feature_structure import (
 from experiments.v3_feature_structure_audit import (
     extract_dense_matrices,
     render_markdown,
+    write_report_bundle,
 )
 
 
@@ -204,3 +206,30 @@ def test_extract_dense_matrices_replaces_arrays_with_npz_references() -> None:
     np.testing.assert_array_equal(
         summary["folds"][0]["tasks"]["ridge"]["redundancy"]["labels"], [1, 2]
     )
+
+
+def test_write_report_bundle_round_trips_json_and_npz(tmp_path: Path) -> None:
+    report = {
+        "config": {"n_blocks": 4},
+        "folds": [
+            {
+                "fold": 0,
+                "tasks": {
+                    "ridge": {
+                        "status": "ok",
+                        "n_features": 20,
+                        "cluster_count": 1,
+                        "redundancy": {"stability": np.eye(20)},
+                    }
+                },
+            }
+        ],
+        "gram": {"status": "not_available"},
+    }
+
+    paths = write_report_bundle(report, tmp_path, "audit")
+
+    loaded = json.loads(paths["json"].read_text(encoding="utf-8"))
+    with np.load(paths["npz"]) as matrices:
+        assert matrices["fold_0.ridge.redundancy.stability"].shape == (20, 20)
+    assert loaded["matrix_artifact"] == "audit_matrices.npz"

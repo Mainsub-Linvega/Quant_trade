@@ -43,6 +43,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embargo", type=int, default=6)
     parser.add_argument("--n-blocks", type=int, default=4)
     parser.add_argument("--cluster-threshold", type=float, default=0.15)
+    parser.add_argument(
+        "--redundancy-rows-per-block", type=int, default=100_000,
+        help="Deterministic row cap for each block's Pearson/Spearman matrices.",
+    )
     parser.add_argument("--components-npz", default=None)
     parser.add_argument("--smoke-folds", type=int, default=None)
     parser.add_argument("--force", action="store_true")
@@ -150,6 +154,31 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def write_report_bundle(
+    report: dict[str, Any], output_dir: Path, label: str
+) -> dict[str, Path]:
+    """Write a JSON index, Markdown summary and compressed dense-matrix artifact."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / f"{label}.json"
+    markdown_path = output_dir / f"{label}.md"
+    npz_path = output_dir / f"{label}_matrices.npz"
+
+    summary, matrices = extract_dense_matrices(report)
+    summary["matrix_artifact"] = npz_path.name
+    safe_summary = _json_safe(summary)
+    np.savez_compressed(npz_path, **matrices)
+    json_path.write_text(
+        json.dumps(safe_summary, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    markdown_path.write_text(render_markdown(safe_summary), encoding="utf-8")
+    return {
+        "json": json_path,
+        "markdown": markdown_path,
+        "npz": npz_path,
+    }
+
+
 def _task_report(
     features: np.ndarray,
     target: np.ndarray,
@@ -157,12 +186,17 @@ def _task_report(
     time_ids: np.ndarray,
     n_blocks: int,
     cluster_threshold: float,
+    redundancy_rows_per_block: int | None,
 ) -> dict[str, Any]:
     quality = feature_quality_by_blocks(
         features, target, weight, time_ids, n_blocks=n_blocks
     )
     redundancy = stable_redundancy(
-        features, time_ids, n_blocks=n_blocks, threshold=cluster_threshold
+        features,
+        time_ids,
+        n_blocks=n_blocks,
+        threshold=cluster_threshold,
+        max_rows_per_block=redundancy_rows_per_block,
     )
     return {
         "status": "ok",
@@ -176,6 +210,7 @@ def _task_report(
             "stability": redundancy.stability,
             "distance": redundancy.distance,
             "labels": redundancy.labels,
+            "sampled_rows_per_block": redundancy.sampled_rows_per_block,
         },
     }
 
@@ -217,6 +252,8 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("sample_modulo must be positive")
     if args.n_blocks <= 0:
         raise ValueError("n_blocks must be positive")
+    if args.redundancy_rows_per_block is not None and args.redundancy_rows_per_block < 2:
+        raise ValueError("redundancy_rows_per_block must be at least two")
     if args.smoke_folds is not None and args.smoke_folds <= 0:
         raise ValueError("smoke_folds must be positive")
 
@@ -257,6 +294,7 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
             "embargo": args.embargo,
             "n_blocks": args.n_blocks,
             "cluster_threshold": args.cluster_threshold,
+            "redundancy_rows_per_block": args.redundancy_rows_per_block,
         },
         "data": {
             "rows": int(len(time_ids)),
@@ -286,6 +324,7 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
                 train_time_ids,
                 args.n_blocks,
                 args.cluster_threshold,
+                args.redundancy_rows_per_block,
             ),
             "xs": _task_report(
                 views.cross_features,
@@ -294,6 +333,7 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
                 train_time_ids,
                 args.n_blocks,
                 args.cluster_threshold,
+                args.redundancy_rows_per_block,
             ),
             "market": _task_report(
                 views.market_features,
@@ -302,6 +342,7 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
                 views.unique_time_ids,
                 args.n_blocks,
                 args.cluster_threshold,
+                args.redundancy_rows_per_block,
             ),
             "history": {
                 "status": "not_run",
@@ -327,20 +368,17 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / f"{args.label}.json"
     markdown_path = output_dir / f"{args.label}.md"
-    if not args.force and (json_path.exists() or markdown_path.exists()):
-        raise SystemExit(f"report exists: {json_path} / {markdown_path}; pass --force")
+    npz_path = output_dir / f"{args.label}_matrices.npz"
+    if not args.force and any(path.exists() for path in (json_path, markdown_path, npz_path)):
+        raise SystemExit(
+            f"report exists: {json_path} / {markdown_path} / {npz_path}; pass --force"
+        )
 
-    report = _json_safe(run_audit(args))
-    json_path.write_text(
-        json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    markdown_path.write_text(render_markdown(report), encoding="utf-8")
-    print(json_path)
-    print(markdown_path)
+    paths = write_report_bundle(run_audit(args), output_dir, args.label)
+    for path in paths.values():
+        print(path)
 
 
 if __name__ == "__main__":
