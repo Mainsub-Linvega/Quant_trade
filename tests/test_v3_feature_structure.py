@@ -14,6 +14,7 @@ from experiments.v3_feature_structure import (
     build_task_views,
     contiguous_time_blocks,
     feature_quality_by_blocks,
+    stable_redundancy,
 )
 
 
@@ -86,3 +87,18 @@ def test_feature_quality_marks_stable_and_drifting_columns() -> None:
     assert report["early_late_delta"][1] < 0.0
 
 
+
+
+def test_stable_redundancy_clusters_duplicate_columns() -> None:
+    base = np.arange(24, dtype=float)
+    features = np.column_stack(
+        [base, base * 2.0, -base, np.tile([0.0, 1.0, 0.0], 8)]
+    )
+    time_ids = np.repeat(np.arange(12), 2)
+
+    result = stable_redundancy(features, time_ids, n_blocks=4, threshold=0.05)
+
+    assert result.pearson.shape == (4, 4)
+    assert result.spearman.shape == (4, 4)
+    assert result.labels[0] == result.labels[1] == result.labels[2]
+    assert result.labels[3] != result.labels[0]

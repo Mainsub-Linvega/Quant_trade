@@ -211,3 +211,90 @@ def feature_quality_by_blocks(
         "early_late_delta": early_late_delta,
         "standardized_mean_shift": standardized_mean_shift,
     }
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import squareform
+from scipy.stats import rankdata
+
+
+@dataclass(frozen=True)
+class RedundancyResult:
+    pearson: np.ndarray
+    spearman: np.ndarray
+    stability: np.ndarray
+    distance: np.ndarray
+    labels: np.ndarray
+
+
+def _correlation_matrix(values: np.ndarray) -> np.ndarray:
+    x = np.asarray(values, dtype=np.float64)
+    if x.ndim != 2:
+        raise ValueError("values must be two-dimensional")
+    finite = np.isfinite(x)
+    counts = finite.sum(axis=0)
+    sums = np.where(finite, x, 0.0).sum(axis=0)
+    means = np.divide(sums, counts, out=np.zeros(x.shape[1]), where=counts > 0)
+    centered = np.where(finite, x - means[None, :], 0.0)
+    energy = np.sqrt(np.sum(centered * centered, axis=0))
+    denominator = np.outer(energy, energy)
+    correlation = np.divide(
+        centered.T @ centered,
+        denominator,
+        out=np.zeros((x.shape[1], x.shape[1]), dtype=np.float64),
+        where=denominator > 0.0,
+    )
+    np.clip(correlation, -1.0, 1.0, out=correlation)
+    np.fill_diagonal(correlation, np.where(energy > 0.0, 1.0, 0.0))
+    return correlation
+
+
+def _rank_columns(values: np.ndarray) -> np.ndarray:
+    ranked = np.full(values.shape, np.nan, dtype=np.float64)
+    for column in range(values.shape[1]):
+        finite = np.isfinite(values[:, column])
+        if finite.any():
+            ranked[finite, column] = rankdata(values[finite, column], method="average")
+    return ranked
+
+
+def stable_redundancy(
+    features: np.ndarray,
+    time_ids: np.ndarray,
+    n_blocks: int = 4,
+    threshold: float = 0.15,
+) -> RedundancyResult:
+    """Cluster columns whose Pearson and Spearman relationships persist across time blocks."""
+    x = np.asarray(features, dtype=np.float64)
+    if x.ndim != 2 or x.shape[1] == 0:
+        raise ValueError("features must contain at least one column")
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold must be between zero and one")
+
+    blocks = contiguous_time_blocks(time_ids, n_blocks)
+    pearson_blocks = np.stack([_correlation_matrix(x[block]) for block in blocks])
+    spearman_blocks = np.stack(
+        [_correlation_matrix(_rank_columns(x[block])) for block in blocks]
+    )
+    pearson = np.median(np.abs(pearson_blocks), axis=0)
+    spearman = np.median(np.abs(spearman_blocks), axis=0)
+    stability = np.min(
+        np.minimum(np.abs(pearson_blocks), np.abs(spearman_blocks)), axis=0
+    )
+    stability = np.nan_to_num(stability, nan=0.0, posinf=0.0, neginf=0.0)
+    stability = np.clip((stability + stability.T) * 0.5, 0.0, 1.0)
+    np.fill_diagonal(stability, 1.0)
+    distance = 1.0 - stability
+    distance = np.clip((distance + distance.T) * 0.5, 0.0, 1.0)
+    np.fill_diagonal(distance, 0.0)
+
+    if x.shape[1] == 1:
+        labels = np.ones(1, dtype=np.int64)
+    else:
+        tree = linkage(squareform(distance, checks=True), method="average")
+        labels = fcluster(tree, t=threshold, criterion="distance").astype(np.int64)
+    return RedundancyResult(
+        pearson=pearson,
+        spearman=spearman,
+        stability=stability,
+        distance=distance,
+        labels=labels,
+    )
