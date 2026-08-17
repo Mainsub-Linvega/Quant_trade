@@ -30,7 +30,9 @@ def _validate_panel_inputs(
     weight: np.ndarray,
     time_ids: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    features64 = np.asarray(features, dtype=np.float64)
+    features64 = np.asarray(features)
+    if not np.issubdtype(features64.dtype, np.floating):
+        features64 = features64.astype(np.float64)
     target64 = np.asarray(target, dtype=np.float64)
     weight64 = np.maximum(np.asarray(weight, dtype=np.float64), 0.0)
     time_ids64 = np.asarray(time_ids, dtype=np.int64)
@@ -69,6 +71,7 @@ def build_task_views(
     unique_time_ids = time_ids64[starts]
 
     market_features = np.add.reduceat(features64, starts, axis=0) / counts[:, None]
+    market_features = market_features.astype(features64.dtype, copy=False)
     total_weight = np.add.reduceat(weight64, starts)
     if np.any(total_weight <= 0.0):
         raise ValueError("each time group must have positive total weight")
@@ -153,7 +156,7 @@ def feature_quality_by_blocks(
     n_blocks: int = 4,
 ) -> dict[str, np.ndarray]:
     """Measure marginal quality, temporal stability and simple distribution drift."""
-    x = np.asarray(features, dtype=np.float64)
+    x = np.asarray(features)
     y = np.asarray(target, dtype=np.float64)
     w = np.asarray(weight, dtype=np.float64)
     ids = np.asarray(time_ids, dtype=np.int64)
@@ -263,7 +266,7 @@ def stable_redundancy(
     threshold: float = 0.15,
 ) -> RedundancyResult:
     """Cluster columns whose Pearson and Spearman relationships persist across time blocks."""
-    x = np.asarray(features, dtype=np.float64)
+    x = np.asarray(features)
     if x.ndim != 2 or x.shape[1] == 0:
         raise ValueError("features must contain at least one column")
     if not 0.0 <= threshold <= 1.0:

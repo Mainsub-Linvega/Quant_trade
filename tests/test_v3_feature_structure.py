@@ -17,6 +17,7 @@ from experiments.v3_feature_structure import (
     stable_redundancy,
     weighted_component_gram,
 )
+from experiments.v3_feature_structure_audit import render_markdown
 
 
 def test_build_task_views_separates_market_and_cross_section() -> None:
@@ -118,3 +119,32 @@ def test_weighted_component_gram_exposes_market_cross_coupling() -> None:
     assert result["labels"] == ["b", "u", "v", "y"]
     assert result["gram"][1, 2] > 0.0
     np.testing.assert_allclose(result["gram"], result["gram"].T)
+
+
+def test_render_markdown_contains_task_and_cluster_summaries() -> None:
+    report = {
+        "config": {"n_blocks": 4},
+        "folds": [
+            {
+                "fold": 0,
+                "tasks": {"ridge": {"n_features": 2, "cluster_count": 1}},
+            }
+        ],
+        "gram": {"status": "ok", "uv_coupling": 0.25},
+    }
+    text = render_markdown(report)
+    assert "# V3 Feature Structure Audit" in text
+    assert "ridge" in text
+    assert "0.25" in text
+
+
+def test_build_task_views_preserves_float32_feature_storage() -> None:
+    features = np.arange(12, dtype=np.float32).reshape(6, 2)
+    views = build_task_views(
+        features,
+        np.arange(6, dtype=float),
+        np.ones(6),
+        np.repeat([0, 1], 3),
+    )
+    assert views.raw_features.dtype == np.float32
+    assert views.cross_features.dtype == np.float32
