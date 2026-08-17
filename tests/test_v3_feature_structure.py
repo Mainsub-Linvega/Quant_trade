@@ -10,7 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from experiments.v3_feature_structure import build_task_views
+from experiments.v3_feature_structure import (
+    build_task_views,
+    contiguous_time_blocks,
+    feature_quality_by_blocks,
+)
 
 
 def test_build_task_views_separates_market_and_cross_section() -> None:
@@ -47,5 +51,38 @@ def test_build_task_views_separates_market_and_cross_section() -> None:
 def test_build_task_views_rejects_unsorted_time_ids() -> None:
     with pytest.raises(ValueError, match="sorted"):
         build_task_views(np.ones((3, 2)), np.ones(3), np.ones(3), np.array([1, 0, 1]))
+
+
+def test_contiguous_time_blocks_do_not_split_time_ids() -> None:
+    time_ids = np.repeat(np.arange(8), 2)
+
+    blocks = contiguous_time_blocks(time_ids, 4)
+
+    grouped_ids = [np.unique(time_ids[block]).tolist() for block in blocks]
+    assert grouped_ids == [[0, 1], [2, 3], [4, 5], [6, 7]]
+
+
+def test_feature_quality_marks_stable_and_drifting_columns() -> None:
+    target = np.arange(16, dtype=float)
+    features = np.column_stack(
+        [
+            target,
+            np.r_[np.arange(8, dtype=float), -np.arange(8, dtype=float)],
+        ]
+    )
+    time_ids = np.repeat(np.arange(8), 2)
+
+    report = feature_quality_by_blocks(
+        features,
+        target,
+        np.ones(16),
+        time_ids,
+        n_blocks=4,
+    )
+
+    assert report["direction_consistency"][0] == 1.0
+    assert report["direction_consistency"][1] < 1.0
+    assert report["block_correlation"].shape == (4, 2)
+    assert report["early_late_delta"][1] < 0.0
 
 
