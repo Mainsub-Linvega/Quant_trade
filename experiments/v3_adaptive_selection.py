@@ -298,20 +298,25 @@ def _tree_gain_evidence(
     }
 
 
-def _normalized_accepted_strength(
+def _ranked_accepted_strength(
     scores: np.ndarray,
     passed: np.ndarray,
 ) -> np.ndarray:
-    """Return dimensionless, gate-masked strengths for representative ranking."""
+    """Return gate-masked dense percentile ranks among accepted scores."""
     score_array = np.asarray(scores, dtype=np.float64)
     passed_array = np.asarray(passed, dtype=bool)
     if score_array.shape != passed_array.shape:
         raise ValueError("scores and passed must have the same shape")
-    accepted = np.where(passed_array, np.maximum(score_array, 0.0), 0.0)
-    maximum = float(np.max(accepted))
-    if maximum <= 0.0:
-        return np.zeros_like(accepted)
-    return accepted / maximum
+    strength = np.zeros_like(score_array)
+    accepted_indices = np.flatnonzero(passed_array)
+    if len(accepted_indices) == 0:
+        return strength
+
+    accepted_scores = np.maximum(score_array[accepted_indices], 0.0)
+    unique_scores = np.unique(accepted_scores)
+    dense_ranks = np.searchsorted(unique_scores, accepted_scores) + 1
+    strength[accepted_indices] = dense_ranks / len(unique_scores)
+    return strength
 
 
 def select_task_features(
@@ -377,10 +382,10 @@ def select_task_features(
     path_passed = path_support > 0
 
     passed = linear["passed"] | tree["passed"] | path_passed
-    linear_strength = _normalized_accepted_strength(
+    linear_strength = _ranked_accepted_strength(
         linear["score"], linear["passed"]
     )
-    tree_strength = _normalized_accepted_strength(
+    tree_strength = _ranked_accepted_strength(
         tree["score"], tree["passed"]
     )
     scores = np.maximum(linear_strength, tree_strength)

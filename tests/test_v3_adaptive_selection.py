@@ -265,3 +265,37 @@ def test_selector_rejects_nonfinite_shadow_tree_gains() -> None:
                 ]
             ),
         )
+
+
+def test_unrelated_tree_gain_outlier_does_not_flip_cluster_representative() -> None:
+    def select(unrelated_tree_gain: float) -> dict[str, object]:
+        return select_task_features(
+            block_correlations=np.array(
+                [
+                    [0.20, 0.0, 0.40],
+                    [0.20, 0.0, 0.40],
+                    [0.20, 0.0, 0.40],
+                    [0.20, 0.0, 0.40],
+                ]
+            ),
+            shadow_block_correlations=np.zeros((4, 2)),
+            cluster_labels=np.array([10, 10, 20]),
+            block_tree_gains=np.array(
+                [
+                    [0.0, 0.60, unrelated_tree_gain],
+                    [0.0, 0.60, unrelated_tree_gain],
+                    [0.0, 0.60, unrelated_tree_gain],
+                    [0.0, 0.60, unrelated_tree_gain],
+                ]
+            ),
+            shadow_block_tree_gains=np.zeros((4, 2)),
+            paths_by_block=[],
+            shadow_quantile=1.0,
+        )
+
+    baseline = select(0.80)
+    extreme = select(1e12)
+
+    assert baseline["representatives"] == [0, 2]
+    assert extreme["representatives"] == baseline["representatives"]
+    assert extreme["selected_indices"] == baseline["selected_indices"]
