@@ -8,6 +8,7 @@ from experiments import v3_adaptive_selection_manifest as manifest_module
 from experiments.v3_causal_history_selection import (
     HISTORY_BLOCK_NAMES,
     causal_history_rows_from_batches,
+    history_residual_gain_evidence,
     select_history_bases,
 )
 from experiments.v3_production_oof import (
@@ -27,6 +28,7 @@ from experiments.v3_adaptive_selection_manifest import (
     assemble_manifest,
     block_correlations,
     chronological_inner_splits,
+    conditional_alternate_evidence,
     make_shadow_columns,
     selection_task_views,
     validation_tree_evidence,
@@ -137,6 +139,47 @@ def test_select_from_clusters_keeps_best_representative_and_path_alternate() -> 
     assert result["representatives"] == [0, 2, 3]
     assert result["alternates"] == [1]
     assert result["selected_indices"] == [0, 1, 2, 3]
+
+
+def test_select_from_clusters_keeps_one_best_residual_alternate_per_cluster() -> None:
+    result = select_from_clusters(
+        passed=np.array([True, False, False, True]),
+        cluster_labels=np.array([10, 10, 10, 20]),
+        scores=np.array([0.9, 0.7, 0.6, 0.5]),
+        path_hyperedges=[],
+        residual_alternate_passed=np.array([False, True, True, False]),
+        residual_alternate_scores=np.array([0.0, 0.03, 0.02, 0.0]),
+    )
+
+    assert result["representatives"] == [0, 3]
+    assert result["residual_alternates"] == [1]
+    assert result["selected_indices"] == [0, 1, 3]
+
+
+def test_conditional_alternate_evidence_finds_stable_oos_increment() -> None:
+    rng = np.random.default_rng(2027)
+    rows = 320
+    representative = rng.normal(size=rows)
+    hidden = rng.normal(size=rows)
+    useful_alternate = representative + 0.25 * hidden
+    unrelated = rng.normal(size=rows)
+    features = np.column_stack([representative, useful_alternate, unrelated])
+    target = representative + 0.8 * hidden + rng.normal(scale=0.05, size=rows)
+
+    evidence = conditional_alternate_evidence(
+        features,
+        target,
+        np.ones(rows),
+        np.repeat(np.arange(8), rows // 8),
+        cluster_labels=np.array([10, 10, 20]),
+        representatives=np.array([0, 2]),
+        n_blocks=4,
+        n_shadows=4,
+        shadow_quantile=1.0,
+    )
+
+    np.testing.assert_array_equal(evidence["passed"], [False, True, False])
+    assert evidence["score"][1] > evidence["shadow_floor"]
 
 
 def test_select_task_features_uses_path_gate_and_has_variable_stopping_count() -> None:
@@ -664,11 +707,17 @@ def test_history_base_selection_is_adaptive_and_uses_shadow_floors() -> None:
     correlations[:, 2, 1] = [-0.17, -0.18, -0.19, -0.20]
     correlations[:, :, 2] = 0.04
     shadows = np.full((4, 4, 5), 0.05, dtype=np.float64)
+    residual_gains = np.array(
+        [[0.03, 0.025, 0.0], [0.02, 0.021, 0.0], [0.025, 0.023, 0.0]]
+    )
+    shadow_residual_gains = np.full((3, 5), 0.01, dtype=np.float64)
 
     selection = select_history_bases(
         feature_indices=np.array([7, 11, 13]),
         block_correlations=correlations,
         shadow_block_correlations=shadows,
+        block_residual_gains=residual_gains,
+        shadow_block_residual_gains=shadow_residual_gains,
     )
 
     assert selection["selected_indices"] == [7, 11]
@@ -677,6 +726,199 @@ def test_history_base_selection_is_adaptive_and_uses_shadow_floors() -> None:
     assert selection["derived_columns"] == list(HISTORY_BLOCK_NAMES)
     assert all(item["passed"] for item in selection["evidence"][:2])
     assert not selection["evidence"][2]["passed"]
+
+
+def test_history_selection_requires_residual_evidence() -> None:
+    with pytest.raises(ValueError, match="residual gains.*required"):
+        select_history_bases(
+            feature_indices=np.array([7]),
+            block_correlations=np.full((4, 4, 1), 0.2),
+            shadow_block_correlations=np.full((4, 4, 2), 0.05),
+        )
+
+
+def test_history_selection_requires_incremental_residual_gain_above_shadow() -> None:
+    correlations = np.zeros((4, 4, 2), dtype=np.float64)
+    correlations[:, 0, :] = np.array(
+        [[0.20, 0.18], [0.19, 0.17], [0.21, 0.19], [0.18, 0.16]]
+    )
+    shadows = np.full((4, 4, 4), 0.05, dtype=np.float64)
+    residual_gains = np.array(
+        [[0.030, 0.010], [0.025, 0.012], [0.028, -0.005]]
+    )
+    shadow_residual_gains = np.full((3, 4), 0.015, dtype=np.float64)
+
+    selection = select_history_bases(
+        feature_indices=np.array([7, 11]),
+        block_correlations=correlations,
+        shadow_block_correlations=shadows,
+        block_residual_gains=residual_gains,
+        shadow_block_residual_gains=shadow_residual_gains,
+    )
+
+    assert selection["selected_indices"] == [7]
+    assert selection["evidence"][0]["marginal_passed"] is True
+    assert selection["evidence"][0]["incremental_passed"] is True
+    assert selection["evidence"][1]["marginal_passed"] is True
+    assert selection["evidence"][1]["incremental_passed"] is False
+
+
+def test_history_residual_gain_evidence_finds_oos_group_gain() -> None:
+    rows = []
+    rng = np.random.default_rng(2026)
+    for time_id in range(8):
+        current = rng.normal(size=(30, 2))
+        useful = rng.normal(size=30)
+        target = 0.8 * current[:, 0] + 0.7 * useful + rng.normal(scale=0.05, size=30)
+        blocks = (
+            np.column_stack([useful, rng.normal(size=30)]),
+            rng.normal(size=(30, 2)),
+            rng.normal(size=(30, 2)),
+            rng.normal(size=(30, 2)),
+        )
+        rows.append(
+            {
+                "time_id": np.full(30, time_id, dtype=np.int64),
+                "target": target,
+                "current": current,
+                "blocks": blocks,
+            }
+        )
+
+    evidence = history_residual_gain_evidence(
+        rows,
+        selected_time_ids=np.arange(8, dtype=np.int64),
+        n_features=2,
+        n_blocks=4,
+        n_shadows=4,
+    )
+
+    assert evidence["block_residual_gains"].shape == (3, 2)
+    assert evidence["shadow_block_residual_gains"].shape == (3, 4)
+    assert np.median(evidence["block_residual_gains"][:, 0]) > 0.1
+    assert np.median(evidence["block_residual_gains"][:, 1]) < 0.05
+
+    capped = history_residual_gain_evidence(
+        rows,
+        selected_time_ids=np.arange(8, dtype=np.int64),
+        n_features=2,
+        n_blocks=4,
+        n_shadows=4,
+        residual_time_cap_per_block=1,
+    )
+    np.testing.assert_array_equal(capped["residual_time_ids_per_block"], [1, 1, 1, 1])
+
+
+def test_history_residual_gain_matches_direct_joint_oos_regression() -> None:
+    rng = np.random.default_rng(2028)
+    rows = []
+    centered_by_time = []
+    for time_id in range(8):
+        current = rng.normal(size=(20, 1))
+        base = 0.8 * current[:, 0] + rng.normal(scale=0.4, size=20)
+        blocks = (
+            base[:, None],
+            (0.4 * base + rng.normal(scale=0.2, size=20))[:, None],
+            rng.normal(size=(20, 1)),
+            rng.normal(size=(20, 1)),
+        )
+        target = 0.7 * current[:, 0] + 0.6 * base + rng.normal(scale=0.1, size=20)
+        rows.append(
+            {
+                "time_id": np.full(20, time_id, dtype=np.int64),
+                "target": target,
+                "current": current,
+                "blocks": blocks,
+            }
+        )
+        centered_by_time.append(
+            (
+                current - current.mean(axis=0, keepdims=True),
+                target - target.mean(),
+                np.column_stack(
+                    [block[:, 0] - block[:, 0].mean() for block in blocks]
+                ),
+            )
+        )
+
+    evidence = history_residual_gain_evidence(
+        rows,
+        selected_time_ids=np.arange(8, dtype=np.int64),
+        n_features=1,
+        n_blocks=4,
+        n_shadows=3,
+    )
+
+    expected = []
+    time_blocks = np.array_split(np.arange(8), 4)
+    for valid_block in range(1, 4):
+        train_times = np.concatenate(time_blocks[:valid_block])
+        valid_times = time_blocks[valid_block]
+        train_x = np.vstack([centered_by_time[index][0] for index in train_times])
+        train_y = np.concatenate([centered_by_time[index][1] for index in train_times])
+        train_h = np.vstack([centered_by_time[index][2] for index in train_times])
+        valid_x = np.vstack([centered_by_time[index][0] for index in valid_times])
+        valid_y = np.concatenate([centered_by_time[index][1] for index in valid_times])
+        valid_h = np.vstack([centered_by_time[index][2] for index in valid_times])
+
+        xx = train_x.T @ train_x
+        x_ridge = max(float(np.trace(xx)) * 1e-6, 1e-10)
+        baseline_system = xx + np.eye(1) * x_ridge
+        baseline = np.linalg.solve(baseline_system, train_x.T @ train_y)
+        hh = train_h.T @ train_h
+        projection = np.linalg.solve(baseline_system, train_x.T @ train_h)
+        residual_hh = hh - train_h.T @ train_x @ projection
+        h_ridge = max(float(np.trace(residual_hh)) / 4 * 1e-4, 1e-10)
+        joint_system = np.block(
+            [
+                [baseline_system, train_x.T @ train_h],
+                [train_h.T @ train_x, hh + np.eye(4) * h_ridge],
+            ]
+        )
+        joint = np.linalg.solve(
+            joint_system,
+            np.concatenate([train_x.T @ train_y, train_h.T @ train_y]),
+        )
+        baseline_sse = np.sum(np.square(valid_y - valid_x @ baseline))
+        joint_sse = np.sum(
+            np.square(valid_y - valid_x @ joint[:1] - valid_h @ joint[1:])
+        )
+        expected.append((baseline_sse - joint_sse) / baseline_sse)
+
+    np.testing.assert_allclose(
+        evidence["block_residual_gains"][:, 0], expected, rtol=1e-7, atol=1e-8
+    )
+
+
+def test_history_shadow_group_uses_one_shared_within_time_shift() -> None:
+    rng = np.random.default_rng(2029)
+    rows = []
+    for time_id in range(8):
+        base = rng.normal(size=20)
+        rows.append(
+            {
+                "time_id": np.full(20, time_id, dtype=np.int64),
+                "target": rng.normal(size=20),
+                "current": rng.normal(size=(20, 1)),
+                "blocks": tuple((scale * base)[:, None] for scale in (1.0, 2.0, 3.0, 4.0)),
+            }
+        )
+
+    evidence = history_residual_gain_evidence(
+        rows,
+        selected_time_ids=np.arange(8, dtype=np.int64),
+        n_features=1,
+        n_blocks=4,
+        n_shadows=3,
+    )
+
+    shadow_correlations = evidence["shadow_block_correlations"]
+    np.testing.assert_allclose(
+        shadow_correlations,
+        np.repeat(shadow_correlations[:, :1, :], 4, axis=1),
+        rtol=1e-6,
+        atol=1e-8,
+    )
 
 
 def test_assemble_manifest_keeps_task_contracts_and_history_pending() -> None:

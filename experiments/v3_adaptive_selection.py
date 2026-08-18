@@ -201,6 +201,8 @@ def select_from_clusters(
     cluster_labels: np.ndarray,
     scores: np.ndarray,
     path_hyperedges: Sequence[Mapping[str, Any]],
+    residual_alternate_passed: np.ndarray | None = None,
+    residual_alternate_scores: np.ndarray | None = None,
 ) -> dict[str, list[int]]:
     """Select cluster representatives and path-distinct supported alternates."""
     passed_array = np.asarray(passed, dtype=bool)
@@ -211,6 +213,17 @@ def select_from_clusters(
     if labels.shape != passed_array.shape or score_array.shape != passed_array.shape:
         raise ValueError("cluster labels and scores must match passed")
     score_array = np.where(np.isfinite(score_array), score_array, -np.inf)
+    if residual_alternate_passed is None and residual_alternate_scores is None:
+        residual_passed = np.zeros_like(passed_array)
+        residual_scores = np.zeros_like(score_array)
+    elif residual_alternate_passed is None or residual_alternate_scores is None:
+        raise ValueError("residual alternate pass flags and scores must be supplied together")
+    else:
+        residual_passed = np.asarray(residual_alternate_passed, dtype=bool)
+        residual_scores = np.asarray(residual_alternate_scores, dtype=np.float64)
+        if residual_passed.shape != passed_array.shape or residual_scores.shape != passed_array.shape:
+            raise ValueError("residual alternate evidence must match passed")
+        residual_scores = np.where(np.isfinite(residual_scores), residual_scores, -np.inf)
 
     representatives: list[int] = []
     representative_by_cluster: dict[Any, int] = {}
@@ -228,7 +241,7 @@ def select_from_clusters(
         representatives.append(representative)
         representative_by_cluster[label] = representative
 
-    alternates: set[int] = set()
+    path_alternates: set[int] = set()
     for edge in path_hyperedges:
         features = {int(feature) for feature in edge.get("features", [])}
         if not features or any(
@@ -245,12 +258,30 @@ def select_from_clusters(
                 and feature != representative
                 and representative not in features
             ):
-                alternates.add(feature)
+                path_alternates.add(feature)
+
+    residual_alternates: set[int] = set()
+    for label, representative in representative_by_cluster.items():
+        candidates = [
+            int(index)
+            for index in range(len(passed_array))
+            if labels[index] == label
+            and index != representative
+            and residual_passed[index]
+        ]
+        if candidates:
+            residual_alternates.add(
+                min(candidates, key=lambda index: (-residual_scores[index], index))
+            )
 
     representatives.sort()
-    alternate_list = sorted(alternates)
+    path_alternate_list = sorted(path_alternates)
+    residual_alternate_list = sorted(residual_alternates)
+    alternate_list = sorted(path_alternates | residual_alternates)
     return {
         "representatives": representatives,
+        "path_alternates": path_alternate_list,
+        "residual_alternates": residual_alternate_list,
         "alternates": alternate_list,
         "selected_indices": sorted({*representatives, *alternate_list}),
     }
@@ -372,6 +403,8 @@ def select_task_features(
     block_tree_gains: np.ndarray | None = None,
     shadow_block_tree_gains: np.ndarray | None = None,
     paths_by_block: Sequence[Sequence[Sequence[int]]] = (),
+    residual_alternate_passed: np.ndarray | None = None,
+    residual_alternate_scores: np.ndarray | None = None,
     min_direction_consistency: float = 0.75,
     min_tree_block_fraction: float = 0.75,
     shadow_quantile: float = 0.95,
@@ -451,7 +484,16 @@ def select_task_features(
         labels,
         scores,
         hyperedges,
+        residual_alternate_passed=residual_alternate_passed,
+        residual_alternate_scores=residual_alternate_scores,
     )
+
+    if residual_alternate_passed is None:
+        residual_passed = np.zeros(n_features, dtype=bool)
+        residual_scores = np.zeros(n_features, dtype=np.float64)
+    else:
+        residual_passed = np.asarray(residual_alternate_passed, dtype=bool)
+        residual_scores = np.asarray(residual_alternate_scores, dtype=np.float64)
 
     evidence: list[dict[str, Any]] = []
     reason_by_feature: dict[int, list[str]] = {}
@@ -463,6 +505,8 @@ def select_task_features(
             reasons.append("tree_gain")
         if path_passed[feature]:
             reasons.append("path")
+        if feature in cluster_selection["residual_alternates"]:
+            reasons.append("residual_increment")
         reason_by_feature[feature] = reasons
         evidence.append(
             {
@@ -479,6 +523,8 @@ def select_task_features(
                 "tree_passed": bool(tree["passed"][feature]),
                 "path_support": int(path_support[feature]),
                 "path_passed": bool(path_passed[feature]),
+                "residual_alternate_score": float(residual_scores[feature]),
+                "residual_alternate_passed": bool(residual_passed[feature]),
                 "passed": bool(passed[feature]),
                 "selection_score": float(scores[feature]),
             }
@@ -488,6 +534,8 @@ def select_task_features(
     return {
         "selected_indices": selected,
         "representatives": cluster_selection["representatives"],
+        "path_alternates": cluster_selection["path_alternates"],
+        "residual_alternates": cluster_selection["residual_alternates"],
         "alternates": cluster_selection["alternates"],
         "evidence": evidence,
         "reasons": {

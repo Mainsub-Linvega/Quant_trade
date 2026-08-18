@@ -134,6 +134,169 @@ def block_correlations(
     return np.vstack(results)
 
 
+def _pair_moments(
+    n_blocks: int,
+    n_columns: int,
+) -> dict[str, np.ndarray]:
+    return {
+        name: np.zeros((n_blocks, n_columns), dtype=np.float64)
+        for name in ("mass", "sum_y", "sum_y2", "sum_r", "sum_c", "sum_r2", "sum_c2", "sum_rc", "sum_ry", "sum_cy")
+    }
+
+
+def _pair_oos_gains(moments: Mapping[str, np.ndarray]) -> np.ndarray:
+    n_blocks, n_columns = moments["mass"].shape
+    gains = np.zeros((n_blocks - 1, n_columns), dtype=np.float64)
+    for valid_block in range(1, n_blocks):
+        train = {
+            name: np.sum(values[:valid_block], axis=0)
+            for name, values in moments.items()
+        }
+        valid = {name: values[valid_block] for name, values in moments.items()}
+        for column in range(n_columns):
+            mass = train["mass"][column]
+            slope_ridge = max(train["sum_r2"][column] * 1e-8, 1e-10)
+            baseline_system = np.array(
+                [
+                    [mass, train["sum_r"][column]],
+                    [train["sum_r"][column], train["sum_r2"][column] + slope_ridge],
+                ]
+            )
+            baseline_rhs = np.array(
+                [train["sum_y"][column], train["sum_ry"][column]]
+            )
+            baseline = np.linalg.solve(baseline_system, baseline_rhs)
+            pair_system = np.array(
+                [
+                    [mass, train["sum_r"][column], train["sum_c"][column]],
+                    [train["sum_r"][column], train["sum_r2"][column] + slope_ridge, train["sum_rc"][column]],
+                    [train["sum_c"][column], train["sum_rc"][column], train["sum_c2"][column] + max(train["sum_c2"][column] * 1e-8, 1e-10)],
+                ]
+            )
+            pair_rhs = np.array(
+                [train["sum_y"][column], train["sum_ry"][column], train["sum_cy"][column]]
+            )
+            pair = np.linalg.solve(pair_system, pair_rhs)
+
+            valid_baseline_gram = np.array(
+                [
+                    [valid["mass"][column], valid["sum_r"][column]],
+                    [valid["sum_r"][column], valid["sum_r2"][column]],
+                ]
+            )
+            valid_baseline_rhs = np.array(
+                [valid["sum_y"][column], valid["sum_ry"][column]]
+            )
+            baseline_sse = (
+                valid["sum_y2"][column]
+                - 2.0 * float(baseline @ valid_baseline_rhs)
+                + float(baseline @ valid_baseline_gram @ baseline)
+            )
+            valid_pair_gram = np.array(
+                [
+                    [valid["mass"][column], valid["sum_r"][column], valid["sum_c"][column]],
+                    [valid["sum_r"][column], valid["sum_r2"][column], valid["sum_rc"][column]],
+                    [valid["sum_c"][column], valid["sum_rc"][column], valid["sum_c2"][column]],
+                ]
+            )
+            valid_pair_rhs = np.array(
+                [valid["sum_y"][column], valid["sum_ry"][column], valid["sum_cy"][column]]
+            )
+            pair_sse = (
+                valid["sum_y2"][column]
+                - 2.0 * float(pair @ valid_pair_rhs)
+                + float(pair @ valid_pair_gram @ pair)
+            )
+            gains[valid_block - 1, column] = (
+                baseline_sse - pair_sse
+            ) / max(baseline_sse, 1e-12)
+    return gains
+
+
+def conditional_alternate_evidence(
+    features: np.ndarray,
+    target: np.ndarray,
+    weight: np.ndarray,
+    time_ids: np.ndarray,
+    *,
+    cluster_labels: np.ndarray,
+    representatives: np.ndarray,
+    n_blocks: int,
+    n_shadows: int,
+    max_rows_per_block: int | None = None,
+    shadow_quantile: float = 0.95,
+    min_direction_consistency: float = 0.75,
+) -> dict[str, Any]:
+    """Measure stable next-block gain from a second member of each cluster."""
+    x, y, w, ids = _validate_task_arrays(features, target, weight, time_ids)
+    labels = np.asarray(cluster_labels)
+    reps = np.asarray(representatives, dtype=np.int64)
+    if labels.shape != (x.shape[1],):
+        raise ValueError("cluster_labels must match feature columns")
+    if np.any(reps < 0) or np.any(reps >= x.shape[1]):
+        raise ValueError("representatives contain an invalid feature index")
+
+    representative_by_label = {labels[index]: int(index) for index in reps}
+    representative_map = np.array(
+        [representative_by_label.get(label, index) for index, label in enumerate(labels)],
+        dtype=np.int64,
+    )
+    source_indices = np.arange(n_shadows, dtype=np.int64) % x.shape[1]
+    shadow_representatives = representative_map[source_indices]
+    actual = _pair_moments(n_blocks, x.shape[1])
+    shadows = _pair_moments(n_blocks, n_shadows)
+
+    for block_index, block_rows in enumerate(contiguous_time_blocks(ids, n_blocks)):
+        kept = block_rows[evenly_spaced_rows(len(block_rows), max_rows_per_block)]
+        block_y = y[kept]
+        block_w = w[kept]
+        block_x = np.asarray(x[kept])
+        shadow_x = make_shadow_columns(block_x, n_shadows)
+        for moments, candidates, rep_indices in (
+            (actual, block_x, representative_map),
+            (shadows, shadow_x, shadow_representatives),
+        ):
+            n_columns = candidates.shape[1]
+            moments["mass"][block_index] = block_w.sum()
+            moments["sum_y"][block_index] = np.dot(block_w, block_y)
+            moments["sum_y2"][block_index] = np.dot(block_w, np.square(block_y))
+            for start in range(0, n_columns, 32):
+                stop = min(start + 32, n_columns)
+                candidate = np.asarray(candidates[:, start:stop], dtype=np.float64)
+                representative = np.asarray(
+                    block_x[:, rep_indices[start:stop]], dtype=np.float64
+                )
+                weighted = block_w[:, None]
+                moments["sum_r"][block_index, start:stop] = np.sum(weighted * representative, axis=0)
+                moments["sum_c"][block_index, start:stop] = np.sum(weighted * candidate, axis=0)
+                moments["sum_r2"][block_index, start:stop] = np.sum(weighted * np.square(representative), axis=0)
+                moments["sum_c2"][block_index, start:stop] = np.sum(weighted * np.square(candidate), axis=0)
+                moments["sum_rc"][block_index, start:stop] = np.sum(weighted * representative * candidate, axis=0)
+                moments["sum_ry"][block_index, start:stop] = representative.T @ (block_w * block_y)
+                moments["sum_cy"][block_index, start:stop] = candidate.T @ (block_w * block_y)
+
+    block_gains = _pair_oos_gains(actual)
+    shadow_block_gains = _pair_oos_gains(shadows)
+    score = np.median(block_gains, axis=0)
+    direction_consistency = np.mean(block_gains > 0.0, axis=0)
+    shadow_scores = np.median(shadow_block_gains, axis=0)
+    shadow_floor = float(np.quantile(shadow_scores, shadow_quantile, method="higher"))
+    eligible = representative_map != np.arange(x.shape[1])
+    passed = eligible & (score > shadow_floor) & (
+        direction_consistency >= min_direction_consistency
+    )
+    return {
+        "score": score,
+        "direction_consistency": direction_consistency,
+        "shadow_scores": shadow_scores,
+        "shadow_floor": shadow_floor,
+        "passed": passed,
+        "block_gains": block_gains,
+        "shadow_block_gains": shadow_block_gains,
+        "representative_map": representative_map,
+    }
+
+
 def _train_lightgbm_booster(
     features: np.ndarray,
     target: np.ndarray,
@@ -508,14 +671,40 @@ def _select_task(
         num_threads=num_threads,
         task_name=task_name if tree_source is not None else None,
     )
-    return select_task_features(
-        block_correlations=correlations,
-        shadow_block_correlations=shadow_correlations,
+    selection_inputs = {
+        "block_correlations": correlations,
+        "shadow_block_correlations": shadow_correlations,
+        "cluster_labels": redundancy.labels,
+        "block_tree_gains": tree["block_feature_evidence"],
+        "shadow_block_tree_gains": tree["block_shadow_evidence"],
+        "paths_by_block": tree["paths_by_block"],
+    }
+    preliminary = select_task_features(**selection_inputs)
+    conditional = conditional_alternate_evidence(
+        features,
+        target,
+        weight,
+        time_ids,
         cluster_labels=redundancy.labels,
-        block_tree_gains=tree["block_feature_evidence"],
-        shadow_block_tree_gains=tree["block_shadow_evidence"],
-        paths_by_block=tree["paths_by_block"],
+        representatives=np.asarray(preliminary["representatives"], dtype=np.int64),
+        n_blocks=n_blocks,
+        n_shadows=n_shadows,
+        max_rows_per_block=redundancy_rows_per_block,
     )
+    result = select_task_features(
+        **selection_inputs,
+        residual_alternate_passed=conditional["passed"],
+        residual_alternate_scores=conditional["score"],
+    )
+    result["conditional_alternate"] = {
+        "score": conditional["score"],
+        "direction_consistency": conditional["direction_consistency"],
+        "shadow_floor": conditional["shadow_floor"],
+        "passed": conditional["passed"],
+        "block_gains": conditional["block_gains"],
+        "representative_map": conditional["representative_map"],
+    }
+    return result
 
 
 def _latest_window_mask(

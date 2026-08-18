@@ -28,6 +28,7 @@ HISTORY_BLOCK_NAMES = (
 )
 SHADOW_QUANTILE = 0.95
 MIN_DIRECTION_CONSISTENCY = 0.75
+RESIDUAL_TIME_CAP_PER_BLOCK = 2_000
 
 
 def _history_stats_tuple(
@@ -101,21 +102,24 @@ def causal_history_rows_from_batches(
             yield {
                 "time_id": time_ids[keep].copy(),
                 "target": target[keep].copy(),
+                "current": transformed[keep].copy(),
                 "blocks": tuple(block[keep].copy() for block in blocks),
             }
 
 
 def _complete_time_groups(
     chunks: Iterable[Mapping[str, Any]],
-) -> Iterator[tuple[int, np.ndarray, tuple[np.ndarray, ...]]]:
+) -> Iterator[tuple[int, np.ndarray, np.ndarray, tuple[np.ndarray, ...]]]:
     pending: dict[str, Any] | None = None
     for chunk in chunks:
         time_ids = np.asarray(chunk["time_id"], dtype=np.int64)
         target = np.asarray(chunk["target"], dtype=np.float64)
+        current = np.asarray(chunk["current"], dtype=np.float64)
         blocks = tuple(np.asarray(block, dtype=np.float32) for block in chunk["blocks"])
         if pending is not None:
             time_ids = np.concatenate([pending["time_id"], time_ids])
             target = np.concatenate([pending["target"], target])
+            current = np.concatenate([pending["current"], current])
             blocks = tuple(
                 np.concatenate([old, new])
                 for old, new in zip(pending["blocks"], blocks, strict=True)
@@ -123,17 +127,130 @@ def _complete_time_groups(
         starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
         stops = np.r_[starts[1:], len(time_ids)]
         for start, stop in zip(starts[:-1], stops[:-1], strict=True):
-            yield int(time_ids[start]), target[start:stop], tuple(
+            yield int(time_ids[start]), target[start:stop], current[start:stop], tuple(
                 block[start:stop] for block in blocks
             )
         start = int(starts[-1])
         pending = {
             "time_id": time_ids[start:],
             "target": target[start:],
+            "current": current[start:],
             "blocks": tuple(block[start:] for block in blocks),
         }
     if pending is not None:
-        yield int(pending["time_id"][0]), pending["target"], pending["blocks"]
+        yield (
+            int(pending["time_id"][0]),
+            pending["target"],
+            pending["current"],
+            pending["blocks"],
+        )
+
+
+def _empty_residual_moments(
+    n_blocks: int,
+    n_features: int,
+    n_shadows: int,
+) -> dict[str, np.ndarray]:
+    kinds = len(HISTORY_BLOCK_NAMES)
+    return {
+        "xx": np.zeros((n_blocks, n_features, n_features), dtype=np.float64),
+        "xy": np.zeros((n_blocks, n_features), dtype=np.float64),
+        "yy": np.zeros(n_blocks, dtype=np.float64),
+        "xh": np.zeros((n_blocks, kinds, n_features, n_features), dtype=np.float64),
+        "hh": np.zeros((n_blocks, kinds, kinds, n_features), dtype=np.float64),
+        "hy": np.zeros((n_blocks, kinds, n_features), dtype=np.float64),
+        "xs": np.zeros((n_blocks, kinds, n_features, n_shadows), dtype=np.float64),
+        "ss": np.zeros((n_blocks, kinds, kinds, n_shadows), dtype=np.float64),
+        "sy": np.zeros((n_blocks, kinds, n_shadows), dtype=np.float64),
+    }
+
+
+def _relative_ridge(matrix: np.ndarray, fraction: float) -> float:
+    dimension = matrix.shape[0]
+    scale = float(np.trace(matrix)) / max(dimension, 1)
+    return max(scale * fraction, 1e-10)
+
+
+def _residual_group_gains(
+    moments: Mapping[str, np.ndarray],
+    *,
+    n_blocks: int,
+    n_features: int,
+    n_shadows: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    kinds = len(HISTORY_BLOCK_NAMES)
+    actual = np.zeros((n_blocks - 1, n_features), dtype=np.float64)
+    shadows = np.zeros((n_blocks - 1, n_shadows), dtype=np.float64)
+    for valid_block in range(1, n_blocks):
+        train = slice(0, valid_block)
+        xx = np.sum(moments["xx"][train], axis=0)
+        xy = np.sum(moments["xy"][train], axis=0)
+        baseline_system = xx.copy()
+        baseline_system.flat[:: n_features + 1] += _relative_ridge(xx, 1e-6)
+        baseline_beta = np.linalg.solve(baseline_system, xy)
+
+        valid_xx = moments["xx"][valid_block]
+        valid_xy = moments["xy"][valid_block]
+        valid_yy = float(moments["yy"][valid_block])
+        baseline_sse = (
+            valid_yy
+            - 2.0 * float(baseline_beta @ valid_xy)
+            + float(baseline_beta @ valid_xx @ baseline_beta)
+        )
+        denominator = max(baseline_sse, 1e-12)
+
+        for feature in range(n_features):
+            train_xh = np.sum(
+                moments["xh"][train, :, :, feature], axis=0
+            ).T
+            train_hh = np.sum(moments["hh"][train, :, :, feature], axis=0)
+            train_hy = np.sum(moments["hy"][train, :, feature], axis=0)
+            projection = np.linalg.solve(baseline_system, train_xh)
+            residual_gram = train_hh - train_xh.T @ projection
+            residual_target = train_hy - train_xh.T @ baseline_beta
+            group_system = residual_gram.copy()
+            group_system.flat[:: kinds + 1] += _relative_ridge(residual_gram, 1e-4)
+            gamma = np.linalg.solve(group_system, residual_target)
+            augmented_beta = baseline_beta - projection @ gamma
+            valid_xh = moments["xh"][valid_block, :, :, feature].T
+            augmented_sse = (
+                valid_yy
+                - 2.0 * float(augmented_beta @ valid_xy)
+                - 2.0 * float(gamma @ moments["hy"][valid_block, :, feature])
+                + float(augmented_beta @ valid_xx @ augmented_beta)
+                + 2.0 * float(augmented_beta @ valid_xh @ gamma)
+                + float(gamma @ moments["hh"][valid_block, :, :, feature] @ gamma)
+            )
+            actual[valid_block - 1, feature] = (
+                baseline_sse - augmented_sse
+            ) / denominator
+
+        for shadow in range(n_shadows):
+            train_xs = np.sum(
+                moments["xs"][train, :, :, shadow], axis=0
+            ).T
+            train_ss = np.sum(moments["ss"][train, :, :, shadow], axis=0)
+            train_sy = np.sum(moments["sy"][train, :, shadow], axis=0)
+            projection = np.linalg.solve(baseline_system, train_xs)
+            residual_gram = train_ss - train_xs.T @ projection
+            residual_target = train_sy - train_xs.T @ baseline_beta
+            group_system = residual_gram.copy()
+            group_system.flat[:: kinds + 1] += _relative_ridge(residual_gram, 1e-4)
+            gamma = np.linalg.solve(group_system, residual_target)
+            augmented_beta = baseline_beta - projection @ gamma
+            valid_xs = moments["xs"][valid_block, :, :, shadow].T
+            augmented_sse = (
+                valid_yy
+                - 2.0 * float(augmented_beta @ valid_xy)
+                - 2.0 * float(gamma @ moments["sy"][valid_block, :, shadow])
+                + float(augmented_beta @ valid_xx @ augmented_beta)
+                + 2.0 * float(augmented_beta @ valid_xs @ gamma)
+                + float(gamma @ moments["ss"][valid_block, :, :, shadow] @ gamma)
+            )
+            shadows[valid_block - 1, shadow] = (
+                baseline_sse - augmented_sse
+            ) / denominator
+    return actual, shadows
 
 
 def _empty_moments(n_blocks: int, n_columns: int) -> dict[str, np.ndarray]:
@@ -181,6 +298,7 @@ def history_correlation_evidence(
     n_features: int,
     n_blocks: int,
     n_shadows: int,
+    residual_time_cap_per_block: int | None = None,
 ) -> dict[str, Any]:
     """Accumulate causal four-block correlations without retaining all history rows."""
     if n_features <= 0 or n_blocks < 2 or n_shadows <= 0:
@@ -190,11 +308,27 @@ def history_correlation_evidence(
         raise ValueError("selected_time_ids must cover every history evidence block")
     block_ends = np.array_split(selected_ids, n_blocks)
     block_end_ids = np.asarray([block[-1] for block in block_ends], dtype=np.int64)
+    if residual_time_cap_per_block is not None and residual_time_cap_per_block <= 0:
+        raise ValueError("residual_time_cap_per_block must be positive")
+    residual_id_blocks = []
+    for block in block_ends:
+        if residual_time_cap_per_block is None or len(block) <= residual_time_cap_per_block:
+            residual_id_blocks.append(block)
+        else:
+            positions = np.rint(
+                np.linspace(0, len(block) - 1, residual_time_cap_per_block)
+            ).astype(np.int64)
+            residual_id_blocks.append(block[positions])
+    residual_ids = np.concatenate(residual_id_blocks)
+    residual_time_counts = np.asarray(
+        [len(block) for block in residual_id_blocks], dtype=np.int64
+    )
     actual = _empty_moments(n_blocks, n_features)
     shadow = _empty_moments(n_blocks, n_shadows)
+    residual = _empty_residual_moments(n_blocks, n_features, n_shadows)
     time_counts = np.zeros(n_blocks, dtype=np.int64)
 
-    for time_id, target, blocks in _complete_time_groups(rows):
+    for time_id, target, current, blocks in _complete_time_groups(rows):
         block_index = int(np.searchsorted(block_end_ids, time_id, side="left"))
         selected_position = int(np.searchsorted(selected_ids, time_id))
         if (
@@ -207,16 +341,33 @@ def history_correlation_evidence(
         if not np.all(np.isfinite(y)):
             raise ValueError("history target must be finite")
         y = y - y.mean()
+        current_values = np.asarray(current, dtype=np.float64)
+        if current_values.shape != (len(y), n_features) or not np.all(np.isfinite(current_values)):
+            raise ValueError("history current features must be finite and aligned")
+        residual_position = int(np.searchsorted(residual_ids, time_id))
+        use_residual = (
+            residual_position < len(residual_ids)
+            and residual_ids[residual_position] == time_id
+        )
+        if use_residual:
+            x = current_values - current_values.mean(axis=0, keepdims=True)
         actual["count"][block_index] += len(y)
         actual["sum_y"][block_index] += y.sum()
         actual["sum_y2"][block_index] += np.square(y).sum()
         shadow["count"][block_index] += len(y)
         shadow["sum_y"][block_index] += y.sum()
         shadow["sum_y2"][block_index] += np.square(y).sum()
+        if use_residual:
+            residual["xx"][block_index] += x.T @ x
+            residual["xy"][block_index] += x.T @ y
+            residual["yy"][block_index] += float(y @ y)
         time_counts[block_index] += 1
+        centered_blocks: list[np.ndarray] = []
+        shadow_blocks: list[np.ndarray] = []
         for kind_index, values in enumerate(blocks):
             centered = np.asarray(values, dtype=np.float64)
             centered = centered - centered.mean(axis=0, keepdims=True)
+            centered_blocks.append(centered)
             _accumulate_design(actual, block_index, kind_index, centered, y)
             shadow_values = np.empty((len(centered), n_shadows), dtype=np.float64)
             for shadow_index in range(n_shadows):
@@ -224,20 +375,64 @@ def history_correlation_evidence(
                 if len(centered) < 2:
                     shadow_values[:, shadow_index] = 0.0
                 else:
-                    shift = 1 + (shadow_index + kind_index) % (len(centered) - 1)
+                    shift = 1 + shadow_index % (len(centered) - 1)
                     shadow_values[:, shadow_index] = np.roll(centered[:, source], shift)
+            shadow_blocks.append(shadow_values)
             _accumulate_design(shadow, block_index, kind_index, shadow_values, y)
+            if use_residual:
+                residual["xh"][block_index, kind_index] += x.T @ centered
+                residual["hy"][block_index, kind_index] += centered.T @ y
+                residual["xs"][block_index, kind_index] += x.T @ shadow_values
+                residual["sy"][block_index, kind_index] += shadow_values.T @ y
+        if use_residual:
+            for left in range(len(HISTORY_BLOCK_NAMES)):
+                for right in range(len(HISTORY_BLOCK_NAMES)):
+                    residual["hh"][block_index, left, right] += np.sum(
+                        centered_blocks[left] * centered_blocks[right], axis=0
+                    )
+                    residual["ss"][block_index, left, right] += np.sum(
+                        shadow_blocks[left] * shadow_blocks[right], axis=0
+                    )
 
     if np.any(time_counts == 0):
         raise ValueError("at least one history evidence block has no selected time_ids")
     if int(time_counts.sum()) != len(selected_ids):
         raise ValueError("history evidence did not cover every selected time_id exactly once")
+    block_residual_gains, shadow_block_residual_gains = _residual_group_gains(
+        residual,
+        n_blocks=n_blocks,
+        n_features=n_features,
+        n_shadows=n_shadows,
+    )
     return {
         "block_correlations": _finalize_correlations(actual),
         "shadow_block_correlations": _finalize_correlations(shadow),
+        "block_residual_gains": block_residual_gains,
+        "shadow_block_residual_gains": shadow_block_residual_gains,
         "rows_per_block": actual["count"].astype(int),
         "time_ids_per_block": time_counts,
+        "residual_time_ids_per_block": residual_time_counts,
     }
+
+
+def history_residual_gain_evidence(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    selected_time_ids: np.ndarray,
+    n_features: int,
+    n_blocks: int,
+    n_shadows: int,
+    residual_time_cap_per_block: int | None = None,
+) -> dict[str, Any]:
+    """Measure next-block history gain after a ridge fit on current XS features."""
+    return history_correlation_evidence(
+        rows,
+        selected_time_ids=selected_time_ids,
+        n_features=n_features,
+        n_blocks=n_blocks,
+        n_shadows=n_shadows,
+        residual_time_cap_per_block=residual_time_cap_per_block,
+    )
 
 
 def select_history_bases(
@@ -245,6 +440,8 @@ def select_history_bases(
     feature_indices: np.ndarray,
     block_correlations: np.ndarray,
     shadow_block_correlations: np.ndarray,
+    block_residual_gains: np.ndarray | None = None,
+    shadow_block_residual_gains: np.ndarray | None = None,
     shadow_quantile: float = SHADOW_QUANTILE,
     min_direction_consistency: float = MIN_DIRECTION_CONSISTENCY,
 ) -> dict[str, Any]:
@@ -263,6 +460,28 @@ def select_history_bases(
         raise ValueError("history correlations must be finite")
     if not 0.0 < shadow_quantile <= 1.0 or not 0.0 < min_direction_consistency <= 1.0:
         raise ValueError("history gate settings must be within (0, 1]")
+
+    if block_residual_gains is None or shadow_block_residual_gains is None:
+        raise ValueError("history residual gains and shadows are required")
+    residual_gains = np.asarray(block_residual_gains, dtype=np.float64)
+    residual_shadows = np.asarray(shadow_block_residual_gains, dtype=np.float64)
+    if residual_gains.ndim != 2 or residual_gains.shape[1] != len(indices):
+        raise ValueError("block_residual_gains has an invalid shape")
+    if (
+        residual_shadows.ndim != 2
+        or residual_shadows.shape[0] != residual_gains.shape[0]
+        or residual_shadows.shape[1] == 0
+    ):
+        raise ValueError("shadow_block_residual_gains has an invalid shape")
+    if not np.all(np.isfinite(residual_gains)) or not np.all(np.isfinite(residual_shadows)):
+        raise ValueError("history residual gains must be finite")
+    residual_floor = float(
+        np.quantile(
+            np.median(residual_shadows, axis=0),
+            shadow_quantile,
+            method="higher",
+        )
+    )
 
     floors = np.quantile(np.abs(shadows), shadow_quantile, axis=(0, 2))
     evidence: list[dict[str, Any]] = []
@@ -283,11 +502,24 @@ def select_history_bases(
                 "shadow_floor": float(floors[kind_index]),
                 "passed": bool(median_abs > floors[kind_index] and consistency >= min_direction_consistency),
             })
-        passed = any(item["passed"] for item in derived)
+        marginal_passed = any(item["passed"] for item in derived)
+        gains = residual_gains[:, column]
+        incremental_score = float(np.median(gains))
+        incremental_consistency = float(np.mean(gains > 0.0))
+        incremental_passed = bool(
+            incremental_score > residual_floor
+            and incremental_consistency >= min_direction_consistency
+        )
+        passed = marginal_passed and incremental_passed
         best = max(derived, key=lambda item: item["median_abs_correlation"])
         evidence.append({
             "feature": int(feature_index),
             "passed": passed,
+            "marginal_passed": marginal_passed,
+            "incremental_passed": incremental_passed,
+            "incremental_residual_gain": incremental_score,
+            "incremental_direction_consistency": incremental_consistency,
+            "incremental_shadow_floor": residual_floor,
             "strongest_derived": best["name"],
             "derived": derived,
         })
@@ -302,6 +534,7 @@ def select_history_bases(
         "thresholds": {
             "shadow_quantile": shadow_quantile,
             "shadow_floors": {name: float(floor) for name, floor in zip(HISTORY_BLOCK_NAMES, floors, strict=True)},
+            "incremental_shadow_floor": residual_floor,
             "min_direction_consistency": min_direction_consistency,
         },
     }
@@ -387,11 +620,14 @@ def run_causal_history_selection(
         n_features=len(indices),
         n_blocks=n_blocks,
         n_shadows=n_shadows,
+        residual_time_cap_per_block=RESIDUAL_TIME_CAP_PER_BLOCK,
     )
     selection = select_history_bases(
         feature_indices=indices,
         block_correlations=evidence["block_correlations"],
         shadow_block_correlations=evidence["shadow_block_correlations"],
+        block_residual_gains=evidence["block_residual_gains"],
+        shadow_block_residual_gains=evidence["shadow_block_residual_gains"],
     )
     selection.update({
         "status": "selected_causal_history",
@@ -403,14 +639,21 @@ def run_causal_history_selection(
             "derived_columns": list(HISTORY_BLOCK_NAMES),
             "window_size": window_size,
             "target": "unweighted cross-sectional target deviation",
-            "evidence": "four chronological block correlations versus within-time centered history columns",
+            "evidence": (
+                "four chronological marginal blocks plus expanding next-block residual gain "
+                "after ridge control of the current XS feature space"
+            ),
             "n_shadows": n_shadows,
             "batch_size": effective_batch_size,
             "lag_cell_budget": lag_cell_budget,
+            "residual_time_cap_per_block": RESIDUAL_TIME_CAP_PER_BLOCK,
         },
         "coverage": {
             "rows_per_block": evidence["rows_per_block"].tolist(),
             "time_ids_per_block": evidence["time_ids_per_block"].tolist(),
+            "residual_time_ids_per_block": evidence[
+                "residual_time_ids_per_block"
+            ].tolist(),
         },
     })
     return selection
