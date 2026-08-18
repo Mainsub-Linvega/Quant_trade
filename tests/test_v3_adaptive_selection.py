@@ -480,6 +480,124 @@ def test_validation_tree_evidence_uses_oos_contributions_and_excludes_shadows(
     assert valid_sizes == [1, 1, 1, 2, 2, 2, 1, 1, 1]
 
 
+def test_validation_tree_evidence_fits_preprocessing_on_each_expanding_train_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_train_features: list[np.ndarray] = []
+
+    class FakeBooster:
+        def __init__(self, n_columns: int) -> None:
+            self.n_columns = n_columns
+
+        def predict(
+            self, values: np.ndarray, *, pred_contrib: bool
+        ) -> np.ndarray:
+            return np.zeros((len(values), self.n_columns + 1), dtype=np.float64)
+
+        def dump_model(self) -> dict[str, object]:
+            return {"tree_info": []}
+
+    def fake_train(
+        features: np.ndarray,
+        target: np.ndarray,
+        weight: np.ndarray,
+        *,
+        params: dict[str, object],
+        num_boost_round: int,
+    ) -> FakeBooster:
+        captured_train_features.append(features[:, :1].copy())
+        return FakeBooster(features.shape[1])
+
+    monkeypatch.setattr(manifest_module, "_train_lightgbm_booster", fake_train)
+    raw = np.arange(8, dtype=np.float64).reshape(-1, 1)
+    target = np.linspace(-1.0, 1.0, 8)
+    weight = np.ones(8)
+    time_ids = np.array([0, 0, 1, 1, 2, 3, 3, 4])
+
+    manifest_module.validation_tree_evidence(
+        raw,
+        target,
+        weight,
+        time_ids,
+        n_shadows=1,
+        seeds=(2026,),
+    )
+
+    expected, _ = manifest_module.robust_transform_fit(raw[:4].copy())
+    np.testing.assert_allclose(captured_train_features[0], expected)
+
+
+def test_validation_tree_evidence_preprocesses_nonfinite_raw_features(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeBooster:
+        def __init__(self, n_columns: int) -> None:
+            self.n_columns = n_columns
+
+        def predict(
+            self, values: np.ndarray, *, pred_contrib: bool
+        ) -> np.ndarray:
+            return np.zeros((len(values), self.n_columns + 1), dtype=np.float64)
+
+        def dump_model(self) -> dict[str, object]:
+            return {"tree_info": []}
+
+    monkeypatch.setattr(
+        manifest_module,
+        "_train_lightgbm_booster",
+        lambda features, target, weight, **kwargs: FakeBooster(features.shape[1]),
+    )
+    raw = np.arange(8, dtype=np.float64).reshape(-1, 1)
+    raw[1, 0] = np.nan
+    raw[5, 0] = np.inf
+
+    result = manifest_module.validation_tree_evidence(
+        raw,
+        np.linspace(-1.0, 1.0, 8),
+        np.ones(8),
+        np.array([0, 0, 1, 1, 2, 3, 3, 4]),
+        n_shadows=1,
+        seeds=(2026,),
+    )
+
+    assert result["block_feature_evidence"].shape == (3, 1)
+
+
+def test_market_tree_evidence_uses_aggregated_validation_row_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeBooster:
+        def __init__(self, n_columns: int) -> None:
+            self.n_columns = n_columns
+
+        def predict(
+            self, values: np.ndarray, *, pred_contrib: bool
+        ) -> np.ndarray:
+            return np.zeros((len(values), self.n_columns + 1), dtype=np.float64)
+
+        def dump_model(self) -> dict[str, object]:
+            return {"tree_info": []}
+
+    monkeypatch.setattr(
+        manifest_module,
+        "_train_lightgbm_booster",
+        lambda features, target, weight, **kwargs: FakeBooster(features.shape[1]),
+    )
+    raw = np.arange(10, dtype=np.float64).reshape(-1, 1)
+
+    result = manifest_module.validation_tree_evidence(
+        raw,
+        np.linspace(-1.0, 1.0, 10),
+        np.ones(10),
+        np.repeat(np.arange(5), 2),
+        n_shadows=1,
+        seeds=(2026,),
+        task_name="market",
+    )
+
+    assert result["block_feature_evidence"].shape == (3, 1)
+
+
 def test_assemble_manifest_keeps_task_contracts_and_history_pending() -> None:
     def selection(indices: list[int]) -> dict[str, object]:
         return {
@@ -620,7 +738,48 @@ def test_tree_budget_uses_smoke_defaults_and_overrides() -> None:
 
 
 def test_smoke_time_ids_requires_smoke_flag() -> None:
-    assert "smoke_time_ids requires --smoke" in manifest_module.run_manifest.__code__.co_consts
+    args = type(
+        "Args",
+        (),
+        {"train_window": 100, "smoke": False, "smoke_time_ids": 8,
+         "smoke_tree_rounds": None, "smoke_row_cap": None},
+    )()
+
+    with pytest.raises(ValueError, match="smoke_time_ids requires --smoke"):
+        manifest_module.validate_manifest_args(args)
+
+
+def test_run_manifest_rejects_invalid_smoke_controls_before_loading_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_load(*args: object, **kwargs: object) -> None:
+        raise AssertionError("data load must not start")
+
+    monkeypatch.setattr(manifest_module, "load_rows", fail_load)
+    args = type(
+        "Args",
+        (),
+        {
+            "data_root": "unused",
+            "sample_modulo": 5,
+            "sampling": "phase_balanced",
+            "train_window": 100,
+            "smoke": False,
+            "smoke_time_ids": 8,
+            "smoke_tree_rounds": None,
+            "smoke_row_cap": None,
+        },
+    )()
+
+    with pytest.raises(ValueError, match="smoke_time_ids requires --smoke"):
+        manifest_module.run_manifest(args)
+
+
+def test_manifest_cli_does_not_advertise_unimplemented_history_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["manifest"])
+    assert not hasattr(manifest_module.parse_args(), "history_row_cap")
 
 
 def test_manifest_bundle_serializes_protocol_and_refuses_overwrite(tmp_path) -> None:

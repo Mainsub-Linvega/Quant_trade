@@ -34,6 +34,7 @@ from experiments.v3_feature_structure import (
 )
 from src.io import FEATURE_COLUMNS
 from train import robust_transform_fit
+from features import apply_robust_transform
 
 TREE_ROUNDS = 80
 TREE_MAX_DEPTH = 4
@@ -108,8 +109,8 @@ def _validate_task_arrays(
         raise ValueError("task arrays must not be empty")
     if np.any(np.diff(ids) < 0):
         raise ValueError("time_ids must be sorted")
-    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
-        raise ValueError("features and target must be finite")
+    if not np.all(np.isfinite(y)):
+        raise ValueError("target must be finite")
     if not np.all(np.isfinite(w)) or np.any(w < 0.0):
         raise ValueError("weight must be finite and nonnegative")
     if float(w.sum()) <= 0.0:
@@ -178,6 +179,7 @@ def validation_tree_evidence(
     seeds: Sequence[int] = TREE_SEEDS,
     row_cap: int = TREE_ROW_CAP,
     num_threads: int = 1,
+    task_name: str | None = None,
 ) -> dict[str, Any]:
     """Measure feature contributions strictly on next-block validation rows."""
     x, y, w, ids = _validate_task_arrays(features, target, weight, time_ids)
@@ -200,12 +202,41 @@ def validation_tree_evidence(
     splits = chronological_inner_splits(ids, n_blocks=n_blocks)
 
     for train_rows, valid_rows in splits:
-        if len(train_rows) > row_cap:
-            train_rows = train_rows[
-                evenly_spaced_rows(len(train_rows), row_cap)
-            ]
-        train_features = x[train_rows]
-        valid_features = x[valid_rows]
+        train_features, stats = robust_transform_fit(x[train_rows].copy())
+        valid_features = x[valid_rows].copy()
+        apply_robust_transform(
+            valid_features,
+            stats["lower"],
+            stats["upper"],
+            stats["center"],
+            stats["scale"],
+        )
+        train_target = y[train_rows]
+        train_weight = w[train_rows]
+        train_ids = ids[train_rows]
+        valid_target = y[valid_rows]
+        valid_weight = w[valid_rows]
+        valid_ids = ids[valid_rows]
+        if task_name is not None:
+            if task_name not in {"ridge", "xs", "market"}:
+                raise ValueError(f"unknown task_name: {task_name}")
+            train_task = selection_task_views(
+                train_features, train_target, train_weight, train_ids
+            )[task_name]
+            valid_task = selection_task_views(
+                valid_features, valid_target, valid_weight, valid_ids
+            )[task_name]
+            train_features = train_task["features"]
+            train_target = train_task["target"]
+            train_weight = train_task["weight"]
+            valid_features = valid_task["features"]
+            valid_target = valid_task["target"]
+            valid_weight = valid_task["weight"]
+        if len(train_features) > row_cap:
+            kept = evenly_spaced_rows(len(train_features), row_cap)
+            train_features = train_features[kept]
+            train_target = train_target[kept]
+            train_weight = train_weight[kept]
         train_shadows = make_shadow_columns(train_features, n_shadows)
         if len(valid_features) >= 2:
             valid_shadows = make_shadow_columns(valid_features, n_shadows)
@@ -242,8 +273,8 @@ def validation_tree_evidence(
             }
             booster = _train_lightgbm_booster(
                 train_design,
-                y[train_rows],
-                w[train_rows],
+                train_target,
+                train_weight,
                 params=params,
                 num_boost_round=num_boost_round,
             )
@@ -251,13 +282,13 @@ def validation_tree_evidence(
                 booster.predict(valid_design, pred_contrib=True),
                 dtype=np.float64,
             )
-            expected_shape = (len(valid_rows), n_total_features + 1)
+            expected_shape = (len(valid_features), n_total_features + 1)
             if contributions.shape != expected_shape:
                 raise ValueError(
                     "LightGBM pred_contrib returned an unexpected shape"
                 )
             seed_evidence.append(
-                _weighted_mean_abs(contributions[:, :-1], w[valid_rows])
+                _weighted_mean_abs(contributions[:, :-1], valid_weight)
             )
             block_paths.update(
                 _original_paths(
@@ -397,6 +428,8 @@ def _select_task(
     tree_rounds: int,
     tree_row_cap: int,
     num_threads: int,
+    tree_source: Mapping[str, np.ndarray] | None = None,
+    task_name: str | None = None,
 ) -> dict[str, Any]:
     features = task["features"]
     target = task["target"]
@@ -424,16 +457,18 @@ def _select_task(
         threshold=cluster_threshold,
         max_rows_per_block=redundancy_rows_per_block,
     )
+    tree_task = task if tree_source is None else tree_source
     tree = validation_tree_evidence(
-        features,
-        target,
-        weight,
-        time_ids,
+        tree_task["features"],
+        tree_task["target"],
+        tree_task["weight"],
+        tree_task["time_ids"],
         n_blocks=n_blocks,
         n_shadows=n_shadows,
         num_boost_round=tree_rounds,
         row_cap=tree_row_cap,
         num_threads=num_threads,
+        task_name=task_name if tree_source is not None else None,
     )
     return select_task_features(
         block_correlations=correlations[:, :n_features],
@@ -474,12 +509,10 @@ def resolve_tree_budget(args: argparse.Namespace) -> tuple[int, int]:
 
 
 
-def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
-    data = load_rows(Path(args.data_root), args.sample_modulo, args.sampling)
-    time_ids = np.asarray(data["time_id"], dtype=np.int64)
-    if np.any(np.diff(time_ids) < 0):
-        raise ValueError("loaded time_ids must be sorted")
-
+def validate_manifest_args(args: argparse.Namespace) -> tuple[int, int, int]:
+    """Reject invalid controls before any parquet data is loaded."""
+    if args.train_window <= 0:
+        raise ValueError("train_window must be positive")
     train_window = args.train_window
     if args.smoke_time_ids is not None:
         if not args.smoke:
@@ -487,14 +520,31 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
         if args.smoke_time_ids <= 0:
             raise ValueError("smoke_time_ids must be positive")
         train_window = min(train_window, args.smoke_time_ids)
+    tree_rounds, tree_row_cap = resolve_tree_budget(args)
+    return train_window, tree_rounds, tree_row_cap
+
+
+def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
+    train_window, tree_rounds, tree_row_cap = validate_manifest_args(args)
+    data = load_rows(Path(args.data_root), args.sample_modulo, args.sampling)
+    time_ids = np.asarray(data["time_id"], dtype=np.int64)
+    if np.any(np.diff(time_ids) < 0):
+        raise ValueError("loaded time_ids must be sorted")
+
     mask, selected_ids = _latest_window_mask(time_ids, train_window)
-    features, _ = robust_transform_fit(data["features"][mask].copy())
+    raw_features = data["features"][mask]
+    features, _ = robust_transform_fit(raw_features.copy())
     target = data["target"][mask]
     weight = data["weight"][mask]
     selected_time_ids = time_ids[mask]
     views = selection_task_views(features, target, weight, selected_time_ids)
+    tree_source = {
+        "features": raw_features,
+        "target": target,
+        "weight": weight,
+        "time_ids": selected_time_ids,
+    }
 
-    tree_rounds, tree_row_cap = resolve_tree_budget(args)
     selections = {
         task_name: _select_task(
             task,
@@ -505,6 +555,8 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
             tree_rounds=tree_rounds,
             tree_row_cap=tree_row_cap,
             num_threads=args.num_threads,
+            tree_source=tree_source,
+            task_name=task_name,
         )
         for task_name, task in views.items()
     }
@@ -517,7 +569,10 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "rows": int(mask.sum()),
             "latest_window": True,
         },
-        "robust_transform": "fit_on_selected_training_window",
+        "robust_transform": {
+            "selection_quality": "fit_on_selected_training_window",
+            "tree_evidence": "fit_on_each_expanding_inner_train_block",
+        },
         "task_views": {
             "ridge": "full_target_with_competition_weights",
             "xs": "weighted_mean_cross_target_with_unit_evidence_weights",
@@ -645,7 +700,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-threads", type=int, default=16)
     parser.add_argument("--smoke-time-ids", type=int, default=None)
-    parser.add_argument("--history-row-cap", type=int, default=TREE_ROW_CAP)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--smoke-tree-rounds", type=int, default=None)
     parser.add_argument("--smoke-row-cap", type=int, default=None)
