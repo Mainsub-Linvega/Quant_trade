@@ -1,8 +1,4 @@
-"""Build task-specific adaptive-selection manifests from the latest training window.
-
-History selection is deliberately absent. Task 2B will replace the explicit pending
-entry after causal, lag-aligned history evidence is available.
-"""
+"""Build task-specific adaptive selections with causal history evidence."""
 
 from __future__ import annotations
 
@@ -25,6 +21,7 @@ from experiments.v3_adaptive_selection import (
     extract_tree_paths,
     select_task_features,
 )
+from experiments.v3_causal_history_selection import run_causal_history_selection
 from experiments.v3_feature_structure import (
     build_task_views,
     contiguous_time_blocks,
@@ -375,31 +372,50 @@ def _task_manifest(
     }
 
 
+def _history_manifest(
+    selection: Mapping[str, Any] | None,
+    feature_names: Sequence[str],
+) -> dict[str, Any]:
+    if selection is None:
+        return {
+            "status": "pending_task_2b",
+            "selected_indices": None,
+            "selected_names": None,
+            "selected_count": None,
+        }
+    indices = [int(index) for index in selection.get("selected_indices", [])]
+    if len(indices) != len(set(indices)):
+        raise ValueError("history selected feature indices must be unique")
+    if any(index < 0 or index >= len(feature_names) for index in indices):
+        raise ValueError("history selected feature index is out of range")
+    result = dict(selection)
+    result["selected_indices"] = indices
+    result["selected_names"] = [str(feature_names[index]) for index in indices]
+    result["selected_count"] = len(indices)
+    return result
+
+
 def assemble_manifest(
     *,
     ridge_selection: Mapping[str, Any],
     xs_selection: Mapping[str, Any],
     market_selection: Mapping[str, Any],
+    history_selection: Mapping[str, Any] | None = None,
     feature_names: Sequence[str],
     protocol: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Assemble separate task selections while leaving history visibly pending."""
+    """Assemble task-specific selections and optional causal history evidence."""
     names = [str(name) for name in feature_names]
     if not names or len(names) != len(set(names)):
         raise ValueError("feature_names must be non-empty and unique")
     return {
         "schema_version": 1,
-        "stage": "prehistory",
+        "stage": "selection_manifest" if history_selection is not None else "prehistory",
         "feature_names": names,
         "ridge": _task_manifest(ridge_selection, names),
         "xs": _task_manifest(xs_selection, names),
         "market": _task_manifest(market_selection, names),
-        "history": {
-            "status": "pending_task_2b",
-            "selected_indices": None,
-            "selected_names": None,
-            "selected_count": None,
-        },
+        "history": _history_manifest(history_selection, names),
         "protocol": dict(protocol),
     }
 
@@ -513,6 +529,8 @@ def validate_manifest_args(args: argparse.Namespace) -> tuple[int, int, int]:
     """Reject invalid controls before any parquet data is loaded."""
     if args.train_window <= 0:
         raise ValueError("train_window must be positive")
+    if getattr(args, "history_window", 5) <= 0:
+        raise ValueError("history_window must be positive")
     train_window = args.train_window
     if args.smoke_time_ids is not None:
         if not args.smoke:
@@ -533,7 +551,7 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
 
     mask, selected_ids = _latest_window_mask(time_ids, train_window)
     raw_features = data["features"][mask]
-    features, _ = robust_transform_fit(raw_features.copy())
+    features, selection_stats = robust_transform_fit(raw_features.copy())
     target = data["target"][mask]
     weight = data["weight"][mask]
     selected_time_ids = time_ids[mask]
@@ -560,6 +578,17 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
         )
         for task_name, task in views.items()
     }
+    history_selection = run_causal_history_selection(
+        data_root=Path(args.data_root),
+        selected_time_ids=selected_ids,
+        feature_indices=np.asarray(selections["xs"]["selected_indices"], dtype=np.int64),
+        robust_stats=selection_stats,
+        sample_modulo=args.sample_modulo,
+        sampling=args.sampling,
+        n_blocks=args.n_blocks,
+        n_shadows=N_SHADOWS,
+        window_size=args.history_window,
+    )
     protocol = {
         "training_window": {
             "requested_time_ids": args.train_window,
@@ -593,6 +622,12 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "default_row_cap": TREE_ROW_CAP,
             "n_shadows": N_SHADOWS,
         },
+        "history_evidence": {
+            "source": "adaptive_xs_selection",
+            "window_size": args.history_window,
+            "n_shadows": N_SHADOWS,
+            "full_stream_causal_state": True,
+        },
         "smoke": {
             "time_ids": args.smoke_time_ids,
             "tree_rounds": args.smoke_tree_rounds,
@@ -603,6 +638,7 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
         ridge_selection=selections["ridge"],
         xs_selection=selections["xs"],
         market_selection=selections["market"],
+        history_selection=history_selection,
         feature_names=FEATURE_COLUMNS,
         protocol=protocol,
     )
@@ -613,7 +649,7 @@ def render_markdown(manifest: Mapping[str, Any]) -> str:
     window = protocol["training_window"]
     tree = protocol["tree_evidence"]
     lines = [
-        "# V3 Adaptive Selection Prehistory Manifest",
+        "# V3 Adaptive Selection Manifest",
         "",
         "## Selection",
         "",
@@ -624,9 +660,17 @@ def render_markdown(manifest: Mapping[str, Any]) -> str:
             f"- `{task_name}`: {task['selected_count']} selected; "
             f"{len(task['path_hyperedges'])} supported path hyperedges"
         )
+    history = manifest["history"]
+    if history["status"] == "pending_task_2b":
+        history_line = "- `history`: pending Task 2B; no history selection is present"
+    else:
+        history_line = (
+            f"- `history`: {history['selected_count']} causal base features; "
+            f"{history['model_column_count']} derived model columns"
+        )
     lines.extend(
         [
-            "- `history`: pending Task 2B; no history selection is present",
+            history_line,
             "",
             "## Protocol",
             "",
@@ -679,7 +723,7 @@ def write_manifest_bundle(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the V3 adaptive-selection prehistory manifest."
+        description="Build the V3 adaptive-selection manifest."
     )
     parser.add_argument("--data-root", default=str(ROOT / "data"))
     parser.add_argument(
@@ -699,6 +743,7 @@ def parse_args() -> argparse.Namespace:
         "--redundancy-rows-per-block", type=int, default=100_000
     )
     parser.add_argument("--num-threads", type=int, default=16)
+    parser.add_argument("--history-window", type=int, default=5)
     parser.add_argument("--smoke-time-ids", type=int, default=None)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--smoke-tree-rounds", type=int, default=None)

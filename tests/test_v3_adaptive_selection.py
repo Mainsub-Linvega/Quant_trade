@@ -5,6 +5,11 @@ import pytest
 
 import sys
 from experiments import v3_adaptive_selection_manifest as manifest_module
+from experiments.v3_causal_history_selection import (
+    HISTORY_BLOCK_NAMES,
+    causal_history_rows_from_batches,
+    select_history_bases,
+)
 from experiments.v3_adaptive_selection import (
     aggregate_path_support,
     circular_shift_shadows,
@@ -598,6 +603,58 @@ def test_market_tree_evidence_uses_aggregated_validation_row_count(
     assert result["block_feature_evidence"].shape == (3, 1)
 
 
+def test_causal_history_keeps_unselected_rows_in_asset_state() -> None:
+    batches = [
+        {
+            "time_id": np.array([1, 2], dtype=np.int64),
+            "asset_id": np.array([0, 0], dtype=np.int64),
+            "target": np.array([0.0, 1.0]),
+            "features": np.array([[3.0], [5.0]], dtype=np.float32),
+        }
+    ]
+    stats = tuple(
+        np.array([value], dtype=np.float32)
+        for value in (0.0, 10.0, 0.0, 1.0)
+    )
+
+    rows = list(
+        causal_history_rows_from_batches(
+            batches,
+            history_stats=stats,
+            selected_time_ids=np.array([2], dtype=np.int64),
+            sample_modulo=2,
+            sampling="periodic",
+            window_size=5,
+        )
+    )
+
+    assert len(rows) == 1
+    np.testing.assert_array_equal(rows[0]["time_id"], [2])
+    previous = rows[0]["blocks"][HISTORY_BLOCK_NAMES.index("previous")]
+    np.testing.assert_array_equal(previous[:, 0], [3.0])
+
+
+def test_history_base_selection_is_adaptive_and_uses_shadow_floors() -> None:
+    correlations = np.zeros((4, 4, 3), dtype=np.float64)
+    correlations[:, 0, 0] = [0.18, 0.21, 0.19, 0.20]
+    correlations[:, 2, 1] = [-0.17, -0.18, -0.19, -0.20]
+    correlations[:, :, 2] = 0.04
+    shadows = np.full((4, 4, 5), 0.05, dtype=np.float64)
+
+    selection = select_history_bases(
+        feature_indices=np.array([7, 11, 13]),
+        block_correlations=correlations,
+        shadow_block_correlations=shadows,
+    )
+
+    assert selection["selected_indices"] == [7, 11]
+    assert selection["selected_count"] == 2
+    assert selection["model_column_count"] == 8
+    assert selection["derived_columns"] == list(HISTORY_BLOCK_NAMES)
+    assert all(item["passed"] for item in selection["evidence"][:2])
+    assert not selection["evidence"][2]["passed"]
+
+
 def test_assemble_manifest_keeps_task_contracts_and_history_pending() -> None:
     def selection(indices: list[int]) -> dict[str, object]:
         return {
@@ -634,6 +691,39 @@ def test_assemble_manifest_keeps_task_contracts_and_history_pending() -> None:
         "selected_names": None,
         "selected_count": None,
     }
+
+
+def test_assemble_manifest_accepts_causal_history_selection() -> None:
+    task = {
+        "selected_indices": [0],
+        "evidence": [],
+        "reasons": {},
+        "path_hyperedges": [],
+        "thresholds": {},
+    }
+    history = {
+        "status": "selected_causal_history",
+        "selected_indices": [1, 2],
+        "selected_count": 2,
+        "derived_columns": list(HISTORY_BLOCK_NAMES),
+        "model_column_count": 8,
+        "evidence": [],
+        "thresholds": {},
+    }
+
+    manifest = assemble_manifest(
+        ridge_selection=task,
+        xs_selection=task,
+        market_selection=task,
+        history_selection=history,
+        feature_names=["feature_000", "feature_001", "feature_002"],
+        protocol={},
+    )
+
+    assert manifest["stage"] == "selection_manifest"
+    assert manifest["history"]["selected_indices"] == [1, 2]
+    assert manifest["history"]["selected_names"] == ["feature_001", "feature_002"]
+    assert manifest["history"]["model_column_count"] == 8
 
 
 def test_selection_task_views_use_unweighted_market_means() -> None:
