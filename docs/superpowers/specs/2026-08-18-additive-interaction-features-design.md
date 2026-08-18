@@ -2,25 +2,27 @@
 
 **Date:** 2026-08-18  
 **Branch:** `exp/adaptive-feature-search`  
-**Status:** proposed after user design approval
+**Status:** revised after user design approval
 
 ## Goal
 
-Preserve the established V3 feature contracts and add task-specific joint effects as derived training columns. The work must not add another prediction model, replace the existing Ridge/XS LightGBM/Market LightGBM components, or use interaction evidence to delete established baseline features.
+Preserve the established V3 correlation-selected feature contracts and add task-specific joint effects as derived training columns. Interaction discovery may inspect all 323 current anonymous features, including low-marginal-correlation columns outside the baseline top 200, but an outside feature may enter a model only through an accepted derived interaction column. The work must not add another prediction model, replace the existing Ridge/XS LightGBM/Market LightGBM components, or use interaction evidence to delete established baseline features.
 
 The frozen base is:
 
-- Ridge: the established 200 current anonymous features.
-- XS LightGBM: the established 200 cross-sectional current features plus 40 causal history bases expanded to 160 columns.
-- Market LightGBM: the established 200 raw current features, their 200 cross-sectional deviations, and the same 160 causal history columns.
+- Ridge: the 200 current anonymous features with highest absolute weighted marginal correlation to the full target.
+- XS LightGBM: the 200 current features with highest absolute unweighted marginal correlation to the cross-sectional target deviation, plus 40 causal history bases selected inside those 200 and expanded to 160 columns.
+- Market LightGBM: the production XS top 200 represented as raw values and cross-sectional deviations, plus the same 160 causal history columns.
 - Existing `asset_id`, preprocessing, fusion, clipping, `market_lambda=0.7`, and `blend_weight=1.17` remain unchanged during interaction evaluation.
 
 Interaction columns are appended to those matrices. A failed interaction experiment therefore rolls back by omitting the new columns; it does not require reconstructing the production baseline.
 
 ## Non-Goals
 
-- Do not perform another global feature-selection pass over the 323 anonymous columns.
+- Do not replace the production top-200 selectors with another global raw-feature selector.
 - Do not reduce the established 200/200/200/40 feature sets.
+- Do not append a feature outside the production top 200 as an ordinary raw model column.
+- Do not generate four history blocks for all 323 anonymous features; causal history remains the established History40.
 - Do not enumerate every polynomial pair or triple.
 - Do not add a fourth model or a new fusion coefficient.
 - Do not tune final fusion or prediction scale before the interaction feature gate passes.
@@ -36,7 +38,7 @@ This directly represents range-dependent effects, supports interactions involvin
 
 ### 2. Exhaustive polynomial crosses
 
-For 200 inputs, pair products alone produce 19,900 columns per task before history interactions. This is expensive, obscures threshold effects, and creates a large multiple-testing surface. It is rejected.
+For 323 inputs, pair products alone produce 52,003 columns per task before raw/deviation variants or history interactions. This is expensive, obscures threshold effects, and creates a large multiple-testing surface. It is rejected.
 
 ### 3. History-only crosses
 
@@ -46,13 +48,21 @@ Current/history products are important but do not cover interactions among curre
 
 ### 1. Frozen baseline contracts
 
-The existing baseline feature lists remain the authoritative source for each model. Adaptive-selection manifests are not used to replace them. A new interaction manifest references columns in the frozen base matrices by semantic source and global feature index.
+The existing marginal-correlation selectors remain the authoritative source for ordinary model columns. Adaptive-selection manifests are not used to replace them. A new interaction manifest may reference any of the 323 current anonymous columns by semantic source and global feature index, but only the resulting derived column is appended to the model matrix.
+
+For example, if global `feature_250` is outside a task's top 200 but conditions the effect of top-200 `feature_030`, the model receives:
+
+```text
+feature_030 * I(feature_250 > threshold)
+```
+
+It does not receive `feature_250` as a standalone column. Inference still loads and preprocesses `feature_250` because it is a source needed to compute the derived column.
 
 Each task has an independent interaction namespace:
 
-- `ridge`: current-feature interactions for the full weighted target.
-- `xs`: cross-sectional current/current and current/history interactions for target deviation.
-- `market`: raw/deviation/current-history interactions for the market target.
+- `ridge`: interactions mined from all 323 robust current features for the full weighted target.
+- `xs`: interactions mined from all 323 cross-sectional deviations plus the existing History40 for target deviation.
+- `market`: interactions mined from all 323 raw values, all 323 cross-sectional deviations, and the existing History40 for the market target.
 
 An interaction discovered for one task is not copied into another task.
 
@@ -63,7 +73,7 @@ Within each outer training window:
 1. Split the training window into four chronological inner blocks.
 2. Fit the existing task model on expanding inner-train blocks using only frozen baseline columns.
 3. Predict the next inner block and form out-of-sample residuals.
-4. Fit shallow deterministic LightGBM miners to the residuals using the same baseline columns, including causal history where that task already uses it.
+4. Fit shallow deterministic LightGBM miners to the residuals using the task's full interaction-source universe: all 323 current sources in the appropriate view plus the existing causal History40 where that task already uses it.
 5. Extract root-to-leaf paths containing two to four distinct source columns.
 
 The miner is not serialized as a prediction component. It only proposes derived feature definitions.
@@ -72,7 +82,7 @@ The miner is not serialized as a prediction component. It only proposes derived 
 
 Raw tree thresholds vary slightly between blocks. Every condition is therefore stored in a canonical training-only form:
 
-- source family: `current`, `xs_deviation`, `market_raw`, or one of the four history blocks;
+- source family: `current`, `xs_deviation`, `market_raw`, or one of the four existing History40 blocks;
 - global anonymous feature index;
 - comparison direction;
 - threshold represented by its empirical training quantile bin;
@@ -98,6 +108,8 @@ For every accepted path, create:
 
 Pure products are not generated unless they are supported by an accepted path. Paths with duplicate semantic sources, a single distinct feature, or only `asset_id` are rejected.
 
+A derived column may use one or more current sources outside the task's top 200. Those source columns are inputs to the interaction builder only and are never inserted directly into the final model matrix. Current/history paths may use any of the 323 current sources but only the established History40 historical sources.
+
 The accepted count is evidence-driven rather than fixed. An operational cell budget guards memory: exceeding it aborts the experiment with a report instead of silently truncating or ranking interactions.
 
 ### 5. Model matrices
@@ -118,18 +130,21 @@ Market LightGBM:
 
 The same existing Ridge and LightGBM trainers fit these enlarged matrices. No prediction is produced by the path miner itself.
 
+The direct base widths remain unchanged. An interaction referencing a top-200-external source increases only the interaction width, not the raw baseline width.
+
 ### 6. Metadata and inference
 
 The candidate metadata stores, separately for each task:
 
 - interaction schema version;
 - source columns and source families;
+- robust preprocessing statistics for every referenced current source outside the task's direct top 200;
 - canonical conditions and resolved numeric thresholds;
 - operation type;
 - output column order;
 - training protocol and discovery blocks.
 
-Offline inference, NumPy inference, LightGBM inference, and the official sequential runner call one shared interaction builder. History conditions use only `AssetHistory` values available before the current row prediction. No target or future row is needed at inference time.
+Offline inference, NumPy inference, LightGBM inference, and the official sequential runner call one shared interaction builder. The runner loads the union of direct baseline columns and interaction source columns, applies training-frozen preprocessing, constructs only the declared derived columns, and then discards source-only columns before model prediction. History conditions use only the existing History40 `AssetHistory` values available before the current row prediction. No target or future row is needed at inference time.
 
 Old metadata without interaction definitions resolves to zero added columns and remains readable.
 
@@ -149,6 +164,8 @@ Old metadata without interaction definitions resolves to zero added columns and 
 - A range-dependent synthetic effect produces the expected region and gated-value columns.
 - Current/history interactions never read current-row history after state advancement.
 - Original baseline columns and their order are unchanged.
+- A source outside the top 200 can produce an interaction column but never appears as a standalone model column.
+- History state remains exactly 40 bases and is not expanded to all 323 sources.
 - Train, offline inference, NumPy inference, and official sequential inference construct identical columns.
 - Old model metadata remains backward compatible.
 - Cell-budget overflow fails explicitly and does not truncate interactions.
@@ -175,6 +192,7 @@ Production artifacts and the current `0.7/1.17` candidate remain untouched. Roll
 ## Success Criteria
 
 - All established base features remain present and in their original order.
+- Interaction discovery covers all 323 current anonymous features while direct raw inputs remain the production correlation-selected top 200.
 - At least one repeated two-to-four-source conditional interaction is represented, or the report proves none satisfies the frozen training-only stability gate.
 - No additional prediction model or fusion parameter is introduced.
 - The strict OOF screening gate passes before final retraining or CSV generation.
