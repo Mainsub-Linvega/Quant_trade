@@ -146,6 +146,277 @@ IC    = sqrt(peak)
 
 ## 5. 近期研究日志
 
+### 2026-08-18 — `REJECTED`：拆掉树前面的线性选列筛子 —— 截面块变差、市场块测不出
+
+**问题**：生产在 **LightGBM 前面**叠了线性单变量筛子（`strategies/v3_hybrid/train.py:329/346`）：
+
+```text
+xs_selected       = top-200 by |corr(feature, e)|  无权  → 截面 LGBM 块 **和** 市场 LGBM 块
+history_positions = top-40  within xs_selected           → history 块
+```
+
+判据是 `strategies/v1_ridge/train.py:86-108` 的 |加权 Pearson 相关| 排序 ⟹
+**123 个原始特征从未进过任何模型**。边际相关是线性、单变量的，对「单独看没用、交互才有用」
+的特征完全失明 —— 而那正是 GBM 存在的理由。
+
+**这一刀还是任意的**（partition_008 只读实测）：
+
+```text
+|corr(feature, e)|  1st=0.01010  50th=0.00621  150th=0.00391
+                  200th=0.00299 ← 截断线   201st=0.00295   260th=0.00128   323rd=0.00003
+落差 200th→201st = 1.33%，无断崖；保留组最小值 0.00299
+```
+
+**为什么此前没测**：`ab_featsweep` 测过 feat323，但那是**线性 Ridge 时代**
+（+4.4%、7/10 折、未晋级）—— 对线性模型加弱相关列主要是加方差，是另一个问题。
+`joint_recalibration_plan.json` 里 Ridge 有 200/323 两档、**LGBM 那 9 格没有 feature_count 档**。
+
+**做法**：给 `v3_production_oof.py` 拆出三个独立开关（`--ridge/-xs/-market-feature-count`）——
+此前一个模块常量同时驱动截面块和市场块，动一个数就是组合臂。
+⭐ 默认值下与 HEAD 版**逐位相同**（19 个数组 max|Δ|=0.0，隔离沙箱对拍）。
+⭐ **单变量保证已实证**：`history_positions` 是 `xs_selected` 内的 top-40，而 top-200 的 top-40
+== 全 323 的 top-40 ⟹ 三个臂的 history 原始列名与基准**逐折完全相同**（脚本断言，全 True）。
+
+**结果**（1 seed × 160 轮 × 5 折，基准折均 peak 0.00140840，1,461,732 行）：
+
+| 臂 | 设计列 XS/market | Δ折均 | 相对 | 正折 | 去最好折 | ΔA | ΔB | 检出下限 | 配对 CI |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `xs323` | 484 / 561 | −1.413e−05 | **−1.00%** | 2/5 | −2.22e−05 | −1.75% | −2.30% | 3.40e−05 | [−4.9e−05, +1.9e−05] |
+| `mkt323` | 361 / 807 | +1.533e−05 | **+1.09%** | 3/5 | **+4.79e−06** | +0.20% | −0.41% | 2.20e−05 | [−1.2e−05, +3.2e−05] |
+| `both323` | 484 / 807 | +1.462e−06 | +0.10% | 2/5 | −1.72e−05 | — | — | 4.13e−05 | [−4.5e−05, +3.7e−05] |
+
+**三个臂全不过门禁。** 最好的一格 `mkt323` 过了「折均为正」「去最好折为正」「2ΔA>ΔB」三道，
+但 3/5 折不足 4/5、+1.09% 远低于 3% 门槛、效应只有**检出下限的 0.70×**、配对 CI 跨 0。
+
+⭐ **内部一致性佐证**：`xs323`(−1.00%) + `mkt323`(+1.09%) ≈ +0.09%，而 `both323` 实测
+**+0.10%** —— 两个效应几乎精确可加。说明测的是真效应（只是太小），不是噪声乱跳。
+
+**解读**：被丢的 123 列 |corr| 全在 0.003 以下，在 118 万训练行上树找不出可靠的交互信号；
+而 `feature_fraction`（截面 0.7 / 市场 0.4）本来就在随机丢列，放宽只是稀释了分裂机会。
+方向上截面块**变差**、市场块**略好**，与 ROADMAP §3.2「两块容量方向相反」同调，但两边都在噪声内。
+
+**决策**：`REJECTED`，选列宽度轴关闭。⚠️ 这条**不需要公榜裁决** —— 拒绝改动就是保持现状。
+**重新开放条件**：8/23 回补数据后训练行数显著增加（弱信号在更多行上才可能被树找到），
+按原规格复验一次；届时把 `--xs-feature-count` / `--market-feature-count` 补进 P2 冻结矩阵。
+
+证据：`outputs/experiments/feature_screen_1s160.{json,md}`；
+基准 `outputs/cache/v3_production_oof_1s160_prodwindow_20260818.npz`（当前代码现跑，见下条）。
+
+### 2026-08-18 — `INCIDENT`（未造成损失）：`*_exact` 那份 OOF cache 出自**已不存在的代码版本**
+
+**现象**：给 `v3_production_oof.py` 加三个选列开关后，按惯例拿
+`outputs/cache/v3_production_oof_phasebal_prodwindow_exact.npz` 做「默认值下逐位相同」的
+回归验证，结果 **`market_ridge` 差 3.37e-05**（约折均 peak 的 2.4%），
+`market` / `prediction_raw` / `prediction` 跟着差；而 `e_lgbm` / `xs_lgbm` 只差 ~2.8e-17。
+
+**根因不是我的改动**：
+
+```text
+cache 时间戳                              2026-08-14 11:12
+v3_production_oof.py 的**首次提交**        2026-08-15 11:18   ← 比 cache 晚
+最近一次提交                              2026-08-18 09:59
+```
+
+⟹ 那份 cache 是由**从未提交过的脚本版本**产出的，无法复现，也不该当基准。
+另一条旁证：它的 JSON **连 `rounds` 段都没有**，而当前脚本必写 —— 它早于 checkpoint 功能。
+
+**证实**：把 HEAD 版脚本抽到隔离沙箱（符号链接 `src`/`strategies`/`data`，不污染仓库）
+同线程数跑一遍，与加了开关的版本对拍 —— **19 个数组全部逐位相同，max|Δ| = 0.0**。
+⟹ 重构无副作用；差异 100% 来自那份陈旧 cache。
+
+**影响面（需要注意，但本轮不追）**：`v3_recency_ladder` 的扩展窗臂就是拿这份 cache 做配对
+基准的（NOTES P4 收官那条）。那次结论是「+1.08%、2/5 折、CI 跨 0 ⟹ 测不出效应」，
+而 3.37e-05 相对折均 peak 0.00140840 约 2.4% —— **与被测效应同量级**。
+⟹ P4 扩展窗那一臂的配对可能跨了两个代码版本。结论方向（测不出）大概率不变，
+但若 8/23 后要重开训练窗轴，**必须用当前代码现跑基准重测**。
+
+**防复发**：
+1. 任何配对比较前，先核对基准 cache 的产出代码版本 —— 时间戳早于脚本提交就是红旗；
+2. `experiments/feature_screen_compare.py` 的 docstring 里写死了这条，且本实验的基准一律现跑；
+3. 改公共实验脚本后，回归对照要跟 **HEAD 现跑**比，不跟历史 cache 比。
+
+### 2026-08-18 — `INCIDENT`（未造成损失）：三道交付门禁都不认识 slow/fast，丢键会**静默**交出旧模型
+
+**背景**：推进 P0 时顺手核了一遍打包链路。slow/fast 是 2026-08-18 转正的，而候选与转正前生产的
+**唯一差别就是 meta 里那几个 `slow_fast_*` 键**（6 片森林 + 冻结岭回归 hash 逐字节相同、未重训）。
+
+**问题**：`scripts/promote_v3_candidate.PUBLIC_BASELINE` —— 整条链路唯一的「公榜模型身份」
+定义 —— 只有 9 个键，**一个 slow/fast 都没有**。三处消费者因此全是瞎的：
+
+| 关口 | 改之前 |
+|---|---|
+| `make_submission.check_v3_hybrid_meta` | 遍历 PUBLIC_BASELINE ⟹ 键不在表里就不核 |
+| `promote_v3_candidate.validate_meta` | 结构项逐条硬编码 ⟹ 没有 slow/fast 那条 |
+| `audit_submission_zip.audit` | 只核 scale / iterations / seeds |
+
+而 `main.py:222` 是：
+
+```python
+self.slow_fast = PredictionTrail(int(window)) if window else None
+```
+
+⟹ `slow_fast_window` 缺失时 slow/fast 被**静默关掉、不抛任何错**，模型退回单一 scale 1.16 的
+旧行为。三道门禁全放行 + 运行时不报错 = **交出去的是低 2.93% 的那份，而且没有任何东西会提示**。
+这正是 CLAUDE.md §8.2 那条伤疤（「公榜 CSV 曾由临时 override 生成，而候选 meta 仍保留占位值」）
+换了个位置重演。
+
+**实证**：仓库里现存的 `outputs/v3_hybrid_submission_20260813.zip` 就是转正前的旧模型 ——
+旧审计**八项全 PASS**；加了 `--expect-public-baseline` 才被拦下（三个 slow/fast 键 drift）。
+⟹ 不是假想风险，是 8/31 伸手就能拿错的那个文件。
+
+**顺带查出另外两个洞**（同属「审计通过但包是坏的」）：
+
+- `audit_submission_zip` 只核 `lgbm_model_files` 在不在包里，**`market_model_files` 一个都不核** ——
+  市场森林是架构的一半（公榜 +21.99% 的来源），漏打包照样 PASS；
+- 不核 `main.py` 顶层无条件 import 的 `features` / `lgbm_numpy` / `history`，少一个 `Model`
+  就装不起来 ⟹ 整份提交判无效。
+
+**修复**：三个 slow/fast 数值键进 `PUBLIC_BASELINE`（保持「唯一定义」不变，不在别处抄第二份）；
+`make_submission` 的取值表同步加三项（它自带的键集同步守卫本来就会当场炸，设计是对的）；
+`validate_meta` 加结构项并接上 `--off-baseline` 逃生口；`audit_submission_zip` 加
+`--expect-public-baseline`（全表核对）、市场森林在包检查、三个必需模块进 `REQUIRED`。
+**缺键一律判为偏离，不判为通过** —— `float(None)` 会 TypeError，所以统一落成 NaN 再比。
+
+**防复发**：4 个新回归用例（`tests/test_submission_packaging.py`），逐键覆盖「丢键」和「写错值」
+两种破坏，并断言 `--off-baseline` 仍能放行。夹具一律从 `PUBLIC_BASELINE` 派生 ⟹ 以后往那张表
+加键，夹具不会悄悄落后。全套 **64 passed / 18 subtests**。
+
+**留给用户的口子**：`--off-baseline`。8/23 回补数据后若重训出不带 slow/fast 的候选，
+用它显式放行 —— 偏离必须是按下去的，不是漏掉的。
+
+### 2026-08-18 — `RESULT`：P0 交付闭环 —— 4 核下两条路径全量实测并落盘
+
+**为什么要重测**：ROADMAP §2 记着 `predict_total = 5.15 分钟` / NumPy 兜底 10.44 分钟，但这两个数
+**只写在 ROADMAP 和 ledger 里，没有任何落盘的 runner JSON，也没有记录线程数**。开发机 32 核、
+P0 动作 3 要的却是「接近私榜环境的 4 核」⟹ 那两个数不能替 4 核背书。
+
+**做法**：新增 `scripts/verify_delivery_runtime.py`。走官方 runner 的 `run_loaded_model`
+（**不是** `run_strategy` —— 后者会 `to_csv`）⟹ 全程不写任何提交文件。线程数与
+`OMP_NUM_THREADS` 不符直接退出，避免把口径记错。兜底那条用 **import shim 让 `import lightgbm`
+抛 ImportError**，复刻评测机没装 lightgbm 的真实路径，并断言实际选中的后端确实是 `numpy`。
+
+| | LightGBM 主路径 | NumPy 兜底 |
+|---|---:|---:|
+| `predict_total` @ 4 线程 | **5.26 分钟** | **10.94 分钟**（2.08×）|
+| wall clock | 6.20 分钟 | 11.81 分钟 |
+| model init | 0.36 s | 0.37 s |
+| 单步最大 / 平均 | 0.682 s / 1.47 ms | 0.658 s / 3.06 ms |
+| 行数 / 调用 | 3,217,458 / 214,538 | 同 |
+| 超时 / 非有限值 / 触 clip | 0 / 0 / 0 | 0 / 0 / 0 |
+| `max\|pred\|` | 0.4204497 | **0.4204497（相同）** |
+
+⭐ **本轮最有价值的一条**：兜底跑起来是**单核 100%**（纯 numpy 树遍历不并行，RSS 4.56 GB）
+⟹ **4 核评测机不会比 32 核开发机更慢**。此前「兜底 2 倍慢」是已知的，但「兜底会不会随核数
+进一步恶化」从没验过 —— 现在这个风险从「未知」变成「已量化且不随核数恶化」。
+
+两条路径 8 个模型文件的 sha256 与 promotion manifest 逐字节一致；两后端全量 321 万行的
+`max|pred|` 完全相同，与 staging 对拍 2.082e-16 吻合。
+
+⚠️ 两处与 ROADMAP 旧记录对不上，已按实测更新：耗时 5.15→5.26 / 10.44→10.94（旧值无线程记录，
+不追因）；`check_consistency` 同参数复测是 **4.019e-09** 而非记录的 8.111e-09 ——
+两个数都远低于 1e-6 门槛，未追因，以实测为准。
+
+证据：`outputs/experiments/delivery_runtime_lightgbm_4t.{json,md}`、
+`delivery_runtime_numpy_fallback_4t.{json,md}`。
+
+### 2026-08-18 — `REJECTED`：`responder_00`/`responder_02` 的 Stage-C 空白格已填，仍不补 target 残差
+
+**这个格子为什么空着**（核对 `NEXT_STEPS_horizon_auxiliary_oof_validation.md` 时发现）：
+2026-08-14 的 responder 重新审计只把 **8 个通过族**送进了 Stage C。查
+`responder_predictability_reaudit_phasebal_prodwindow.json` 的 cluster 明细：
+
+```text
+cluster 24 = {responder_00}  mean_peak 0.02945  5/5 折  drop-best 0.02857  pass=false
+cluster 22 = {responder_02}  mean_peak 0.00141  5/5 折  drop-best 0.00130  pass=false
+```
+
+七项 check 里**只有 `multi_member_family` 一项为 false**（它们是单成员族），其余六项全过。
+⟹ 这两个「更短窗口」候选被挡在 Stage C 门外**不是因为证据，是因为一条稳健性启发式**。
+
+**方法**：不训练任何新模型。把两份现有缓存按 `(time_id<<8)|asset_id` 连接 ——
+auxiliary 取 `responder_oof_phasebal_prodwindow_f323.npz` 的严格 OOF 预测（Ridge、全 323 特征），
+基准取 `v3_production_oof_confirm_3s480_phasebal_prodwindow.npz` 的强 v3 3s480 OOF。
+组合系数**只用 fold 0..k−1 拟合、冻结到 fold k**（4 个评估折），门禁运行前写死。
+全程 **2.2 秒**。
+
+⚠️ 两份缓存的折边界错开约 90 个 time_id（各自的 `rolling_time_folds` 建在不同的 unique
+time_id 列表上），604 行（0.041%）折号不一致 ⟹ 丢掉，剩 1,460,308 行。
+
+**结果**（相对 = Δ折均 / 基准 peak 折均）：
+
+| 基准 | 臂 | Δ折均 | 相对 | 正折 | 去最好折 | ΔA | ΔB | 检出下限 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| full | `null_frozen_scale` | −6.71e−05 | −3.84% | 0/4 | −8.54e−05 | 0 | 0 | 4.07e−05 |
+| full | `responder_00` | −5.58e−05 | −3.19% | 2/4 | −8.04e−05 | −3.59% | −7.83% | 7.00e−05 |
+| full | `responder_02` | −5.64e−05 | −3.23% | 3/4 | −8.19e−05 | +9.46% | +18.58% | 7.34e−05 |
+| pure_e | `null_frozen_scale` | −2.69e−05 | −2.54% | 0/4 | −3.59e−05 | 0 | 0 | 2.97e−06 |
+| **pure_e** | **`responder_00`** | **+1.47e−05** | **+1.38%** | **3/4** | **−3.65e−06** | +0.85% | **−2.01%** | 3.38e−05 |
+| pure_e | `responder_02` | −3.92e−05 | −3.69% | 1/4 | −6.80e−05 | +15.20% | +34.64% | 2.58e−05 |
+
+**harness 已校准**（这是能相信上表的前提）：负控制（`responder_00` 预测在每个 `time_id`
+内打乱）两个基准下都不过门禁；已测族 `responder_27` 复现出明确负结果（−3.72% / −3.78%），
+方向与 08-14 的 −18.81% 一致。
+
+**唯一有内容的一格是 `pure_e/responder_00`**，但它**不过**：
+
+- 过了门禁 1（折均为正）、2（3/4 折）、5（`2ΔA>ΔB`）、6（配对 CI 下界 +9.04e−06 > 0）；
+- **没过** 3（去最好折 −3.65e−06，整个效应挂在一折上：逐折 +6.98e−05 / +5.34e−06 /
+  +3.21e−05 / **−4.84e−05**）、4（+1.38% < 预注册的 3%）、7（**只有检出下限的 0.43×**）。
+- 机制是 **ΔB −2.01% 而 ΔA 只有 +0.85%** ⟹ 减方差不是加信号，与 `corr(e_lgbm)=−0.099`
+  合读正是 CLAUDE.md §8.6 点名的那种「低相关的弱模型」。
+
+⭐ **顺带量化了一个一直没被拆开的东西**：`null_frozen_scale` 臂（不加任何 auxiliary、
+只把 scale 冻结在过去折）就已经是 **−3.84%（full）/ −2.54%（pure_e）**。也就是说
+`asset_blend_check` 那类「基准可在评估折重解最优 scale、候选必须冻结」的比较里，
+**有约 2.5~3.8 个百分点是让步本身**，不是候选变差。剥掉让步后
+（`mean_delta_vs_frozen_baseline`）：`pure_e/responder_00` 是 **+3.92%**，
+`full/responder_00` 只有 +0.64%，`responder_02` 转负。以后读这类表要先看 null 臂。
+
+**决策**：`REJECTED`，horizon auxiliary 方向关闭。空白格已填，不再为 responder 选择、
+目标替换或 combiner 形式花时间。**不动生产、不花公榜额度。**
+
+**限制**：缓存里的 auxiliary 是 **Ridge 强度**（与 08-14 对那 8 个族用的是同一把尺子，
+可比），负结果严格说只证否「Ridge 强度的 auxiliary 无增量」；基准也不含 slow/fast 后处理。
+本探针是**准入筛不是终审** —— 但先验很硬：被测过的 8 个族可预测性高 8~460× 尚且 −18.81%。
+
+**重新开放条件**：8/23 回补数据带来新的 responder 列，或出现不是「换目标 / 线性叠加 /
+对预测值做二层校准」的新机制（沿用 `responder_reaudit_20260814.md` 的原条件）。
+证据：`outputs/experiments/horizon_auxiliary_cache_probe.{json,md}`。
+
+### 2026-08-18 — `RESULT`：重建测试补测落盘 —— 数字全部确认，但口径此前没写清楚
+
+**证据缺口**：ROADMAP:165 与本文件上一条用「重建 R² 只 0.883、单步 u 不存在」关闭了
+horizon 分解方向。但全仓库检索（排除 `.venv/.git/data`）显示 **`0.207` 只出现在
+`NOTES.md` 里** —— `responder_window_atlas.py` 只算自相关和错位相关，其 JSON 没有
+reconstruction 字段，没有任何脚本能产出那张表。⟹ 关闭理由当时建立在无法复现的测量上。
+新增 `experiments/responder_reconstruction.py` 补测（不改 atlas、不覆盖其产物）。
+
+**结果**（全量 9 分区、约 1,322 万行配对，耗时约 20 秒）：
+
+| 设计 | R² 中心化 | R² 非中心化 | NOTES 记录 | 复现 |
+|---|---:|---:|---:|:--:|
+| `responder_00 @ +1..+5`（纯 u 假设）| **0.2010** | 0.0125 | 0.207 | ✅ |
+| `responder_02 @ 0..+3` | 0.8245 | 0.0781 | 0.818 | ✅ |
+| `responder_03 @ −1..+1` | 0.8392 | 0.1574 | 0.835 | ✅ |
+| `responder_04 @ −4..−2` | 0.7349 | 0.2239 | 0.732 | ✅ |
+| **全部合并**（15 个回归元）| **0.8873** | 0.8461 | 0.883 | ✅ |
+
+五格全部落在 ±0.006 内 ⟹ **NOTES 的记录被确认，ROADMAP 的关闭理由现在有产物支撑。**
+纯 u 假设要求 R²→1，实测 0.201 ⟹ `responder_00` 不是 target 所聚合的那个单步增量，
+这一条站得住。
+
+⚠️ **但口径此前完全没写，而它的影响很大**：NOTES 那张表是**带截距的中心化 R²**。
+responder 带很大的非零均值（`responder_03` 加权均值 +0.502 而 std 只有 0.262），
+所以换成项目指标口径（无截距、分母 `Σw·y²`，与 `src/metric.py` 的
+`Score = 1 − Σw(y−ŷ)²/Σw·y²` 一致）后同一个设计从 0.84 掉到 0.16。
+两套都已落盘。判定复现用中心化那一套（那才是「张成了多少」的正确度量）；
+非中心化一列只作诊断，别拿它当「按比赛指标能兑现多少」。
+
+⚠️ 一处对不上但不影响结论：NOTES 写的是「299 万行」，本次全量配对是 1,322 万行。
+R² 值逐格吻合，故判为当时的行数记述问题，不是口径问题。
+
+证据：`outputs/experiments/responder_reconstruction.{json,md}`。
+
 ### 2026-08-18 — `REJECTED`：per-asset ridge **叠加**到生产截面块上也不行
 
 **问题**：per-asset ridge 单独比生产截面块低 50.5%，但「单独更弱」≠「叠加无用」——
