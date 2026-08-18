@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import sys
 from experiments import v3_adaptive_selection_manifest as manifest_module
 from experiments.v3_adaptive_selection import (
     aggregate_path_support,
@@ -529,5 +530,79 @@ def test_selection_task_views_use_unweighted_market_means() -> None:
     target = np.array([1.0, 9.0, 2.0, 10.0])
     weight = np.array([100.0, 1.0, 50.0, 1.0])
     time_ids = np.array([10, 10, 11, 11])
-
     views = selection_task_views(features, target, weight, time_ids)
+    np.testing.assert_allclose(views["market"]["features"], [[2.0, 20.0], [4.0, 40.0]])
+    np.testing.assert_allclose(views["market"]["target"], [5.0, 6.0])
+    np.testing.assert_array_equal(views["market"]["time_ids"], [10, 11])
+    np.testing.assert_array_equal(views["market"]["weight"], [1.0, 1.0])
+
+
+
+def test_shadow_containing_tree_path_is_dropped() -> None:
+    pure = {
+        "tree_info": [{"tree_structure": {
+            "split_feature": 0,
+            "left_child": {"split_feature": 1,
+                           "left_child": {"split_feature": 2,
+                                          "left_child": {"leaf_value": 1.0},
+                                          "right_child": {"leaf_value": 0.0}},
+                           "right_child": {"leaf_value": 0.0}},
+            "right_child": {"leaf_value": 0.0},
+        }}]
+    }
+    mixed = {
+        "tree_info": [{"tree_structure": {
+            "split_feature": 0,
+            "left_child": {"split_feature": 1,
+                           "left_child": {"split_feature": 3,
+                                          "left_child": {"leaf_value": 1.0},
+                                          "right_child": {"leaf_value": 0.0}},
+                           "right_child": {"leaf_value": 0.0}},
+            "right_child": {"leaf_value": 0.0},
+        }}]
+    }
+    assert manifest_module._original_paths(pure, 3, 5) == {(0, 1, 2)}
+    assert manifest_module._original_paths(mixed, 3, 5) == set()
+
+
+def test_selection_task_views_market_protocol_is_unweighted() -> None:
+    features = np.array([[1.0, 10.0], [3.0, 30.0], [2.0, 20.0], [6.0, 60.0]])
+    target = np.array([1.0, 9.0, 2.0, 10.0])
+    weight = np.array([100.0, 1.0, 50.0, 1.0])
+    time_ids = np.array([10, 10, 11, 11])
+    views = selection_task_views(features, target, weight, time_ids)
+    np.testing.assert_allclose(views["market"]["features"], [[2.0, 20.0], [4.0, 40.0]])
+    np.testing.assert_allclose(views["market"]["target"], [5.0, 6.0])
+    np.testing.assert_array_equal(views["market"]["time_ids"], [10, 11])
+    np.testing.assert_array_equal(views["market"]["weight"], [1.0, 1.0])
+
+
+def test_manifest_cli_parses_smoke_controls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["manifest", "--smoke", "--smoke-time-ids", "8",
+                                       "--smoke-tree-rounds", "3", "--smoke-row-cap", "20",
+                                       "--force"])
+    args = manifest_module.parse_args()
+    assert args.smoke is True
+    assert args.smoke_time_ids == 8
+    assert args.smoke_tree_rounds == 3
+    assert args.smoke_row_cap == 20
+    assert args.force is True
+
+
+def test_manifest_bundle_serializes_protocol_and_refuses_overwrite(tmp_path) -> None:
+    task = {"selected_count": 2, "path_hyperedges": []}
+    manifest = {"protocol": {
+                    "tree_rounds": 80,
+                    "training_window": {"time_start": 0, "time_end": 1,
+                                        "effective_time_ids": 2, "rows": 4},
+                    "tree_evidence": {"inner_splits": 3, "num_boost_round": 80,
+                                      "max_depth": 4, "num_leaves": 15,
+                                      "seeds": [2026], "row_cap": 10, "n_shadows": 2}},
+                "ridge": task, "xs": task, "market": task,
+                "history": {"status": "pending_task_2b"}}
+    paths = manifest_module.write_manifest_bundle(manifest, tmp_path, "unit")
+    assert paths["json"].exists() and paths["markdown"].exists()
+    assert '"tree_rounds": 80' in paths["json"].read_text(encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        manifest_module.write_manifest_bundle(manifest, tmp_path, "unit")
+    manifest_module.write_manifest_bundle(manifest, tmp_path, "unit", force=True)

@@ -156,11 +156,9 @@ def _original_paths(
     )
     original_paths: set[tuple[int, ...]] = set()
     for path in paths:
-        original = tuple(
-            dict.fromkeys(
-                feature for feature in path if 0 <= feature < n_features
-            )
-        )
+        if any(feature < 0 or feature >= n_features for feature in path):
+            continue
+        original = tuple(dict.fromkeys(path))
         if 3 <= len(original) <= 6:
             original_paths.add(original)
     return original_paths
@@ -208,15 +206,17 @@ def validation_tree_evidence(
             ]
         train_features = x[train_rows]
         valid_features = x[valid_rows]
-        # Build shadows before splitting so a one-row validation block remains valid.
-        shadow_source = np.vstack([train_features, valid_features])
-        shadow_source = make_shadow_columns(shadow_source, n_shadows)
-        split_at = len(train_features)
+        train_shadows = make_shadow_columns(train_features, n_shadows)
+        if len(valid_features) >= 2:
+            valid_shadows = make_shadow_columns(valid_features, n_shadows)
+        else:
+            # A one-row validation block cannot be permuted without leakage.
+            valid_shadows = np.zeros((len(valid_features), n_shadows), dtype=np.float64)
         train_design = np.column_stack(
-            [train_features, shadow_source[:split_at]]
+            [train_features, train_shadows]
         )
         valid_design = np.column_stack(
-            [valid_features, shadow_source[split_at:]]
+            [valid_features, valid_shadows]
         )
         n_total_features = train_design.shape[1]
         seed_evidence: list[np.ndarray] = []
@@ -476,8 +476,8 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
     selected_time_ids = time_ids[mask]
     views = selection_task_views(features, target, weight, selected_time_ids)
 
-    tree_rounds = args.smoke_tree_rounds or TREE_ROUNDS
-    tree_row_cap = args.smoke_row_cap or TREE_ROW_CAP
+    tree_rounds = args.smoke_tree_rounds or args.tree_rounds
+    tree_row_cap = args.smoke_row_cap or args.tree_row_cap
     selections = {
         task_name: _select_task(
             task,
@@ -577,11 +577,17 @@ def write_manifest_bundle(
     manifest: Mapping[str, Any],
     output_dir: Path,
     label: str,
+    *,
+    force: bool = False,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{label}_prehistory"
     json_path = output_dir / f"{stem}.json"
     markdown_path = output_dir / f"{stem}.md"
+    if not force and (json_path.exists() or markdown_path.exists()):
+        raise FileExistsError(
+            f"manifest exists: {json_path} / {markdown_path}; pass --force"
+        )
     safe_manifest = _json_safe(manifest)
     json_path.write_text(
         json.dumps(
@@ -622,3 +628,25 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-threads", type=int, default=16)
     parser.add_argument("--smoke-time-ids", type=int, default=None)
+    parser.add_argument("--tree-rounds", type=int, default=TREE_ROUNDS)
+    parser.add_argument("--tree-row-cap", type=int, default=TREE_ROW_CAP)
+    parser.add_argument("--history-row-cap", type=int, default=TREE_ROW_CAP)
+    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--smoke-tree-rounds", type=int, default=None)
+    parser.add_argument("--smoke-row-cap", type=int, default=None)
+    parser.add_argument("--force", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    manifest = run_manifest(args)
+    paths = write_manifest_bundle(
+        manifest, Path(args.output_dir), args.label, force=args.force
+    )
+    for path in paths.values():
+        print(path)
+
+
+if __name__ == "__main__":
+    main()
