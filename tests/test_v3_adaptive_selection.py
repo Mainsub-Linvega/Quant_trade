@@ -10,6 +10,10 @@ from experiments.v3_causal_history_selection import (
     causal_history_rows_from_batches,
     select_history_bases,
 )
+from experiments.v3_production_oof import (
+    build_task_lgbm_designs,
+    resolve_fold_feature_sets,
+)
 from experiments.v3_adaptive_selection import (
     aggregate_path_support,
     circular_shift_shadows,
@@ -724,6 +728,59 @@ def test_assemble_manifest_accepts_causal_history_selection() -> None:
     assert manifest["history"]["selected_indices"] == [1, 2]
     assert manifest["history"]["selected_names"] == ["feature_001", "feature_002"]
     assert manifest["history"]["model_column_count"] == 8
+
+
+def test_resolve_fold_feature_sets_supports_baseline_and_adaptive_modes() -> None:
+    baseline = {
+        "ridge": np.array([0, 1]),
+        "xs": np.array([1, 2]),
+        "market": np.array([1, 2]),
+        "history": np.array([2]),
+    }
+    manifest = {
+        "ridge": {"selected_indices": [0, 3]},
+        "xs": {"selected_indices": [1, 2, 4]},
+        "market": {"selected_indices": [0, 4]},
+        "history": {"selected_indices": [2, 4]},
+    }
+
+    baseline_resolved = resolve_fold_feature_sets(
+        "baseline", baseline=baseline, adaptive_manifest=None, n_features=5
+    )
+    adaptive = resolve_fold_feature_sets(
+        "adaptive", baseline=baseline, adaptive_manifest=manifest, n_features=5
+    )
+
+    np.testing.assert_array_equal(baseline_resolved["market"], [1, 2])
+    np.testing.assert_array_equal(adaptive["ridge"], [0, 3])
+    np.testing.assert_array_equal(adaptive["xs"], [1, 2, 4])
+    np.testing.assert_array_equal(adaptive["market"], [0, 4])
+    np.testing.assert_array_equal(adaptive["history"], [2, 4])
+    np.testing.assert_array_equal(adaptive["history_positions"], [1, 2])
+
+
+def test_task_lgbm_designs_keep_xs_and_market_feature_spaces_separate() -> None:
+    transformed = np.arange(30, dtype=np.float32).reshape(6, 5)
+    time_ids = np.repeat(np.arange(3), 2)
+    asset_ids = np.tile(np.arange(2), 3)
+    history_blocks = [
+        np.full((6, 1), value, dtype=np.float32) for value in range(4)
+    ]
+
+    designs = build_task_lgbm_designs(
+        transformed,
+        time_ids,
+        asset_ids,
+        xs_indices=np.array([1, 2]),
+        market_indices=np.array([0, 3, 4]),
+        history_blocks=history_blocks,
+    )
+
+    assert designs["xs"].shape == (6, 7)
+    assert designs["market"].shape == (6, 11)
+    np.testing.assert_array_equal(designs["xs"][:, -1], asset_ids)
+    np.testing.assert_array_equal(designs["market"][:, -1], asset_ids)
+    assert not np.array_equal(designs["xs"][:, :2], designs["market"][:, :2])
 
 
 def test_selection_task_views_use_unweighted_market_means() -> None:
