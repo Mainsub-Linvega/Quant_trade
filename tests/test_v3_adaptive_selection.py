@@ -583,10 +583,31 @@ def test_manifest_cli_parses_smoke_controls(monkeypatch: pytest.MonkeyPatch) -> 
                                        "--force"])
     args = manifest_module.parse_args()
     assert args.smoke is True
+
     assert args.smoke_time_ids == 8
     assert args.smoke_tree_rounds == 3
     assert args.smoke_row_cap == 20
     assert args.force is True
+
+def test_tree_budget_is_frozen_outside_smoke() -> None:
+    normal = type("Args", (), {"smoke": False, "smoke_tree_rounds": None,
+                               "smoke_row_cap": None})()
+    assert manifest_module.resolve_tree_budget(normal) == (
+        manifest_module.TREE_ROUNDS, manifest_module.TREE_ROW_CAP
+    )
+    invalid = type("Args", (), {"smoke": False, "smoke_tree_rounds": 3,
+                                "smoke_row_cap": None})()
+    with pytest.raises(ValueError, match="require --smoke"):
+        manifest_module.resolve_tree_budget(invalid)
+
+
+def test_tree_budget_uses_smoke_defaults_and_overrides() -> None:
+    default = type("Args", (), {"smoke": True, "smoke_tree_rounds": None,
+                                "smoke_row_cap": None})()
+    assert manifest_module.resolve_tree_budget(default) == (5, 10_000)
+    custom = type("Args", (), {"smoke": True, "smoke_tree_rounds": 3,
+                               "smoke_row_cap": 20})()
+    assert manifest_module.resolve_tree_budget(custom) == (3, 20)
 
 
 def test_manifest_bundle_serializes_protocol_and_refuses_overwrite(tmp_path) -> None:

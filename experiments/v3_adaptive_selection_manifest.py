@@ -458,6 +458,20 @@ def _latest_window_mask(
     return time_ids >= selected_ids[0], selected_ids
 
 
+def resolve_tree_budget(args: argparse.Namespace) -> tuple[int, int]:
+    """Keep production evidence frozen; permit smaller budgets only in smoke mode."""
+    if not args.smoke:
+        if args.smoke_tree_rounds is not None or args.smoke_row_cap is not None:
+            raise ValueError("smoke overrides require --smoke")
+        return TREE_ROUNDS, TREE_ROW_CAP
+    rounds = args.smoke_tree_rounds or min(5, TREE_ROUNDS)
+    row_cap = args.smoke_row_cap or min(10_000, TREE_ROW_CAP)
+    if rounds <= 0 or row_cap < 2:
+        raise ValueError("smoke tree budget must be positive")
+    return rounds, row_cap
+
+
+
 def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
     data = load_rows(Path(args.data_root), args.sample_modulo, args.sampling)
     time_ids = np.asarray(data["time_id"], dtype=np.int64)
@@ -476,8 +490,7 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
     selected_time_ids = time_ids[mask]
     views = selection_task_views(features, target, weight, selected_time_ids)
 
-    tree_rounds = args.smoke_tree_rounds or args.tree_rounds
-    tree_row_cap = args.smoke_row_cap or args.tree_row_cap
+    tree_rounds, tree_row_cap = resolve_tree_budget(args)
     selections = {
         task_name: _select_task(
             task,
@@ -628,8 +641,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-threads", type=int, default=16)
     parser.add_argument("--smoke-time-ids", type=int, default=None)
-    parser.add_argument("--tree-rounds", type=int, default=TREE_ROUNDS)
-    parser.add_argument("--tree-row-cap", type=int, default=TREE_ROW_CAP)
     parser.add_argument("--history-row-cap", type=int, default=TREE_ROW_CAP)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--smoke-tree-rounds", type=int, default=None)
