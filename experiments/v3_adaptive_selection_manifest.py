@@ -464,10 +464,12 @@ def resolve_tree_budget(args: argparse.Namespace) -> tuple[int, int]:
         if args.smoke_tree_rounds is not None or args.smoke_row_cap is not None:
             raise ValueError("smoke overrides require --smoke")
         return TREE_ROUNDS, TREE_ROW_CAP
-    rounds = args.smoke_tree_rounds or min(5, TREE_ROUNDS)
-    row_cap = args.smoke_row_cap or min(10_000, TREE_ROW_CAP)
-    if rounds <= 0 or row_cap < 2:
-        raise ValueError("smoke tree budget must be positive")
+    rounds = min(5, TREE_ROUNDS) if args.smoke_tree_rounds is None else args.smoke_tree_rounds
+    row_cap = min(10_000, TREE_ROW_CAP) if args.smoke_row_cap is None else args.smoke_row_cap
+    if not 1 <= rounds <= TREE_ROUNDS:
+        raise ValueError("smoke tree rounds must be within the production budget")
+    if not 2 <= row_cap <= TREE_ROW_CAP:
+        raise ValueError("smoke row cap must be within the production budget")
     return rounds, row_cap
 
 
@@ -480,6 +482,8 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
 
     train_window = args.train_window
     if args.smoke_time_ids is not None:
+        if not args.smoke:
+            raise ValueError("smoke_time_ids requires --smoke")
         if args.smoke_time_ids <= 0:
             raise ValueError("smoke_time_ids must be positive")
         train_window = min(train_window, args.smoke_time_ids)

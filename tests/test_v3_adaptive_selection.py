@@ -608,6 +608,19 @@ def test_tree_budget_uses_smoke_defaults_and_overrides() -> None:
     custom = type("Args", (), {"smoke": True, "smoke_tree_rounds": 3,
                                "smoke_row_cap": 20})()
     assert manifest_module.resolve_tree_budget(custom) == (3, 20)
+    zero = type("Args", (), {"smoke": True, "smoke_tree_rounds": 0,
+                             "smoke_row_cap": 20})()
+    with pytest.raises(ValueError, match="rounds"):
+        manifest_module.resolve_tree_budget(zero)
+    too_large = type("Args", (), {"smoke": True,
+                                  "smoke_tree_rounds": manifest_module.TREE_ROUNDS + 1,
+                                  "smoke_row_cap": manifest_module.TREE_ROW_CAP + 1})()
+    with pytest.raises(ValueError, match="rounds"):
+        manifest_module.resolve_tree_budget(too_large)
+
+
+def test_smoke_time_ids_requires_smoke_flag() -> None:
+    assert "smoke_time_ids requires --smoke" in manifest_module.run_manifest.__code__.co_consts
 
 
 def test_manifest_bundle_serializes_protocol_and_refuses_overwrite(tmp_path) -> None:
