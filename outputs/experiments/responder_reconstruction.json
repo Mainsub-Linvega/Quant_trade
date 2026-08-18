@@ -1,0 +1,207 @@
+{
+  "experiment": "responder_reconstruction",
+  "question": "错位 responder 能重建出多少 target？（补测 NOTES 2026-08-18 的重建表）",
+  "why": "ROADMAP:165 / NOTES:270 用重建 R² 关闭 horizon 分解方向，但该结果全仓库只在 NOTES.md:258,265 出现，无脚本无 JSON ⟹ 关闭理由建立在无法复现的测量上",
+  "method": "全量 train 逐 asset 按真实 time_id 步长多 shift 同时配对；加权 R² = vᵀG⁻¹v/D，与 src/metric 同分母，无截距、不中心化；样本内 oracle 上界",
+  "designs": {
+    "responder_00@+1..+5": {
+      "n_regressors": 5,
+      "shifts": [
+        [
+          "responder_00",
+          1
+        ],
+        [
+          "responder_00",
+          2
+        ],
+        [
+          "responder_00",
+          3
+        ],
+        [
+          "responder_00",
+          4
+        ],
+        [
+          "responder_00",
+          5
+        ]
+      ],
+      "r2_centered_own_rows": 0.2009621526962555,
+      "r2_centered_common_rows": 0.20096100153333674,
+      "r2_uncentered_own_rows": 0.012451252315691426,
+      "r2_uncentered_common_rows": 0.012451686001732125,
+      "rows_own": 13220195,
+      "rows_common": 13218190,
+      "notes_reference": 0.207,
+      "abs_diff_centered_own": 0.006037847303744487,
+      "reproduced": true
+    },
+    "responder_02@0..+3": {
+      "n_regressors": 4,
+      "shifts": [
+        [
+          "responder_02",
+          0
+        ],
+        [
+          "responder_02",
+          1
+        ],
+        [
+          "responder_02",
+          2
+        ],
+        [
+          "responder_02",
+          3
+        ]
+      ],
+      "r2_centered_own_rows": 0.8245286006092833,
+      "r2_centered_common_rows": 0.8245415257265676,
+      "r2_uncentered_own_rows": 0.07811458473452756,
+      "r2_uncentered_common_rows": 0.07809988952471414,
+      "rows_own": 13226105,
+      "rows_common": 13218190,
+      "notes_reference": 0.818,
+      "abs_diff_centered_own": 0.006528600609283397,
+      "reproduced": true
+    },
+    "responder_03@-1..+1": {
+      "n_regressors": 3,
+      "shifts": [
+        [
+          "responder_03",
+          -1
+        ],
+        [
+          "responder_03",
+          0
+        ],
+        [
+          "responder_03",
+          1
+        ]
+      ],
+      "r2_centered_own_rows": 0.8391508288033991,
+      "r2_centered_common_rows": 0.8391535337091209,
+      "r2_uncentered_own_rows": 0.15735294233694175,
+      "r2_uncentered_common_rows": 0.15733657974873086,
+      "rows_own": 13226636,
+      "rows_common": 13218190,
+      "notes_reference": 0.835,
+      "abs_diff_centered_own": 0.00415082880339912,
+      "reproduced": true
+    },
+    "responder_04@-4..-2": {
+      "n_regressors": 3,
+      "shifts": [
+        [
+          "responder_04",
+          -4
+        ],
+        [
+          "responder_04",
+          -3
+        ],
+        [
+          "responder_04",
+          -2
+        ]
+      ],
+      "r2_centered_own_rows": 0.7348829982328696,
+      "r2_centered_common_rows": 0.7348820745412521,
+      "r2_uncentered_own_rows": 0.223888016028006,
+      "r2_uncentered_common_rows": 0.22387413819871782,
+      "rows_own": 13224799,
+      "rows_common": 13218190,
+      "notes_reference": 0.732,
+      "abs_diff_centered_own": 0.002882998232869638,
+      "reproduced": true
+    },
+    "all": {
+      "n_regressors": 15,
+      "shifts": [
+        [
+          "responder_00",
+          1
+        ],
+        [
+          "responder_00",
+          2
+        ],
+        [
+          "responder_00",
+          3
+        ],
+        [
+          "responder_00",
+          4
+        ],
+        [
+          "responder_00",
+          5
+        ],
+        [
+          "responder_02",
+          0
+        ],
+        [
+          "responder_02",
+          1
+        ],
+        [
+          "responder_02",
+          2
+        ],
+        [
+          "responder_02",
+          3
+        ],
+        [
+          "responder_03",
+          -1
+        ],
+        [
+          "responder_03",
+          0
+        ],
+        [
+          "responder_03",
+          1
+        ],
+        [
+          "responder_04",
+          -4
+        ],
+        [
+          "responder_04",
+          -3
+        ],
+        [
+          "responder_04",
+          -2
+        ]
+      ],
+      "r2_centered_own_rows": 0.8873166270106319,
+      "r2_centered_common_rows": 0.8873166270106319,
+      "r2_uncentered_own_rows": 0.8460890168860167,
+      "r2_uncentered_common_rows": 0.8460890168860167,
+      "rows_own": 13218190,
+      "rows_common": 13218190,
+      "notes_reference": 0.883,
+      "abs_diff_centered_own": 0.004316627010631846,
+      "reproduced": true
+    }
+  },
+  "tolerance": 0.02,
+  "verdict": {
+    "all_reproduced": true,
+    "pure_u_hypothesis_r2_centered": 0.2009621526962555,
+    "pure_u_hypothesis_r2_uncentered": 0.012451252315691426,
+    "decision": "NOTES_CONFIRMED",
+    "reading": "若 responder_00(H=1) 就是 target 所聚合的单步增量 u，则 target=(1/5)Σu_{t+h} 意味着 5 个错位应给出 R²→1。实测远低于 1 ⟹ responder_00 不是那个 u，horizon 分解缺前提。"
+  },
+  "elapsed_seconds": 19.253366583026946
+}
