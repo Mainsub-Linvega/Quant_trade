@@ -19,7 +19,11 @@
 |---|---|---|
 | 生产目录 | `strategies/v3_hybrid/model/` | 当前文件系统 |
 | 来源候选 | `outputs/candidates/v3_hybrid_mkt_shrunk/` | promotion manifest / Git 记录 |
-| 公榜分数 | **0.0039977510**（2026-08-13） | `experiments/ledger.csv` |
+| 公榜分数（**生产目录本身**） | **0.0039977510**（2026-08-13） | `experiments/ledger.csv` |
+| 公榜最好成绩 | **0.0041150085**（2026-08-17，slow/fast 纯 CSV 变换，**+2.93%**） | `experiments/ledger.csv` |
+| ⚠️ 二者的区别 | 最好成绩是对生产 CSV 做的**后处理**，**不在任何模型产物里**。私榜要用它必须在 `main.py` 实现逐 asset 的自身预测滚动均值（跨 `predict` 状态 ⟹ 模型身份变更 + promotion 全套门禁）。**当前若直接打包私榜，拿到的是 0.0039977510 那一档。** | 本表 |
+| 公榜第一 | **0.0060**（2026-08-17，**用户报告**，非本地测量） | 用户 |
+| 与第一的差距 | **+50.1%**（IC +22.5%）；旧记录 0.00520002 标 `SUPERSEDED` | 本表两行相除 |
 | 截面块 | weighted LGBM，480 轮 × 3 种子，history40 | `hybrid_meta.json` |
 | 市场块 | unweighted row-level LGBM，λ=0.5，480 轮 × 3 种子 | `hybrid_meta.json` |
 | 截面混合 | `blend_weight=1.0`，即 LGBM 截面分量全替换 | `hybrid_meta.json` |
@@ -27,6 +31,10 @@
 | 训练采样 | `sample_modulo=5`，`phase_balanced` | `hybrid_meta.json` |
 | promotion 校验 | 双后端最大差 `2.498e-16`，结构敏感性门禁通过 | `outputs/promotions/v3_hybrid_s1.16_w1_3seed/promotion_manifest.json` |
 | train/inference 一致性 | 最近候选记录约 `1.913e-08` | `experiments/ledger.csv` / NOTES 历史 |
+
+⚠️ `experiments/ledger.csv` 里 08-11、08-13 两行注释中的 `0.00520002` 是**当时**的榜首真值，
+按 CLAUDE.md §7 不回写历史；以本表为当前值。0.0050 / 0.0055 现在分别是榜首的 83% / 92%，
+不再等价于「追平第一」。
 
 当前生产文件 hash 与 promotion staging 一致；详见
 [`research_history/delivery-and-incidents.md`](research_history/delivery-and-incidents.md)。
@@ -49,6 +57,24 @@
 7. **V4 中只有压缩 market regime 值得在扩展数据上原规格复验一次。** 多尺度 history 与 target-only
    MLP 均已否决。
 8. **Scale 1.16 已足够接近峰值。** 当前没有为第二个 scale 点消耗额度的经济性。
+9. **占分比已翻转，旧的 60.1%/39.9% 作废。** 当前 OOF 上 market : cross = **41.2% : 58.8%**
+   （bootstrap CI [27.5%, 53.1%]）。08-10 那组 `60.1%/39.9%` 标记
+   `SUPERSEDED`：它是**公榜**三点解方程的产物，且模型还在 history40 与行级市场模型**之前**
+   （原文见 [`research_history/source_snapshots/NOTES.pre-doc-refactor.md`](research_history/source_snapshots/NOTES.pre-doc-refactor.md)
+   第 753 行附近，保留不删）。⚠️ 新旧两个数分属 OOF 与公榜两把尺子，不能宣称推翻了公榜测量。
+   证据：`outputs/experiments/v3_block_ceiling_3s480.md`。
+10. **两块的边际价值接近平手。** cross 块的收割率是 market 块的 2.62×，但 market 块每提升
+    一点 R² 值 2.460× 的分（`w_m/w_e`）。乘积接近 1 ⟹ OOF 没有给出明确的精力偏向。
+11. ~~**纯①类后处理旋钮已扫干净。**~~ `SUPERSEDED`（同日被自己的测量证伪）。时间平滑、
+    分 phase scale/混合比、解开 `market_lambda` 四项确实都被否，但**同一天在同一条线索上
+    找到了更大的一个**：见下一条。教训是「这一轴已耗尽」不能由几次否决推出来。
+12. **`slow/fast` 分离是当前唯一活着的①类杠杆。** 逐 asset 因果 trailing mean 把预测拆成
+    慢/快两块后，两块需要差 2.8 倍的 scale（slow 0.2828 / fast 0.7881，对照单一 scale 0.7296）。
+    严格 OOF 扩展窗口 **+5.77%**、3/4 折、6/6 预注册门槛全过，第二份 cache 同 K 复现 +5.87%；
+    全分辨率口径核对（fold 2/3/4 各 20,000 连续真实 time_id、系数冻结）合并后 **+5.93%**，
+    与 OOF 吻合 ⟹ 采样格口径没有骗人。**未建候选、未改生产**，是否推进由用户决定。
+    机制是 `2ΔA > ΔB`（ΔA +8.07% / ΔB +11.21%），不是纯减方差。
+    证据：`v3_slow_variance_3s480.md`、`v3_fullres_slow_probe_summary.md`。
 
 ## 4. 行动面板
 
@@ -88,19 +114,49 @@
   4. 原规格复验 V4-R regime；不重开 T1/T2/T3 和 MLP 搜索。
 - **验收条件**：训练/验证严格时序；不读结果扩格；报告包含配对增量、同号折数、A/B 和推理成本。
 
-### P3 — 市场森林独立轮数
+### P3 — 市场森林独立轮数 —— `CLOSED_FAIL`（2026-08-17 同步；实验其实早已跑完）
 
-- **状态**：`BACKLOG_NOT_SCHEDULED`
-- **目标**：验证“市场模型需要更少容量”是否也意味着更少 boosting 轮数。
-- **候选设计**：只截短市场森林到 160/240/320，截面森林保持 480；树嵌套使其无需重训。
-- **进入条件**：P0 交付风险已闭环，且不会挤占 8/23 审计和最终打包。
-- **门槛**：必须增加独立 `market_num_iteration` 元数据与一致性测试；没有公榜或回补标签裁决时，
-  不替换当前生产模型。
+- **状态**：`CLOSED_FAIL`。本条此前一直挂着 `BACKLOG_NOT_SCHEDULED`，但
+  `outputs/experiments/v3_market_round_scan_phasebal_prodwindow.md` 早就把它跑完了：
+  160 / 240 / 320 / 400 / 480 **全部 FAIL**，报告里写着 `Selected: None`。
+  ROADMAP 当时没同步 —— 这类「实验做了但面板没更新」本身就是要防的坑。
+- **结果**：480 轮是这一族里最好的（相对 160 轮 +2.02%），但只有 3/5 折、去最好折 +0.81%，
+  不过门槛。⟹ **截短市场森林没有收益，维持 480。**
+- **重新开放条件**：市场块结构本身改变（不是轮数），或回补数据后原规格复验。
+
+### P4 — recency / 训练窗阶梯 —— `CLOSED`（两侧都已结案）
+
+- **状态**：缩短方向 `CLOSED_FAIL`（2026-08-18）。60,000 档 −9.50%（1/5 折）、
+  40,000 档 −24.54%（0/5 折），远超检出下限 8.7% ⟹ 是**测得出来的负结果**。
+  机制是 ΔB 大幅抬升（+6.5%~+23.2%）而 ΔA 只轻微下降 —— 数据少 ⟹ 系数噪 ⟹ 方差涨。
+  `frozen` 臂确认结论对 `min_data_in_leaf` 混淆稳健。**维持 78,960。**
+- **不需要公榜裁决**：②类的量反风险只在**采纳**改动时才要公榜背书；这里的空动作
+  就是保持现状，拒绝改动不需要花名额。
+- **加长方向也已测完（2026-08-18）**：扩展窗五折（+25%~+100% 数据）折均 +1.08%、
+  **正折 2/5**、去最好折 −3.84%、配对 CI [−6.71e−05, +1.03e−04] 跨 0 ⟹ **测不出效应**。
+  ⟹ **两侧合读：78,960 已过收益递减点** —— 拿走数据明确掉分，加数据什么也换不来。
+  **P4 整条结案，训练窗轴关闭。**
+- **证据**：`v3_recency_ladder_3s480.md`。⚠️ `w60000_frozen` 臂被中止未产出，
+  但 40,000 档两臂一致、60,000 与 40,000 同向，缺它不影响结论。
 
 ## 5. 已结案项目
 
 | 日期 | 项目 | 结论 | 证据入口 |
 |---|---|---|---|
+| 8/17 | **slow/fast 分离** | OOF +5.77%（6/6 门槛、3/4 折）、复现 +5.87%、全分辨率合并 +5.93%；**未建候选**；可纯改 CSV 验证 | `v3_slow_variance_3s480.md` / `v3_fullres_slow_probe_summary.md` |
+| 8/17 | z-score（temporal 最后一项） | `REJECTED`：+0.70%、3/5 折、去最好折为负 ⟹ **temporal 族全族关闭** | `temporal_zscore_screen.md` |
+| 8/18 | **P4 训练窗（收官）** | `CLOSED`：减数据明确有害（−24.5%/0-of-5），加数据测不出（+1.08%/2-of-5、CI 跨 0）⟹ **数据量已饱和**，78,960 维持 | `v3_recency_expanding_ladder_1s160.md` |
+| 8/18 | per-asset 完整载荷 | `RESULT`→关闭：线性内异质性大（+95.8%、5/5 折、系数相关仅 +0.419），但 per-asset ridge 仍比生产 LGBM 截面块**低 50.5%** —— 树的 `asset_id` categorical 早已吃掉这块 | `asset_loading_diagnostic.md` |
+| 8/18 | responder 窗口图谱 | `RESULT`：测出窗口梯子 H=1/2/4/**5(target)**/7/10；但重建 R² 只 0.883、单步 u 不存在 ⟹ horizon 分解缺前提，不推进 | `responder_window_atlas.md` |
+| 8/18 | P4 训练窗缩短 | `REJECTED`：60k −9.50%（1/5）、40k −24.54%（0/5），机制是 ΔB 抬升而非 ΔA 丢失；维持 78,960。阶梯单调 ⟹ **扩展窗（+50% 数据）未测** | `v3_recency_ladder_3s480.md` |
+| 8/17 | **slow/fast 公榜裁决** | ⭐ **+2.93%（0.0041150085），新最好成绩**，08-13 以来第一次上涨，且未重训未改模型。⚠️ 迁移率 **0.51×**（本地 +5.77%），**项目首次本地高估** | ledger / `v3_slow_variance_3s480.md` |
+| 8/17 | asset adapter 公榜裁决 | `REJECTED`：Δ=−6.9e-06，按预注册 \|Δ\|<1e-5 判为**不可辨别** ⟹ asset scale 轴关闭，不再调 | ledger |
+| 8/17 | **market 同口径复测** | `REJECTED`：直接回归 `m_t` 在**每一个** α 上都输，最好 −22.55%、1/5 折 ⟹ market 侧六条路全关 | `market_direct_recheck_3s480.md` |
+| 8/17 | 市场森林独立轮数 | `CLOSED_FAIL`：160~480 全 FAIL、`Selected: None`（实验早已完成，本次只是同步面板） | `v3_market_round_scan_phasebal_prodwindow.md` |
+| 8/17 | 解开 `market_lambda` | `REJECTED`：OOS −1.62%、2/4 折、去最好折 −6.17%，λ=0.5 保持不动 | `v3_slow_variance_3s480.md` |
+| 8/17 | market/cross 分块天花板 | 占分翻转为 41.2%:58.8%；收割率之比 2.62× 与兑换率 2.46× 接近抵消 | `v3_block_ceiling_3s480.md` |
+| 8/17 | 时间平滑（lag 平滑器） | `REJECTED`：预测比信号平滑得多，最小可测 lag 的 OOS 增益为负 | `v3_temporal_smoothing_3s480.md` |
+| 8/17 | 分 phase scale / 混合比 | `REJECTED`：两臂 6 门槛均未过；`A_p` 离散度测不出超过抽样噪声 | `v3_phase_scale_3s480.md` |
 | 8/13 | 市场块容量 | shrunk 赢 +0.77%，方向真实但接近饱和 | `experiments/ledger.csv` |
 | 8/13 | 截面块容量 | shrunk −9.84%，保留 loose | `experiments/ledger.csv` |
 | 8/13 | 轮数 960 | −5.20%，480 内部极值 | `experiments/ledger.csv` |
@@ -123,3 +179,6 @@
 | 日期 | 更新 |
 |---|---|
 | 2026-08-13 | 文档体系重构；以已转正的 `mkt_shrunk` 和公榜 0.0039977510 重建当前状态。 |
+| 2026-08-17 | 三项纯 OOF 后处理诊断结案（分块天花板 / 时间平滑 / 分 phase A·B）；占分比 60.1%/39.9% 标 `SUPERSEDED`。生产目录与模型身份未改动。 |
+| 2026-08-17 | 顺着时间平滑的否定结论找到 `slow/fast` 分离（OOF +5.77%、全分辨率核对 +5.93%）；本节第 11 条被同日测量证伪并改写。`market_lambda` 结案。仍未建候选、未改生产。 |
+| 2026-08-17 | 公榜第一更新为 0.0060（用户报告）；market 侧同口径复测 `REJECTED`，六条路全关，我上一轮「下一个方向是 market」的判断标 `SUPERSEDED`；P3 同步为 `CLOSED_FAIL`，新增 P4 recency 预注册。 |
