@@ -81,6 +81,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sample-modulo", type=int, default=5)
     p.add_argument("--sampling", choices=["periodic", "phase_balanced"], default="phase_balanced")
     p.add_argument("--history-window", type=int, default=HISTORY_WINDOW)
+    # ⚠️ 选列宽度：三块各一个开关。此前是同一个模块常量 FEATURE_COUNT 驱动全部，
+    # 而 xs_selected **同时喂截面块和市场块** ⟹ 动一个数等于同时改两块 = 组合臂，
+    # 违反 CLAUDE.md §5.2「一次只回答一个问题」。默认值全部保持 200，行为逐位不变。
+    p.add_argument("--ridge-feature-count", type=int, default=FEATURE_COUNT,
+                   help="Ridge 市场块的选列宽度（生产 Ridge 已冻结，一般不动）")
+    p.add_argument("--xs-feature-count", type=int, default=FEATURE_COUNT,
+                   help="截面 LGBM 块的选列宽度；323 = 不筛选")
+    p.add_argument("--market-feature-count", type=int, default=FEATURE_COUNT,
+                   help="市场 LGBM 块（raw ‖ xs_dev 两段）的选列宽度；323 = 不筛选")
     p.add_argument("--num-iteration", type=int, default=160,
                    help="backward-compatible default for both forests")
     p.add_argument("--cross-num-iteration", type=int, default=None)
@@ -239,6 +248,7 @@ def main() -> None:
     fold_id = np.full(n, -1, dtype=np.int16)
     fold_rows: list[dict[str, Any]] = []
 
+    history_names_per_fold: list[list[str]] = []
     for index, (train_ids, valid_ids) in enumerate(folds):
         fold_started = time.perf_counter()
         full_train_ids = train_ids
@@ -282,8 +292,8 @@ def main() -> None:
         apply_robust_transform(transformed_valid, stats["lower"], stats["upper"],
                                stats["center"], stats["scale"])
 
-        # Ridge market: same 200-feature raw_dev basis and fixed production alpha.
-        ridge_selected = select_features(transformed_train, y_tr, w_tr, FEATURE_COUNT)
+        # Ridge market: same raw_dev basis and fixed production alpha.
+        ridge_selected = select_features(transformed_train, y_tr, w_tr, args.ridge_feature_count)
         ridge_train_design = ridge_designs(transformed_train, tid_tr, ridge_selected, None)
         ridge_valid_design = ridge_designs(transformed_valid, tid_va, ridge_selected, None)
         fold_alpha = RIDGE_ALPHA * len(train_ids) / REFERENCE_TRAIN_WINDOW
@@ -294,12 +304,34 @@ def main() -> None:
 
         # Cross-sectional target and selected LGBM raw features.
         e_tr = y_tr - group_mean(y_tr, tr_starts, tr_counts)
-        xs_selected = select_features(transformed_train, e_tr, np.ones_like(e_tr), FEATURE_COUNT)
-        xs_tr = cross_sectional_deviation(transformed_train[:, xs_selected].copy(), tid_tr)
-        xs_va = cross_sectional_deviation(transformed_valid[:, xs_selected].copy(), tid_va)
+        # 截面块与市场块各有独立的选列宽度。两者是同一判据下的 top-N ⟹ **嵌套**，
+        # 所以只算一次「较宽那份」的截面偏差再切片：截面去均值是逐列独立的，
+        # 切片与先切后算逐位等价，但省掉一整个设计矩阵的分配（OOM 事故的教训）。
+        wide_count = max(args.xs_feature_count, args.market_feature_count)
+        unit = np.ones_like(e_tr)
+        wide_selected = select_features(transformed_train, e_tr, unit, wide_count)
+        xs_selected = (wide_selected if args.xs_feature_count == wide_count
+                       else select_features(transformed_train, e_tr, unit, args.xs_feature_count))
+        market_selected = (wide_selected if args.market_feature_count == wide_count
+                           else select_features(transformed_train, e_tr, unit,
+                                                args.market_feature_count))
+        if not (np.isin(xs_selected, wide_selected).all()
+                and np.isin(market_selected, wide_selected).all()):
+            raise AssertionError("选列不嵌套 ⟹ 切片路径失效")
+        wide_dev_tr = cross_sectional_deviation(transformed_train[:, wide_selected].copy(), tid_tr)
+        wide_dev_va = cross_sectional_deviation(transformed_valid[:, wide_selected].copy(), tid_va)
+        xs_in_wide = np.searchsorted(wide_selected, xs_selected)
+        market_in_wide = np.searchsorted(wide_selected, market_selected)
+        xs_tr = wide_dev_tr if args.xs_feature_count == wide_count else wide_dev_tr[:, xs_in_wide]
+        xs_va = wide_dev_va if args.xs_feature_count == wide_count else wide_dev_va[:, xs_in_wide]
+        market_dev_tr = (wide_dev_tr if args.market_feature_count == wide_count
+                         else wide_dev_tr[:, market_in_wide])
+        market_dev_va = (wide_dev_va if args.market_feature_count == wide_count
+                         else wide_dev_va[:, market_in_wide])
         history_positions = select_features(xs_tr, e_tr, np.ones_like(e_tr), HISTORY_COUNT)
         history_positions = np.sort(history_positions.astype(np.int64))
         history_names = [f"feature_{int(i):03d}" for i in xs_selected[history_positions]]
+        history_names_per_fold.append(list(history_names))
         history_stats = tuple(stats[key][xs_selected[history_positions]]
                               for key in ("lower", "upper", "center", "scale"))
         print(f"fold {index}: train {len(y_tr):,}, valid {len(y_va):,}, "
@@ -320,15 +352,18 @@ def main() -> None:
         e_lgbm = e_pred - group_mean(e_pred, va_starts, va_counts)
 
         d_tr_market = np.ascontiguousarray(np.column_stack(
-            [transformed_train[:, xs_selected], xs_tr, *history_tr, aid_tr.astype(np.float32)]))
+            [transformed_train[:, market_selected], market_dev_tr, *history_tr,
+             aid_tr.astype(np.float32)]))
         d_va_market = np.ascontiguousarray(np.column_stack(
-            [transformed_valid[:, xs_selected], xs_va, *history_va, aid_va.astype(np.float32)]))
+            [transformed_valid[:, market_selected], market_dev_va, *history_va,
+             aid_va.astype(np.float32)]))
         # ⚠️ 内存：market 设计矩阵是全流程最大的一次分配（fold 越大越夸张）。
         # 到这里 transformed_*/xs_*/history_* 都已经并进设计矩阵、不再被引用，
         # 但原本要到折末才 del —— 于是它们在**峰值时刻**白占约 6 GB。
         # 训练前先放掉，峰值直接降一大截（swap=0，没有缓冲，必须省）。
         del (train_features, valid_features, transformed_train, transformed_valid,
-             xs_tr, xs_va, history_tr, history_va)
+             xs_tr, xs_va, market_dev_tr, market_dev_va, wide_dev_tr, wide_dev_va,
+             history_tr, history_va)
         gc.collect()
         market_preds = fit_predict_lgbm_checkpoints(
             d_tr_market, y_tr, None, d_va_market, args, "market", MARKET_SPEC,
@@ -412,7 +447,12 @@ def main() -> None:
                    "market_checkpoints": checkpoints},
         "architecture": {
             "ridge_market": True, "xs_lgbm_weighted": True, "market_lgbm_weighted": False,
-            "feature_count": FEATURE_COUNT, "history_count": HISTORY_COUNT,
+            "ridge_feature_count": args.ridge_feature_count,
+            "xs_feature_count": args.xs_feature_count,
+            "market_feature_count": args.market_feature_count,
+            "history_count": HISTORY_COUNT,
+            # 逐折的 history 原始列名 —— 用来断言「换宽度只动了 xs/market 块，history 没变」
+            "history_names_per_fold": history_names_per_fold,
             "history_window": HISTORY_WINDOW, "blend_weight": 1.0,
             "market_lambda": MARKET_LAMBDA, "xs_spec": XS_SPEC,
             "market_spec": MARKET_SPEC, "market_min_data_scale": MARKET_MIN_DATA_SCALE,

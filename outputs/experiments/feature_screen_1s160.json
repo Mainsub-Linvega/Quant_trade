@@ -1,0 +1,145 @@
+{
+  "experiment": "feature_screen_compare",
+  "question": "把 323→200 的线性单变量筛子拆掉，树会不会变好？",
+  "why_never_tested": "ab_featsweep 测过 feat323 但那是线性 Ridge 时代（+4.4%、7/10、未晋级）；joint_recalibration_plan 里 Ridge 有 200/323 两档、LGBM 那 9 格只变容量和轮数，没有 feature_count 档",
+  "cut_is_arbitrary": "partition_008 实测 |corr(feature,e)| 200th=0.00299 / 201st=0.00295，落差 1.33%，无断崖",
+  "baseline_note": "基准由**当前代码**现跑。outputs/cache 里的 v3_production_oof_phasebal_prodwindow_exact.npz 时间戳 08-14 11:12，早于该脚本首次提交 08-15 11:18 ⟹ 出自已不存在的代码版本，与当前输出差 max|Δ(market_ridge)|=3.37e-05，不可用作配对基准",
+  "single_variable_guarantee": "history 列名与基准逐折相同（已断言）—— top-200 的 top-40 == 全 323 的 top-40，所以换宽度不动 history 块",
+  "gates": {
+    "min_relative_gain": 0.03,
+    "min_positive_folds": 4,
+    "note": "1s160/5 折的检出下限历史实测为基准 peak 的 6.1%，故门槛取 3% 并另加第 7 道「超过本次实测检出下限」"
+  },
+  "baseline": {
+    "cache": "refactor_parity_check",
+    "per_fold_peak": {
+      "0": 0.0008651368394245206,
+      "1": 0.001633801766669849,
+      "2": 0.001433890454152074,
+      "3": 0.0014930218102595309,
+      "4": 0.0016161746504095755
+    },
+    "mean_peak": 0.0014084051041831102
+  },
+  "arms": {
+    "xs323": {
+      "arm_cache": "arm_xs323",
+      "history_identical_to_baseline": true,
+      "per_fold_delta": [
+        -2.533441654919066e-05,
+        -5.660186680170776e-05,
+        -1.76745581061356e-05,
+        1.0943082982650286e-05,
+        1.802437070416783e-05
+      ],
+      "mean_delta": -1.412867755404318e-05,
+      "relative": -0.01003168584953259,
+      "mean_delta_drop_best": -2.2166939618595933e-05,
+      "relative_drop_best": -0.015739036696727247,
+      "positive_folds": 2,
+      "n_folds": 5,
+      "sign_test_p": 1.0,
+      "mechanism": {
+        "relative_delta_A": -0.017476715554941392,
+        "relative_delta_B": -0.02300713329580484
+      },
+      "paired_bootstrap": {
+        "p2.5": -4.928170601197448e-05,
+        "p50": -1.5628237662638545e-05,
+        "p97.5": 1.864242076658702e-05
+      },
+      "detection_floor": 3.396206338928075e-05,
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_0.03": false,
+        "5_two_delta_A_exceeds_delta_B": false,
+        "6_paired_bootstrap_ci_lower_bound_positive": false,
+        "7_exceeds_detection_floor": false
+      },
+      "pass": false
+    },
+    "mkt323": {
+      "arm_cache": "arm_mkt323",
+      "history_identical_to_baseline": true,
+      "per_fold_delta": [
+        -2.0164520349231075e-05,
+        1.6130807746867273e-05,
+        -7.479869796254892e-06,
+        3.0665363365233334e-05,
+        5.7496851328159206e-05
+      ],
+      "mean_delta": 1.5329726458954768e-05,
+      "relative": 0.01088445818140241,
+      "mean_delta_drop_best": 4.78794524165366e-06,
+      "relative_drop_best": 0.0033995511855452404,
+      "positive_folds": 3,
+      "n_folds": 5,
+      "sign_test_p": 1.0,
+      "mechanism": {
+        "relative_delta_A": 0.0019565205521893396,
+        "relative_delta_B": -0.004108706470260659
+      },
+      "paired_bootstrap": {
+        "p2.5": -1.2115340592614272e-05,
+        "p50": 1.0033749260694507e-05,
+        "p97.5": 3.1853418483949955e-05
+      },
+      "detection_floor": 2.1984379538282115e-05,
+      "checks": {
+        "1_mean_delta_positive": true,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": true,
+        "4_relative_gain_at_least_0.03": false,
+        "5_two_delta_A_exceeds_delta_B": true,
+        "6_paired_bootstrap_ci_lower_bound_positive": false,
+        "7_exceeds_detection_floor": false
+      },
+      "pass": false
+    },
+    "both323": {
+      "arm_cache": "arm_both323",
+      "history_identical_to_baseline": true,
+      "per_fold_delta": [
+        -4.549188070232578e-05,
+        -4.065582851019026e-05,
+        -2.5204178690313656e-05,
+        4.257135330138547e-05,
+        7.609127950497637e-05
+      ],
+      "mean_delta": 1.46214898070643e-06,
+      "relative": 0.0010381593877810404,
+      "mean_delta_drop_best": -1.7195133650361056e-05,
+      "relative_drop_best": -0.012208940168769422,
+      "positive_folds": 2,
+      "n_folds": 5,
+      "sign_test_p": 1.0,
+      "mechanism": {
+        "relative_delta_A": -0.015520195002750332,
+        "relative_delta_B": -0.027005655747350418
+      },
+      "paired_bootstrap": {
+        "p2.5": -4.5408210028007325e-05,
+        "p50": -6.0998127838992906e-06,
+        "p97.5": 3.720258493281069e-05
+      },
+      "detection_floor": 4.1305397480409005e-05,
+      "checks": {
+        "1_mean_delta_positive": true,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_0.03": false,
+        "5_two_delta_A_exceeds_delta_B": false,
+        "6_paired_bootstrap_ci_lower_bound_positive": false,
+        "7_exceeds_detection_floor": false
+      },
+      "pass": false
+    }
+  },
+  "verdict": {
+    "passed": [],
+    "decision": "REJECT"
+  },
+  "elapsed_seconds": 0.9869191890466027
+}
