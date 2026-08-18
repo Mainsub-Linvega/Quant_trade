@@ -18,31 +18,38 @@
 | 项目 | 当前值 | 真值来源 |
 |---|---|---|
 | 生产目录 | `strategies/v3_hybrid/model/` | 当前文件系统 |
-| 来源候选 | `outputs/candidates/v3_hybrid_mkt_shrunk/` | promotion manifest / Git 记录 |
-| 公榜分数（**生产目录本身**） | **0.0039977510**（2026-08-13） | `experiments/ledger.csv` |
-| 公榜最好成绩 | **0.0041150085**（2026-08-17，slow/fast 纯 CSV 变换，**+2.93%**） | `experiments/ledger.csv` |
-| ⚠️ 二者的区别 | 最好成绩是对生产 CSV 做的**后处理**，**不在任何模型产物里**。私榜要用它必须在 `main.py` 实现逐 asset 的自身预测滚动均值（跨 `predict` 状态 ⟹ 模型身份变更 + promotion 全套门禁）。**当前若直接打包私榜，拿到的是 0.0039977510 那一档。** | 本表 |
+| 来源候选 | `outputs/candidates/v3_hybrid_slowfast/` | promotion manifest / Git 记录 |
+| 公榜分数（**生产目录本身**） | **0.0041150085**（2026-08-18 转正后） | `experiments/ledger.csv` |
+| slow/fast | **已转正**：window=2000 真实步，两个 scale 0.4496 / 1.2530 | `hybrid_meta.json` |
+| 转正前基线 | 0.0039977510（2026-08-13 `mkt_shrunk`），差 **+2.93%** | `experiments/ledger.csv` |
 | 公榜第一 | **0.0060**（2026-08-17，**用户报告**，非本地测量） | 用户 |
 | 与第一的差距 | **+50.1%**（IC +22.5%）；旧记录 0.00520002 标 `SUPERSEDED` | 本表两行相除 |
 | 截面块 | weighted LGBM，480 轮 × 3 种子，history40 | `hybrid_meta.json` |
 | 市场块 | unweighted row-level LGBM，λ=0.5，480 轮 × 3 种子 | `hybrid_meta.json` |
 | 截面混合 | `blend_weight=1.0`，即 LGBM 截面分量全替换 | `hybrid_meta.json` |
-| 后处理 | `prediction_scale=1.16`，clip=0.5 | `hybrid_meta.json` |
+| 后处理 | `prediction_scale=1.16`，clip=0.5；**slow/fast 分离**（逐 asset 自身预测的因果滚动均值，K=2000 真实 time_id 步）| `hybrid_meta.json` |
 | 训练采样 | `sample_modulo=5`，`phase_balanced` | `hybrid_meta.json` |
-| promotion 校验 | 双后端最大差 `2.498e-16`，结构敏感性门禁通过 | `outputs/promotions/v3_hybrid_s1.16_w1_3seed/promotion_manifest.json` |
-| train/inference 一致性 | 最近候选记录约 `1.913e-08` | `experiments/ledger.csv` / NOTES 历史 |
+| promotion 校验 | 双后端最大差 `2.082e-16`，结构敏感性门禁通过 | `outputs/promotions/v3_hybrid_slowfast/promotion_manifest.json` |
+| train/inference 一致性 | `8.111e-09`（两后端同值）。⚠️ `check_consistency.py` 已改为 **slow/fast-aware** —— 训练端没有该后处理的概念，不补上会永久报红 9.4e-02 | `scripts/check_consistency.py` |
 
 ⚠️ `experiments/ledger.csv` 里 08-11、08-13 两行注释中的 `0.00520002` 是**当时**的榜首真值，
-按 CLAUDE.md §7 不回写历史；以本表为当前值。0.0050 / 0.0055 现在分别是榜首的 83% / 92%，
-不再等价于「追平第一」。
+按 CLAUDE.md §7 不回写历史；以本表为当前值。
+
+**2026-08-18 转正记录**：候选 `v3_hybrid_slowfast` 与转正前生产的**唯一差别**是 meta 里 4 个
+`slow_fast_*` 键 —— 6 片森林 + 冻结岭回归 hash 逐字节相同、**未重训**。
+公榜两次独立确认：纯 CSV 后处理版 `0.0041150085`、走官方 runner 版 `0.0041150085`（逐位同分，
+预注册预测「差异 ≤2e-08」兑现）。备份在 `outputs/promotions/backups/model_before_20260818_104355`。
+⚠️ 迁移率 **0.51×**（本地 OOF +5.77% → 公榜 +2.93%），项目**首次本地高估**；私榜是另一时段，
+但该改动只是把单一 1.16 重新分配为 0.4496/1.2530、未引入新信号源，下行接近打平。
 
 当前生产文件 hash 与 promotion staging 一致；详见
 [`research_history/delivery-and-incidents.md`](research_history/delivery-and-incidents.md)。
 
 ### 性能风险
 
-- 最近同结构前身 `mkt_we` 的完整 runner 实测 `predict_total=6.23` 分钟；当前 `mkt_shrunk` 的精确
-  全量 wall-clock 尚未在 manifest 中单独记录，不能把 6.23 分钟冒充当前模型精确值。
+- **当前生产模型全量实测 `predict_total = 5.15 分钟`**（2026-08-18，官方 runner、3,217,458 行、
+  214,538 次调用、0 超时、max_step 0.726s、0 非有限值、0 行触 clip）。比前身 `mkt_we` 的 6.23 分钟更快 ——
+  slow/fast 的跨 `predict` 状态开销可忽略。
 - NumPy 双森林兜底按已有测量约 15 分钟，是私榜环境的主要剩余风险。
 - 2 种子旧候选只节省 5.45% 全量推理时间且掉分未知，不作为默认生产方案。
 
@@ -146,6 +153,7 @@
 | 8/17 | **slow/fast 分离** | OOF +5.77%（6/6 门槛、3/4 折）、复现 +5.87%、全分辨率合并 +5.93%；**未建候选**；可纯改 CSV 验证 | `v3_slow_variance_3s480.md` / `v3_fullres_slow_probe_summary.md` |
 | 8/17 | z-score（temporal 最后一项） | `REJECTED`：+0.70%、3/5 折、去最好折为负 ⟹ **temporal 族全族关闭** | `temporal_zscore_screen.md` |
 | 8/18 | **P4 训练窗（收官）** | `CLOSED`：减数据明确有害（−24.5%/0-of-5），加数据测不出（+1.08%/2-of-5、CI 跨 0）⟹ **数据量已饱和**，78,960 维持 | `v3_recency_expanding_ladder_1s160.md` |
+| 8/18 | **slow/fast 转正** | ⭐ 公榜两次独立确认 0.0041150085（CSV 后处理版 / 官方 runner 版逐位同分）；未重训、仅 4 个 meta 键；耗时 5.15 分钟反比前身更快 | ledger / `promotion_manifest.json` |
 | 8/18 | per-asset **叠加**（blend） | `REJECTED`：全部为负，per-asset 臂（−3.91%、0/4）比 `shared` 对照（−1.19%）**还差**；corr 0.57~0.63 非低相关 ⟹ 替换与叠加两种用法都关闭 | `asset_blend_check.md` |
 | 8/18 | per-asset 完整载荷 | `RESULT`→关闭：线性内异质性大（+95.8%、5/5 折、系数相关仅 +0.419），但 per-asset ridge 仍比生产 LGBM 截面块**低 50.5%** —— 树的 `asset_id` categorical 早已吃掉这块 | `asset_loading_diagnostic.md` |
 | 8/18 | responder 窗口图谱 | `RESULT`：测出窗口梯子 H=1/2/4/**5(target)**/7/10；但重建 R² 只 0.883、单步 u 不存在 ⟹ horizon 分解缺前提，不推进 | `responder_window_atlas.md` |
@@ -181,5 +189,6 @@
 |---|---|
 | 2026-08-13 | 文档体系重构；以已转正的 `mkt_shrunk` 和公榜 0.0039977510 重建当前状态。 |
 | 2026-08-17 | 三项纯 OOF 后处理诊断结案（分块天花板 / 时间平滑 / 分 phase A·B）；占分比 60.1%/39.9% 标 `SUPERSEDED`。生产目录与模型身份未改动。 |
+| 2026-08-18 | **`slow/fast` 转正为生产基线**（公榜 0.0041150085，+2.93%）；`check_consistency.py` 改为 slow/fast-aware 以免永久报红；P4 与 per-asset 两条轴结案。 |
 | 2026-08-17 | 顺着时间平滑的否定结论找到 `slow/fast` 分离（OOF +5.77%、全分辨率核对 +5.93%）；本节第 11 条被同日测量证伪并改写。`market_lambda` 结案。仍未建候选、未改生产。 |
 | 2026-08-17 | 公榜第一更新为 0.0060（用户报告）；market 侧同口径复测 `REJECTED`，六条路全关，我上一轮「下一个方向是 market」的判断标 `SUPERSEDED`；P3 同步为 `CLOSED_FAIL`，新增 P4 recency 预注册。 |
