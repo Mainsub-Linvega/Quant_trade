@@ -81,6 +81,16 @@ def load_strategy(name: str):
     return importlib.import_module("main"), importlib.import_module("train")
 
 
+def _causal_trailing_mean(values, time_id, asset_id, window):
+    """复用 `experiments/slow_fast_csv.py` 的**同一个**实现，不另写一份（伤疤规则 §3）。"""
+    import importlib.util
+    path = _REPO_ROOT / "experiments" / "slow_fast_csv.py"
+    spec = importlib.util.spec_from_file_location("_slow_fast_csv", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.causal_trailing_mean(values, time_id, asset_id, window)
+
+
 def main() -> None:
     args = parse_args()
     strategy_main, strategy_train = load_strategy(args.strategy)
@@ -112,6 +122,11 @@ def main() -> None:
             float(artifact["prediction_clip"]),
         )
 
+    meta_for_slow_fast = {}
+    if args.strategy == "v3_hybrid":
+        meta_for_slow_fast = json.loads(
+            (model_path.parent / "hybrid_meta.json").read_text(encoding="utf-8"))
+
     # 推理侧路径：官方 API 语义，按 time_id 递增逐批喂 Model
     kwargs = {"backend": args.backend} if args.strategy == "v3_hybrid" else {}
     model = strategy_main.Model(model_path=model_path, **kwargs)
@@ -122,6 +137,27 @@ def main() -> None:
 
     if pred_infer.shape != pred_train.shape:
         raise AssertionError("两侧输出长度不一致")
+
+    # ---- slow/fast 是**推理侧后处理**，训练端没有它的概念（它依赖跨 predict 的状态）。
+    # 若不在这里补上，本门禁会**永久报红**（实测 9.4e-02）—— 而长期红灯只会让人学会忽略它，
+    # 真正的预处理回归反而被掩盖。所以：把同一个离线变换补到训练侧，再比。
+    # 补完之后本门禁依然在测它该测的东西（特征/预处理两侧是否同口径）。
+    slow_fast_window = int(meta_for_slow_fast.get("slow_fast_window") or 0)
+    if slow_fast_window:
+        scale = float(meta_for_slow_fast["prediction_scale"])
+        clip = float(meta_for_slow_fast["prediction_clip"])
+        if float(np.max(np.abs(pred_train))) >= clip:
+            raise AssertionError(
+                "训练侧预测已触限 ⟹ raw = pred/scale 无法精确反解，本门禁的 slow/fast "
+                "补偿不成立；请改用未限幅的训练侧输出")
+        raw = pred_train.astype(np.float64) / scale
+        slow = _causal_trailing_mean(
+            raw, time_ids, frame["asset_id"].to_numpy(dtype=np.int64), slow_fast_window)
+        pred_train = np.clip(
+            scale * float(meta_for_slow_fast["slow_fast_slow_relative"]) * slow
+            + scale * float(meta_for_slow_fast["slow_fast_fast_relative"]) * (raw - slow),
+            -clip, clip)
+        print(f"（已对训练侧补上 slow/fast：window={slow_fast_window} 真实步）")
     max_diff = float(np.max(np.abs(pred_train.astype(np.float64) - pred_infer.astype(np.float64))))
     print(f"max |train - infer| = {max_diff:.3e}")
     if not np.isfinite(max_diff) or max_diff > args.atol:

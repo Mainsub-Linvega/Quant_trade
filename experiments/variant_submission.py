@@ -59,7 +59,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--decimals", type=int, default=8)
     parser.add_argument("--backend", default=None, choices=["lightgbm", "numpy"],
-                        help="留给对拍用；默认自动选（与提交时一致）")
+                        help="⚠️ 官方 runner 用 `Model()` **无参**构造，这里传不进去 —— "
+                             "本脚本会直接报错而不是静默忽略。要对拍后端请直接构造 Model("
+                             "model_dir, backend=...) 逐 time_id 喂，见 NOTES 的双后端门禁。")
     return parser.parse_args()
 
 
@@ -113,6 +115,14 @@ def main() -> None:
     # 这个守卫写在 --model-dir 之前，当时「变体」只能靠覆盖 meta 产生，现在不成立了。
     if not overrides and args.model_dir is None:
         raise SystemExit("至少要覆盖一个参数或指定 --model-dir，否则直接跑 runner 就行了")
+
+    if args.backend is not None:
+        # 曾经这个参数被**声明但从未使用** —— 于是 `--backend numpy` 跑出来的其实是
+        # lightgbm，两次结果 100% 逐位相同、耗时也一样，差点被当成「双后端对拍通过」。
+        # 静默忽略比不支持危险得多，所以这里显式拒绝。
+        raise SystemExit(
+            "--backend 传不进官方 runner（它用 Model() 无参构造）。"
+            "要对拍后端请直接构造 Model(model_dir, backend='numpy') 逐 time_id 喂。")
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
