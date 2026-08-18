@@ -23,10 +23,10 @@ from experiments.v3_adaptive_selection import (
 )
 from experiments.v3_causal_history_selection import run_causal_history_selection
 from experiments.v3_feature_structure import (
+    _weighted_corr_columns,
     build_task_views,
     contiguous_time_blocks,
     evenly_spaced_rows,
-    feature_quality_by_blocks,
     stable_redundancy,
 )
 from src.io import FEATURE_COLUMNS
@@ -113,6 +113,25 @@ def _validate_task_arrays(
     if float(w.sum()) <= 0.0:
         raise ValueError("weight must have positive mass")
     return x, y, w, ids
+
+
+def block_correlations(
+    features: np.ndarray,
+    target: np.ndarray,
+    weight: np.ndarray,
+    time_ids: np.ndarray,
+    *,
+    n_blocks: int,
+) -> np.ndarray:
+    """Compute only the selector's required correlations without panel-sized temporaries."""
+    x, y, w, ids = _validate_task_arrays(features, target, weight, time_ids)
+    rows = contiguous_time_blocks(ids, n_blocks)
+    results = []
+    for block in rows:
+        start = int(block[0])
+        stop = int(block[-1]) + 1
+        results.append(_weighted_corr_columns(x[start:stop], y[start:stop], w[start:stop]))
+    return np.vstack(results)
 
 
 def _train_lightgbm_booster(
@@ -452,20 +471,23 @@ def _select_task(
     weight = task["weight"]
     time_ids = task["time_ids"]
     shadows = make_shadow_columns(features, n_shadows=n_shadows)
-    quality = feature_quality_by_blocks(
-        np.column_stack([features, shadows]),
-        target,
-        weight,
-        time_ids,
-        n_blocks=n_blocks,
-    )
-    n_features = features.shape[1]
     correlations = np.nan_to_num(
-        quality["block_correlation"],
+        block_correlations(
+            features, target, weight, time_ids, n_blocks=n_blocks
+        ),
         nan=0.0,
         posinf=0.0,
         neginf=0.0,
     )
+    shadow_correlations = np.nan_to_num(
+        block_correlations(
+            shadows, target, weight, time_ids, n_blocks=n_blocks
+        ),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+    del shadows
     redundancy = stable_redundancy(
         features,
         time_ids,
@@ -487,8 +509,8 @@ def _select_task(
         task_name=task_name if tree_source is not None else None,
     )
     return select_task_features(
-        block_correlations=correlations[:, :n_features],
-        shadow_block_correlations=correlations[:, n_features:],
+        block_correlations=correlations,
+        shadow_block_correlations=shadow_correlations,
         cluster_labels=redundancy.labels,
         block_tree_gains=tree["block_feature_evidence"],
         shadow_block_tree_gains=tree["block_shadow_evidence"],

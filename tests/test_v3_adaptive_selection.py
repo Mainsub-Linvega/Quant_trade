@@ -13,6 +13,7 @@ from experiments.v3_causal_history_selection import (
 from experiments.v3_production_oof import (
     build_task_lgbm_designs,
     resolve_fold_feature_sets,
+    spill_feature_matrix,
 )
 from experiments.v3_adaptive_selection import (
     aggregate_path_support,
@@ -24,6 +25,7 @@ from experiments.v3_adaptive_selection import (
 )
 from experiments.v3_adaptive_selection_manifest import (
     assemble_manifest,
+    block_correlations,
     chronological_inner_splits,
     make_shadow_columns,
     selection_task_views,
@@ -68,6 +70,19 @@ def test_linear_evidence_requires_stability_above_shadow_floor() -> None:
 
     np.testing.assert_array_equal(evidence["passed"], [True, False, False])
     assert evidence["shadow_floor"] == 0.05
+
+
+def test_block_correlations_match_manual_contiguous_time_blocks() -> None:
+    features = np.array([[1.0], [2.0], [2.0], [4.0], [5.0], [3.0]])
+    target = np.array([1.0, 2.0, 2.0, 4.0, 5.0, 3.0])
+    weight = np.ones(6)
+    time_ids = np.repeat(np.arange(3), 2)
+
+    correlations = block_correlations(
+        features, target, weight, time_ids, n_blocks=3
+    )
+
+    np.testing.assert_allclose(correlations[:, 0], [1.0, 1.0, 1.0])
 
 
 def test_extract_tree_paths_keeps_three_to_six_distinct_features() -> None:
@@ -786,6 +801,16 @@ def test_task_lgbm_designs_keep_xs_and_market_feature_spaces_separate() -> None:
     np.testing.assert_array_equal(designs["xs"][:, -1], asset_ids)
     np.testing.assert_array_equal(designs["market"][:, -1], asset_ids)
     assert not np.array_equal(designs["xs"][:, :2], designs["market"][:, :2])
+
+
+def test_spill_feature_matrix_round_trips_as_read_only_memmap(tmp_path) -> None:
+    features = np.arange(30, dtype=np.float32).reshape(6, 5)
+
+    mapped = spill_feature_matrix(features, tmp_path / "features.npy", chunk_rows=2)
+
+    assert isinstance(mapped, np.memmap)
+    assert mapped.mode == "r"
+    np.testing.assert_array_equal(mapped, features)
 
 
 def test_feature_contract_falls_back_to_shared_market_metadata() -> None:

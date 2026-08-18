@@ -102,6 +102,30 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def spill_feature_matrix(
+    features: np.ndarray,
+    path: str | Path,
+    *,
+    chunk_rows: int = 100_000,
+) -> np.memmap:
+    """Write a large feature matrix in chunks and reopen it read-only."""
+    values = np.asarray(features)
+    if values.ndim != 2 or chunk_rows <= 0:
+        raise ValueError("features must be 2D and chunk_rows must be positive")
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.unlink(missing_ok=True)
+    mapped = np.lib.format.open_memmap(
+        output, mode="w+", dtype=values.dtype, shape=values.shape
+    )
+    for start in range(0, len(values), chunk_rows):
+        stop = min(start + chunk_rows, len(values))
+        mapped[start:stop] = values[start:stop]
+    mapped.flush()
+    del mapped
+    return np.load(output, mmap_mode="r")
+
+
 def group_mean(values: np.ndarray, starts: np.ndarray, counts: np.ndarray) -> np.ndarray:
     return np.repeat(np.add.reduceat(values, starts) / counts, counts.astype(int))
 
@@ -370,7 +394,15 @@ def main() -> None:
     started = time.perf_counter()
     print(f"loading sampled data: modulo {args.sample_modulo}/{args.sampling}", flush=True)
     data = load_rows(Path(args.data_root), args.sample_modulo, args.sampling)
-    features = data["features"]
+    feature_spill_path: Path | None = None
+    if args.selection_mode == "adaptive":
+        feature_spill_path = cache_dir / f".{args.label}_features.npy"
+        loaded_features = data.pop("features")
+        features = spill_feature_matrix(loaded_features, feature_spill_path)
+        del loaded_features
+        gc.collect()
+    else:
+        features = data["features"]
     target = data["target"].astype(np.float64, copy=False)
     weight = np.maximum(data["weight"].astype(np.float64, copy=False), 0.0)
     time_ids = data["time_id"]
@@ -398,7 +430,6 @@ def main() -> None:
         tr = row_slice(time_ids, train_ids)
         va = row_slice(time_ids, valid_ids)
         raw_train_features = features[tr]
-        valid_features = features[va].copy()
         y_tr, y_va = target[tr], target[va]
         w_tr, w_va = weight[tr], weight[va]
         tid_tr, tid_va = time_ids[tr], time_ids[va]
@@ -408,9 +439,6 @@ def main() -> None:
         va_counts = np.diff(np.r_[va_starts, len(tid_va)]).astype(np.float64)
 
         transformed_train, stats = robust_transform_fit(raw_train_features.copy())
-        transformed_valid = valid_features
-        apply_robust_transform(transformed_valid, stats["lower"], stats["upper"],
-                               stats["center"], stats["scale"])
 
         e_tr = y_tr - group_mean(y_tr, tr_starts, tr_counts)
         selection_manifest: dict[str, Any] | None = None
@@ -463,6 +491,10 @@ def main() -> None:
                 "history": baseline_history,
             }
             del baseline_xs_deviation
+        del raw_train_features
+        transformed_valid = features[va].copy()
+        apply_robust_transform(transformed_valid, stats["lower"], stats["upper"],
+                               stats["center"], stats["scale"])
         feature_sets = resolve_fold_feature_sets(
             args.selection_mode,
             baseline=baseline_sets,
@@ -574,8 +606,8 @@ def main() -> None:
         print(f"  fold {index}: score={fold_metric['score']:.8f}, peak={fold_metric['peak']:.8f}, "
               f"raw_peak={raw_metric['peak']:.8f}, elapsed={fold_rows[-1]['elapsed_seconds']:.0f}s",
               flush=True)
-        del (raw_train_features, valid_features, transformed_train, transformed_valid, stats,
-             e_tr, history_tr, history_va, train_designs, valid_designs,
+        del (transformed_train, transformed_valid, stats, e_tr, history_tr, history_va,
+             train_designs, valid_designs,
              d_tr_xs, d_va_xs, d_tr_market, d_va_market, e_pred, market_preds, prediction,
              feature_sets, baseline_sets)
         if selection_manifest is not None:
@@ -628,6 +660,10 @@ def main() -> None:
         lines.append(f"| {row['fold']} | {row['metric']['score']:.8f} | {row['metric']['peak']:.8f} | "
                      f"{row['raw_metric']['peak']:.8f} |")
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if feature_spill_path is not None:
+        del features
+        gc.collect()
+        feature_spill_path.unlink(missing_ok=True)
     print(f"wrote {npz_path}\nwrote {json_path}\nwrote {md_path}", flush=True)
 
 

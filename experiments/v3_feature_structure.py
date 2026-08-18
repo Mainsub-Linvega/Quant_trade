@@ -77,14 +77,23 @@ def build_task_views(
         raise ValueError("each time group must have positive total weight")
     market_target = np.add.reduceat(weight64 * target64, starts) / total_weight
 
-    repeated_market_features = np.repeat(market_features, counts, axis=0)
+    cross_features = features64.copy()
+    for group_start in range(0, len(starts), 20_000):
+        group_stop = min(group_start + 20_000, len(starts))
+        row_start = int(starts[group_start])
+        row_stop = int(starts[group_stop]) if group_stop < len(starts) else len(features64)
+        cross_features[row_start:row_stop] -= np.repeat(
+            market_features[group_start:group_stop],
+            counts[group_start:group_stop],
+            axis=0,
+        )
     repeated_market_target = np.repeat(market_target, counts)
     return TaskViews(
         raw_features=features64,
         full_target=target64,
         market_features=market_features,
         market_target=market_target,
-        cross_features=features64 - repeated_market_features,
+        cross_features=cross_features,
         cross_target=target64 - repeated_market_target,
         unique_time_ids=unique_time_ids,
         starts=starts,
