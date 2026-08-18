@@ -31,6 +31,11 @@ def make_candidate(root: Path, **overrides) -> tuple[Path, list[str], list[str]]
         "cross_section_weighted": PUBLIC_BASELINE["cross_section_weighted"],
         "lgbm_model_files": models,
         "market_model_files": market,
+        # slow/fast 三键属模型身份（2026-08-18 转正）。同样从 PUBLIC_BASELINE 派生，
+        # 这样以后往那张表加键时，夹具不会悄悄落后。
+        "slow_fast_window": PUBLIC_BASELINE["slow_fast_window"],
+        "slow_fast_slow_relative": PUBLIC_BASELINE["slow_fast_slow_relative"],
+        "slow_fast_fast_relative": PUBLIC_BASELINE["slow_fast_fast_relative"],
     }
     meta.update(overrides)
     (source / "hybrid_meta.json").write_text(json.dumps(meta))

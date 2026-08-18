@@ -28,6 +28,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_MODULES = {"train.py"}
 
 
+def _as_float(value) -> float:
+    """缺键/非数值一律落成 NaN，让 differs() 判为偏离 —— 丢键必须是失败，不是静默通过。"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def check_v3_hybrid_meta(model_dir: Path, *, off_baseline: bool) -> dict:
     """打包 v3_hybrid 前，把 `hybrid_meta.json` 对公榜那份的配置校一遍。
 
@@ -56,6 +64,12 @@ def check_v3_hybrid_meta(model_dir: Path, *, off_baseline: bool) -> dict:
         "market_lambda": float(meta.get("market_lambda", 0.0)),
         "market_model_count": len(meta.get("market_model_files") or []),
         "cross_section_weighted": bool(meta.get("cross_section_weighted", False)),
+        # ⚠️ 2026-08-18 补：slow/fast 三个键是公榜 0.0041150085 与 0.0039977510 的全部差别。
+        # `float(None)` 会 TypeError，所以缺键先落成 NaN，由下面的 differs() 判为偏离 ——
+        # **丢键必须是失败，不是静默通过**。
+        "slow_fast_window": _as_float(meta.get("slow_fast_window")),
+        "slow_fast_slow_relative": _as_float(meta.get("slow_fast_slow_relative")),
+        "slow_fast_fast_relative": _as_float(meta.get("slow_fast_fast_relative")),
     }
     # ⚠️ 这张表与 PUBLIC_BASELINE 是**两处派生同一份口径**，08-13 就因为只改了
     # promote_v3_candidate 那边、漏了这里，打包时直接 KeyError。
@@ -71,15 +85,17 @@ def check_v3_hybrid_meta(model_dir: Path, *, off_baseline: bool) -> dict:
 
     def differs(key: str) -> bool:
         expected, actual = PUBLIC_BASELINE[key], found[key]
-        if isinstance(expected, float) and isinstance(actual, float):
-            return not abs(actual - expected) < 1e-12       # NaN 也走这一支 → 判为偏离
+        if isinstance(actual, float) and isinstance(expected, (int, float)) \
+                and not isinstance(expected, bool):
+            return not abs(actual - float(expected)) < 1e-12  # NaN 也走这一支 → 判为偏离
         return actual != expected
 
     drift = [f"{key}: {found[key]!r} != 公榜基线 {PUBLIC_BASELINE[key]!r}"
              for key in PUBLIC_BASELINE if differs(key)]
     print("model/hybrid_meta.json: " + ", ".join(f"{k}={v!r}" for k, v in found.items()))
     if drift:
-        message = "提交包的 meta 偏离公榜 0.0039977510 那份：\n  " + "\n  ".join(drift)
+        message = ("提交包的 meta 偏离公榜 0.0041150085 那份"
+                   "（2026-08-18 slow/fast 转正后）：\n  " + "\n  ".join(drift))
         if not off_baseline:
             raise SystemExit(message + "\n有意为之请显式加 --off-baseline")
         print(f"⚠️ 已按 --off-baseline 放行：\n  " + "\n  ".join(drift))

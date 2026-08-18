@@ -53,6 +53,13 @@ PUBLIC_BASELINE = {
     "market_lambda": 0.5,
     "market_model_count": 3,
     "cross_section_weighted": True,
+    # ⚠️ 2026-08-18 补：slow/fast 转正后，这三个键**就是**公榜 0.0041150085 与前一版
+    # 0.0039977510 的**全部差别**（6 片森林 + 冻结岭回归 hash 逐字节相同、未重训）。
+    # 在此之前 PUBLIC_BASELINE 里没有它们 ⟹ 打包时丢键或写错值不会被任何门禁发现，
+    # 交出去的会是低 2.93% 的旧模型 —— 正是 CLAUDE.md §8.2 那一类事故。
+    "slow_fast_window": 2000,
+    "slow_fast_slow_relative": 0.387609649122807,
+    "slow_fast_fast_relative": 1.0801809210526316,
 }
 
 
@@ -87,7 +94,16 @@ def model_files(model_dir: Path) -> list[Path]:
     return sorted(path for path in model_dir.iterdir() if path.is_file() and path.name != "promotion_manifest.json")
 
 
-def validate_meta(meta: dict[str, Any], *, scale: float, n_seeds: int, blend_weight: float) -> None:
+def _float_matches(actual: Any, expected: Any) -> bool:
+    """数值键的容差比较；**缺键或非数值一律判不匹配** —— 丢键必须是失败，不是静默通过。"""
+    try:
+        return abs(float(actual) - float(expected)) < 1e-12
+    except (TypeError, ValueError):
+        return False
+
+
+def validate_meta(meta: dict[str, Any], *, scale: float, n_seeds: int, blend_weight: float,
+                  off_baseline: bool = False) -> None:
     """staging meta 必须与**请求的**配置逐项一致（结构项则对 PUBLIC_BASELINE）。"""
     checks = {
         "num_iteration_is_480": meta.get("num_iteration") == PUBLIC_BASELINE["num_iteration"],
@@ -108,10 +124,18 @@ def validate_meta(meta: dict[str, Any], *, scale: float, n_seeds: int, blend_wei
         "market_model_count_matches": len(meta.get("market_model_files") or []) == n_seeds,
         "cross_section_weighted_matches":
             bool(meta.get("cross_section_weighted", False)) == PUBLIC_BASELINE["cross_section_weighted"],
+        # ⚠️ 2026-08-18 补：slow/fast 三个键同属模型身份（见 PUBLIC_BASELINE 处的注释）。
+        # 有意偏离（例如 8/23 回补数据后重训出不带 slow/fast 的候选）走 --off-baseline。
+        **{f"{key}_matches": _float_matches(meta.get(key), PUBLIC_BASELINE[key])
+           for key in ("slow_fast_window", "slow_fast_slow_relative",
+                       "slow_fast_fast_relative")},
     }
     failed = [name for name, passed in checks.items() if not passed]
+    if failed and not off_baseline:
+        raise ValueError(f"candidate metadata failed: {', '.join(failed)}"
+                         "\n有意为之请显式加 --off-baseline")
     if failed:
-        raise ValueError(f"candidate metadata failed: {', '.join(failed)}")
+        print(f"⚠️ 已按 --off-baseline 放行 meta 偏离：{', '.join(failed)}", flush=True)
 
 
 def check_against_public_baseline(*, scale: float, n_seeds: int, blend_weight: float,
@@ -123,14 +147,15 @@ def check_against_public_baseline(*, scale: float, n_seeds: int, blend_weight: f
              if abs(float(value) - float(PUBLIC_BASELINE[key])) > 1e-12]
     if drift and not off_baseline:
         raise ValueError(
-            "staging 配置偏离公榜 0.0039977510 那份：\n  " + "\n  ".join(drift)
+            "staging 配置偏离公榜 0.0041150085 那份（2026-08-18 slow/fast 转正后）：\n  "
+            + "\n  ".join(drift)
             + "\n有意为之请显式加 --off-baseline")
     return drift
 
 
 def stage_candidate(candidate: Path, destination: Path, *, scale: float, n_seeds: int,
                     blend_weight: float = PUBLIC_BASELINE["blend_weight"],
-                    force: bool = False) -> dict[str, Any]:
+                    force: bool = False, off_baseline: bool = False) -> dict[str, Any]:
     required = [candidate / "baseline_model.json", candidate / "hybrid_meta.json"]
     if not all(path.is_file() for path in required):
         raise FileNotFoundError(f"candidate is incomplete: {candidate}")
@@ -162,7 +187,8 @@ def stage_candidate(candidate: Path, destination: Path, *, scale: float, n_seeds
         meta["market_model_files"] = selected_market
     meta["promotion_note"] = ("Staged by scripts/promote_v3_candidate.py; source artifacts are unchanged. "
                               f"scale={scale}, blend_weight={blend_weight}, seeds={n_seeds}")
-    validate_meta(meta, scale=scale, n_seeds=n_seeds, blend_weight=blend_weight)
+    validate_meta(meta, scale=scale, n_seeds=n_seeds, blend_weight=blend_weight,
+                  off_baseline=off_baseline)
     (destination / "hybrid_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -243,11 +269,12 @@ def predict_frames(Model, model_dir: Path, backend: str | None,
                            for frame in smoke_frames(model)])
 
 
-def validate_staging(model_dir: Path) -> dict[str, Any]:
+def validate_staging(model_dir: Path, *, off_baseline: bool = False) -> dict[str, Any]:
     meta = json.loads((model_dir / "hybrid_meta.json").read_text(encoding="utf-8"))
     validate_meta(meta, scale=float(meta["prediction_scale"]),
                   n_seeds=len(meta["lgbm_model_files"]),
-                  blend_weight=float(meta["blend_weight"]))
+                  blend_weight=float(meta["blend_weight"]),
+                  off_baseline=off_baseline)
     Model = load_model_class()
 
     backends: dict[str, Any] = {}
@@ -364,13 +391,14 @@ def main() -> None:
               f"要重建请加 --force")
     else:
         stage_candidate(candidate, stage_dir, scale=args.scale, n_seeds=args.n_seeds,
-                        blend_weight=args.blend_weight, force=args.force)
-    validation = validate_staging(stage_dir)
+                        blend_weight=args.blend_weight, force=args.force,
+                        off_baseline=args.off_baseline)
+    validation = validate_staging(stage_dir, off_baseline=args.off_baseline)
     print(json.dumps(validation, ensure_ascii=False, indent=2))
     print(f"{'revalidated' if reused else 'staged and validated'}: {stage_dir}")
     if args.activate:
         backup = activate_staging(stage_dir, PRODUCTION, ROOT / "outputs" / "promotions" / "backups")
-        validate_staging(PRODUCTION)
+        validate_staging(PRODUCTION, off_baseline=args.off_baseline)
         print(f"production activated; backup: {backup}")
 
 

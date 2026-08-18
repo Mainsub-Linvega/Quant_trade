@@ -27,6 +27,9 @@ def baseline_meta() -> dict:
         "market_lambda": PUBLIC_BASELINE["market_lambda"],
         "market_model_files": [f"m{i}.txt" for i in range(PUBLIC_BASELINE["market_model_count"])],
         "cross_section_weighted": PUBLIC_BASELINE["cross_section_weighted"],
+        "slow_fast_window": PUBLIC_BASELINE["slow_fast_window"],
+        "slow_fast_slow_relative": PUBLIC_BASELINE["slow_fast_slow_relative"],
+        "slow_fast_fast_relative": PUBLIC_BASELINE["slow_fast_fast_relative"],
     }
 
 
@@ -64,6 +67,25 @@ class PackagingMetaGateTest(unittest.TestCase):
                 # --off-baseline 是有意偏离的出口，必须仍然放行
                 check_v3_hybrid_meta(model_dir, off_baseline=True)
 
+    def test_rejects_missing_slow_fast_keys(self) -> None:
+        """2026-08-18 的回归：slow/fast 三键是公榜 0.0041150085 与 0.0039977510 的全部差别。
+
+        它们此前不在 PUBLIC_BASELINE 里 ⟹ 丢键或写错值不会被任何门禁发现。
+        """
+        for key in ("slow_fast_window", "slow_fast_slow_relative", "slow_fast_fast_relative"):
+            for mutate in ("drop", "wrong"):
+                with self.subTest(key=key, mutate=mutate), \
+                        tempfile.TemporaryDirectory() as directory:
+                    meta = baseline_meta()
+                    if mutate == "drop":
+                        meta.pop(key)
+                    else:
+                        meta[key] = float(meta[key]) * 2.0 + 1.0
+                    model_dir = self._write(Path(directory), meta)
+                    with self.assertRaises(SystemExit):
+                        check_v3_hybrid_meta(model_dir, off_baseline=False)
+                    check_v3_hybrid_meta(model_dir, off_baseline=True)
+
     def test_rejects_missing_market_forest(self) -> None:
         """市场森林文件为空时，λ 再对也没用 —— 必须拦住。"""
         with tempfile.TemporaryDirectory() as directory:
@@ -83,11 +105,80 @@ class SubmissionPackagingTest(unittest.TestCase):
                     "lgbm_model_files": ["seed.txt"]}
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("main.py", "class Model: pass")
+                # main.py 顶层无条件 import 这三个模块，少一个 Model 就装不起来
+                for module in ("features.py", "lgbm_numpy.py", "history.py"):
+                    archive.writestr(module, "")
                 archive.writestr("model/baseline_model.json", "{}")
                 archive.writestr("model/hybrid_meta.json", json.dumps(meta))
                 archive.writestr("model/seed.txt", "model")
             result = audit(path, 1.16, 480, 1)
-            self.assertTrue(result["passed"])
+            self.assertTrue(result["passed"], result["checks"])
+
+    def test_audit_rejects_absent_market_forest_files(self) -> None:
+        """2026-08-18 的回归：原实现只核 `lgbm_model_files` 在不在包里，
+
+        `market_model_files` 一个都不核 —— 市场森林是架构的一半（公榜 +21.99% 的来源），
+        漏打包会让审计照样 PASS。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "no_market.zip"
+            meta = {"prediction_scale": 1.16, "num_iteration": 480,
+                    "history_window": 5, "history_positions": list(range(40)),
+                    "lgbm_model_files": ["seed.txt"],
+                    "market_model_files": ["market.txt"]}       # 声明了，但不入包
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("main.py", "class Model: pass")
+                for module in ("features.py", "lgbm_numpy.py", "history.py"):
+                    archive.writestr(module, "")
+                archive.writestr("model/baseline_model.json", "{}")
+                archive.writestr("model/hybrid_meta.json", json.dumps(meta))
+                archive.writestr("model/seed.txt", "model")
+            result = audit(path)
+            self.assertFalse(result["passed"])
+            self.assertEqual(result["absent_declared_market_models"], ["market.txt"])
+
+    def test_audit_rejects_missing_required_module(self) -> None:
+        """`main.py` 顶层 import 的模块少一个，`Model` 就装不起来 ⟹ 整份提交判无效。"""
+        for dropped in ("features.py", "lgbm_numpy.py", "history.py"):
+            with self.subTest(dropped=dropped), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "missing_module.zip"
+                meta = {"lgbm_model_files": []}
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr("main.py", "class Model: pass")
+                    for module in ("features.py", "lgbm_numpy.py", "history.py"):
+                        if module != dropped:
+                            archive.writestr(module, "")
+                    archive.writestr("model/baseline_model.json", "{}")
+                    archive.writestr("model/hybrid_meta.json", json.dumps(meta))
+                result = audit(path)
+                self.assertFalse(result["passed"])
+                self.assertIn(dropped, result["missing"])
+
+    def test_audit_public_baseline_catches_pre_slowfast_package(self) -> None:
+        """2026-08-18 的回归：slow/fast 转正后，缺这三个键的包就是低 2.93% 的旧模型。
+
+        `main.py` 是 `PredictionTrail(int(window)) if window else None` ——
+        缺键时 slow/fast 被**静默关掉**、不抛错，所以只能靠审计拦。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pre_slowfast.zip"
+            meta = baseline_meta()
+            for key in ("slow_fast_window", "slow_fast_slow_relative",
+                        "slow_fast_fast_relative"):
+                meta.pop(key)
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("main.py", "class Model: pass")
+                for module in ("features.py", "lgbm_numpy.py", "history.py"):
+                    archive.writestr(module, "")
+                archive.writestr("model/baseline_model.json", "{}")
+                archive.writestr("model/hybrid_meta.json", json.dumps(meta))
+                for name in meta["lgbm_model_files"] + meta["market_model_files"]:
+                    archive.writestr(f"model/{name}", "model")
+            # 不开 --expect-public-baseline 时，旧行为一切正常 ⟹ 正是原来那个洞
+            self.assertTrue(audit(path)["passed"])
+            strict = audit(path, expect_public_baseline=True)
+            self.assertFalse(strict["passed"])
+            self.assertEqual(len(strict["public_baseline_drift"]), 3)
 
     def test_audit_rejects_train_py(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
