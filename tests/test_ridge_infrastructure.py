@@ -8,15 +8,41 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "experiments")]
+sys.path[:0] = [
+    str(ROOT),
+    str(ROOT / "experiments"),
+    str(ROOT / "strategies" / "v1_ridge"),
+]
 
 from src.io import time_sample_mask
 from src.validation import rolling_time_folds
 from walk_forward_rolling import sign_test_p
 from walk_forward_rolling import write_single_report
+from train import fit_model
 
 
 class RidgeInfrastructureTest(unittest.TestCase):
+    def test_fit_model_honors_explicit_selected_indices(self) -> None:
+        features = np.arange(36, dtype=np.float32).reshape(12, 3)
+        target = np.linspace(-0.3, 0.4, 12, dtype=np.float64)
+        weight = np.ones(12, dtype=np.float64)
+        time_ids = np.repeat(np.arange(4), 3)
+
+        artifact, selected = fit_model(
+            features,
+            target,
+            weight,
+            time_ids,
+            feature_count=1,
+            ridge_alpha=10.0,
+            selected_indices=np.array([0, 2]),
+        )
+
+        np.testing.assert_array_equal(selected, [0, 2])
+        self.assertEqual(artifact["selected_indices"], [0, 2])
+        self.assertEqual(artifact["selected_features"], ["feature_000", "feature_002"])
+        self.assertEqual(len(artifact["coef"]), 4)
+
     def test_sign_test_ignores_zero_deltas(self) -> None:
         self.assertEqual(sign_test_p(0, 0), 1.0)
         self.assertEqual(sign_test_p(10, 0), 2 / 2**10)

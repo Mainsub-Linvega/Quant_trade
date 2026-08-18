@@ -29,6 +29,11 @@ from experiments.v3_adaptive_selection_manifest import (
     selection_task_views,
     validation_tree_evidence,
 )
+from strategies.v3_hybrid.features import (
+    map_history_positions,
+    resolve_feature_contract,
+    selection_sets_from_manifest,
+)
 
 
 def test_circular_shift_shadows_are_deterministic_and_non_identity() -> None:
@@ -781,6 +786,69 @@ def test_task_lgbm_designs_keep_xs_and_market_feature_spaces_separate() -> None:
     np.testing.assert_array_equal(designs["xs"][:, -1], asset_ids)
     np.testing.assert_array_equal(designs["market"][:, -1], asset_ids)
     assert not np.array_equal(designs["xs"][:, :2], designs["market"][:, :2])
+
+
+def test_feature_contract_falls_back_to_shared_market_metadata() -> None:
+    meta = {
+        "lgbm_features": ["feature_001", "feature_003"],
+        "lower": [1.0, 2.0],
+        "upper": [3.0, 4.0],
+        "center": [2.0, 3.0],
+        "scale": [0.5, 0.75],
+    }
+
+    contract = resolve_feature_contract(meta)
+
+    assert contract["xs_features"] == meta["lgbm_features"]
+    assert contract["market_features"] == meta["lgbm_features"]
+    for name in ("lower", "upper", "center", "scale"):
+        assert contract[f"market_{name}"] == meta[name]
+
+
+def test_feature_contract_uses_optional_independent_market_metadata() -> None:
+    meta = {
+        "lgbm_features": ["feature_001", "feature_003"],
+        "lower": [1.0, 2.0],
+        "upper": [3.0, 4.0],
+        "center": [2.0, 3.0],
+        "scale": [0.5, 0.75],
+        "market_features": ["feature_000", "feature_004", "feature_005"],
+        "market_lower": [-1.0, -2.0, -3.0],
+        "market_upper": [1.0, 2.0, 3.0],
+        "market_center": [0.0, 0.0, 0.0],
+        "market_scale": [1.0, 1.5, 2.0],
+    }
+
+    contract = resolve_feature_contract(meta)
+
+    assert contract["market_features"] == meta["market_features"]
+    for name in ("lower", "upper", "center", "scale"):
+        assert contract[f"market_{name}"] == meta[f"market_{name}"]
+
+
+def test_history_global_indices_map_into_xs_positions() -> None:
+    assert map_history_positions([2, 5, 9], [5, 9]) == [1, 2]
+    with pytest.raises(ValueError, match="history.*XS"):
+        map_history_positions([2, 5, 9], [1])
+
+
+def test_selection_manifest_resolves_four_task_sets_without_fixed_counts() -> None:
+    manifest = {
+        "ridge": {"selected_indices": [0, 4]},
+        "xs": {"selected_indices": [1, 3, 5]},
+        "market": {"selected_indices": [0, 2, 4, 5]},
+        "history": {"selected_indices": [3, 5]},
+    }
+
+    resolved = selection_sets_from_manifest(manifest, n_features=6)
+
+    assert resolved == {
+        "ridge": [0, 4],
+        "xs": [1, 3, 5],
+        "market": [0, 2, 4, 5],
+        "history": [3, 5],
+        "history_positions": [1, 2],
+    }
 
 
 def test_selection_task_views_use_unweighted_market_means() -> None:

@@ -54,10 +54,20 @@ import numpy as np
 
 # 提交包内的同目录模块。官方 runner 加载 main.py 时会把本目录压入 sys.path。
 # 绝不 import 仓库的 src/ —— 提交包里没有它。
-from features import (apply_robust_transform, cross_sectional_deviation,
-                      single_time_deviation)
-from lgbm_numpy import NumpyForest
-from history import AssetHistory
+try:
+    from strategies.v3_hybrid.features import (
+        apply_robust_transform,
+        cross_sectional_deviation,
+        resolve_feature_contract,
+        single_time_deviation,
+    )
+    from strategies.v3_hybrid.lgbm_numpy import NumpyForest
+    from strategies.v3_hybrid.history import AssetHistory
+except ImportError:  # 提交包没有 strategies package，只能走同目录模块
+    from features import (apply_robust_transform, cross_sectional_deviation,
+                          resolve_feature_contract, single_time_deviation)
+    from lgbm_numpy import NumpyForest
+    from history import AssetHistory
 
 # 开机对拍的门限。两条路径只该差求和顺序（~1e-18）；真翻了一个分裂，输出会跳一个叶子值
 # （~1e-3）。1e-10 落在两者中间好几个数量级，怎么定都不会误判。
@@ -94,6 +104,7 @@ class Model:
 
         ridge = json.loads((model_dir / "baseline_model.json").read_text(encoding="utf-8"))
         meta = json.loads((model_dir / "hybrid_meta.json").read_text(encoding="utf-8"))
+        contract = resolve_feature_contract(meta)
 
         # ---- 岭回归部分（生产模型原样冻结，sha 与 v1_ridge 一致）
         self.ridge_features = list(ridge["selected_features"])
@@ -106,11 +117,16 @@ class Model:
         self.cross_sectional_scaling = str(ridge.get("cross_sectional_scaling", "none"))
 
         # ---- LightGBM 部分（自己的一套选列与预处理统计量）
-        self.lgbm_features = list(meta["lgbm_features"])
-        self.l_lower = np.asarray(meta["lower"], dtype=np.float32)
-        self.l_upper = np.asarray(meta["upper"], dtype=np.float32)
-        self.l_center = np.asarray(meta["center"], dtype=np.float32)
-        self.l_scale = np.asarray(meta["scale"], dtype=np.float32)
+        self.lgbm_features = list(contract["xs_features"])
+        self.l_lower = np.asarray(contract["xs_lower"], dtype=np.float32)
+        self.l_upper = np.asarray(contract["xs_upper"], dtype=np.float32)
+        self.l_center = np.asarray(contract["xs_center"], dtype=np.float32)
+        self.l_scale = np.asarray(contract["xs_scale"], dtype=np.float32)
+        self.market_features = list(contract["market_features"])
+        self.m_lower = np.asarray(contract["market_lower"], dtype=np.float32)
+        self.m_upper = np.asarray(contract["market_upper"], dtype=np.float32)
+        self.m_center = np.asarray(contract["market_center"], dtype=np.float32)
+        self.m_scale = np.asarray(contract["market_scale"], dtype=np.float32)
         self.num_iteration = int(meta["num_iteration"])
         self.market_num_iteration = int(meta.get("market_num_iteration", self.num_iteration))
         if self.num_iteration <= 0 or self.market_num_iteration <= 0:
@@ -136,7 +152,7 @@ class Model:
                 raise ValueError("asset_cross_scales must be finite")
 
         # ---- 第二个市场分量：行级 LGBM 打 y，取逐 time_id 无权截面均值（`combo_market_weight`）
-        # 设计矩阵 = [raw ‖ xs_dev ‖ history ‖ asset_id]，只比截面块多前面那 200 列 raw。
+        # 设计矩阵 = [market_raw ‖ market_dev ‖ history ‖ asset_id]。
         # λ 是先验、不拟合；缺这两个键的旧模型 λ=0 ⟹ 行为与以前逐位相同。
         self.market_files = [model_dir / name for name in (meta.get("market_model_files") or [])]
         self.market_lambda = float(meta.get("market_lambda", 0.0)) if self.market_files else 0.0
@@ -154,14 +170,16 @@ class Model:
         self.predict_kwargs: dict = {}
         self.backend = self._select_backend(backend)
 
-        # make_submission 的烟测按 feature_columns 造表，所以这里给两套的并集
-        self.feature_columns = sorted(set(self.ridge_features) | set(self.lgbm_features))
+        # make_submission 的烟测按 feature_columns 造表，所以这里给三套的并集
+        self.feature_columns = sorted(set(self.ridge_features) | set(self.lgbm_features)
+                                      | set(self.market_features))
         self.last_time_id: int | None = None
 
         # ---- 取列的快路径缓存（见 _feature_blocks）。None = 还没解析过；False = 已放弃
         self._columns: object = None
         self._ridge_positions: np.ndarray | None = None
         self._lgbm_positions: np.ndarray | None = None
+        self._market_positions: np.ndarray | None = None
 
     def _select_backend(self, requested: str | None) -> str:
         """选树推理后端。`None` = 自动（lightgbm 优先、对拍不过就退 numpy）。"""
@@ -224,7 +242,7 @@ class Model:
         return float(np.max(np.abs(reference - forest.predict_sum(probe, assets))))
 
     def _feature_blocks(self, test):
-        """取出岭回归与 LGBM 各自那 200 列（float32，可就地改）。
+        """取出 Ridge、XS LGBM、market LGBM 三套列（float32，可就地改）。
 
         `test.loc[:, 200 个列名]` 每次都要按标签重建索引器 —— 实测**两次合计
         0.575 ms/次**，占整次 `predict` 的 **27%**，比 1440 棵树还贵。
@@ -238,13 +256,15 @@ class Model:
         """
         if self._columns is False:
             return (test.loc[:, self.ridge_features].to_numpy(dtype=np.float32, copy=True),
-                    test.loc[:, self.lgbm_features].to_numpy(dtype=np.float32, copy=True))
+                    test.loc[:, self.lgbm_features].to_numpy(dtype=np.float32, copy=True),
+                    test.loc[:, self.market_features].to_numpy(dtype=np.float32, copy=True))
         columns = test.columns
         if self._columns is None or not columns.equals(self._columns):
             try:
                 positions = {name: index for index, name in enumerate(columns)}
                 self._ridge_positions = np.array([positions[n] for n in self.ridge_features])
                 self._lgbm_positions = np.array([positions[n] for n in self.lgbm_features])
+                self._market_positions = np.array([positions[n] for n in self.market_features])
                 test.to_numpy(dtype=np.float32)          # 先试一次，转不动就别走这条路
             except Exception as error:                   # noqa: BLE001 —— 任何失败都退回老路
                 print(f"[v3_hybrid] 取列快路径不可用，退回 .loc：{error!r}", flush=True)
@@ -252,7 +272,8 @@ class Model:
                 return self._feature_blocks(test)
             self._columns = columns
         block = test.to_numpy(dtype=np.float32)
-        return block[:, self._ridge_positions], block[:, self._lgbm_positions]
+        return (block[:, self._ridge_positions], block[:, self._lgbm_positions],
+                block[:, self._market_positions])
 
     def predict(self, test):
         time_ids = test["time_id"].to_numpy(dtype=np.int64)
@@ -262,7 +283,7 @@ class Model:
         self.last_time_id = time_id
 
         # ---- 岭回归的**原始**预测（不乘 scale、不 clip —— 限幅只在最后做一次）
-        raw, lraw = self._feature_blocks(test)
+        raw, lraw, market_raw = self._feature_blocks(test)
         raw = apply_robust_transform(raw, self.r_lower, self.r_upper, self.r_center, self.r_scale)
         deviation = single_time_deviation(raw, self.cross_sectional_scaling)
         ridge_raw = self.r_intercept + np.column_stack([raw, deviation]) @ self.r_coef
@@ -283,14 +304,15 @@ class Model:
         #   所以它继续用 single_time_deviation，保持与 v1_ridge 生产路径逐位相同。）
         ldev = cross_sectional_deviation(lraw, time_ids)
         asset_ids = test["asset_id"].to_numpy(dtype=np.int64)
-        blocks = [ldev]
+        history_blocks: list[np.ndarray] = []
         if self.history is not None:
             # ⚠️ 有状态：每次 predict 都会推进。首个 time_id 无历史 ⟹ previous /
             # rolling_mean 为 0（与训练端最前面那些行同口径，模型见过这种输入），不出 NaN。
             # transform_online 与离线的 transform 逐位相同，见 history.py 的推导。
-            blocks.extend(self.history.transform_online(lraw[:, self.history_positions], asset_ids))
-        blocks.append(asset_ids.astype(np.float32))   # ⚠️ asset_id 必须留在最后一列
-        design = np.column_stack(blocks)
+            history_blocks = self.history.transform_online(
+                lraw[:, self.history_positions], asset_ids)
+        asset_block = asset_ids.astype(np.float32)
+        design = np.column_stack([ldev, *history_blocks, asset_block])
         e_lgbm = self._forest_mean(design, asset_ids, self.boosters, self.forest,
                                    self.num_iteration)
         e_lgbm -= e_lgbm.mean()
@@ -299,10 +321,14 @@ class Model:
             # into the independently modelled market component.
             e_lgbm = _asset_scaled_zero_mean(e_lgbm, asset_ids, self.asset_cross_scales)
 
-        # ---- 第二个市场分量。设计矩阵只比上面多前面那 200 列 raw（与训练端逐列对应）。
+        # ---- 第二个市场分量。使用自己的 raw/deviation，并复用同一份因果 history。
         # `m̂_lgbm` 取无权截面均值 ⟹ 它是纯市场量，不碰截面块。λ 缺省 0 ⟹ 旧模型行为不变。
         if self.market_lambda:
-            market_design = np.column_stack([lraw, *blocks])
+            market_raw = apply_robust_transform(
+                market_raw, self.m_lower, self.m_upper, self.m_center, self.m_scale)
+            market_dev = cross_sectional_deviation(market_raw, time_ids)
+            market_design = np.column_stack(
+                [market_raw, market_dev, *history_blocks, asset_block])
             m_lgbm = self._forest_mean(market_design, asset_ids,
                                        self.market_boosters, self.market_forest,
                                        self.market_num_iteration).mean()

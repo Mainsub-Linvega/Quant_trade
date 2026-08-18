@@ -1,4 +1,4 @@
-"""v3_hybrid 训练：只训 LightGBM 的截面分量，岭回归部分冻结复用生产模型。
+"""v3_hybrid 训练：基线模式冻结 Ridge，自适应清单模式训练任务专属模型。
 
 ## 为什么岭回归不重训
 
@@ -8,7 +8,9 @@
 1. **唯一的变量是截面分量** —— 与公榜 0.00187232 对比时，差异纯粹来自 LightGBM
 2. 那份模型的可复现性已经验收过（严格求解器，7 道门禁）
 
-所以本脚本只产出 LightGBM 部分 + `hybrid_meta.json`。
+不传 `--selection-manifest` 时，本脚本仍只产出 LightGBM 部分 + `hybrid_meta.json`。
+传入清单时会在候选目录额外写出按 Ridge 特征集重训的 `baseline_model.json`，
+并让截面树与市场树使用各自独立的特征集合和预处理统计量。
 
 ## 超参从哪来（全部预注册，不在这里搜）
 
@@ -47,7 +49,12 @@ for _path in (str(_REPO_ROOT), str(_REPO_ROOT / "experiments"),
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from features import apply_robust_transform, cross_sectional_deviation
+from strategies.v3_hybrid.features import (
+    apply_robust_transform,
+    cross_sectional_deviation,
+    resolve_feature_contract,
+    selection_sets_from_manifest,
+)
 
 # ⚠️ 训练侧还要 v1_ridge 的 `train.robust_transform_fit` / `select_features` 与
 # `experiments.lgbm_xs.load_rows`，但它们**只在 main() 里 import**。原因：本文件被
@@ -106,6 +113,7 @@ def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
     model_dir = Path(model_dir)
     ridge = json.loads((model_dir / "baseline_model.json").read_text(encoding="utf-8"))
     meta = json.loads((model_dir / "hybrid_meta.json").read_text(encoding="utf-8"))
+    contract = resolve_feature_contract(meta)
 
     starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
     counts = np.diff(np.r_[starts, len(time_ids)])
@@ -133,26 +141,39 @@ def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
     e_ridge = ridge_raw - market
 
     # ---- LightGBM 的截面分量，投影成无权零均值
-    lgbm_indices = np.array([int(name.split("_")[1]) for name in meta["lgbm_features"]])
+    lgbm_indices = np.array([int(name.split("_")[1])
+                             for name in contract["xs_features"]])
     lraw = full_features[:, lgbm_indices].copy()
-    lower, upper, center, scale = stats(meta)
+    lower, upper, center, scale = (np.asarray(contract[f"xs_{name}"], dtype=np.float32)
+                                   for name in ("lower", "upper", "center", "scale"))
     apply_robust_transform(lraw, lower, upper, center, scale)
-    blocks = [cross_sectional_deviation(lraw, time_ids)]
+    xs_deviation = cross_sectional_deviation(lraw, time_ids)
+    history_blocks: list[np.ndarray] = []
     # ---- 每资产滚动历史（有状态）。这里从**空历史**起步，与 main.Model 新建时一致，
     # check_consistency 两侧才可比。history.AssetHistory 的整块调用与逐 time_id 调用
     # 逐位相同（定序直接求和，不用 cumsum），所以这条离线路径不会引入 ulp 级偏差。
     if meta.get("history_positions"):
-        from history import history_design_blocks
-        hist, _ = history_design_blocks(lraw, asset_ids.astype(np.int64),
-                                        meta["history_positions"],
-                                        int(meta["history_window"]))
-        blocks.extend(hist)
-    blocks.append(asset_ids.astype(np.float32))       # ⚠️ asset_id 必须留在最后一列
-    design = np.column_stack(blocks)
-    # 市场块的设计矩阵只是在同一批块前面多拼一个 raw（与 train 的 market_design 逐列对应）
-    market_design = (np.column_stack([lraw, *blocks])
-                     if meta.get("market_model_files") else None)
-    del lraw, blocks
+        from strategies.v3_hybrid.history import history_design_blocks
+        history_blocks, _ = history_design_blocks(
+            lraw, asset_ids.astype(np.int64), meta["history_positions"],
+            int(meta["history_window"])
+        )
+    asset_block = asset_ids.astype(np.float32)
+    design = np.column_stack([xs_deviation, *history_blocks, asset_block])
+
+    market_design = None
+    if meta.get("market_model_files"):
+        market_indices = np.array([int(name.split("_")[1])
+                                   for name in contract["market_features"]])
+        market_raw = full_features[:, market_indices].copy()
+        market_stats = (np.asarray(contract[f"market_{name}"], dtype=np.float32)
+                        for name in ("lower", "upper", "center", "scale"))
+        apply_robust_transform(market_raw, *market_stats)
+        market_deviation = cross_sectional_deviation(market_raw, time_ids)
+        market_design = np.column_stack(
+            [market_raw, market_deviation, *history_blocks, asset_block]
+        )
+    del lraw, xs_deviation, history_blocks
 
     def run_forest(names: list[str], matrix: np.ndarray, num_iteration: int) -> np.ndarray:
         paths = [model_dir / name for name in names]
@@ -207,7 +228,7 @@ def stream_history_blocks(data_root: Path, sample_modulo: int, sampling: str,
     """
     import pyarrow.parquet as pq
     from src.io import time_sample_mask, train_files
-    from history import AssetHistory
+    from strategies.v3_hybrid.history import AssetHistory
 
     lower, upper, center, scale = history_stats
     history = AssetHistory(feature_count=len(history_names), window_size=window)
@@ -238,6 +259,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sample-modulo", type=int, default=5)
     p.add_argument("--sampling", default="phase_balanced")
     p.add_argument("--feature-count", type=int, default=200)
+    p.add_argument("--selection-manifest", default=None)
     p.add_argument("--history-count", type=int, default=HISTORY_COUNT)
     p.add_argument("--history-window", type=int, default=HISTORY_WINDOW)
     p.add_argument("--no-history", action="store_true",
@@ -273,6 +295,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n-seeds", type=int, default=3)
     p.add_argument("--seed", type=int, default=2026)
     p.add_argument("--num-threads", type=int, default=16)
+    p.add_argument("--ridge-alpha", type=float, default=2_000_000.0)
+    p.add_argument("--ridge-tol", type=float, default=1e-8)
+    p.add_argument("--ridge-max-iter", type=int, default=2000)
     # scale 是纯后处理旋钮，最终值由公榜两点法定；这里先写本地最优做占位
     p.add_argument("--prediction-scale", type=float, default=0.856)
     p.add_argument("--prediction-clip", type=float, default=0.5)
@@ -285,7 +310,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     import lightgbm as lgb
-    from train import robust_transform_fit, select_features    # v1_ridge 的生产实现
+    from train import fit_model, robust_transform_fit, select_features
     from lgbm_xs import load_rows                              # 流式加载（带 asset_id）
 
     args = parse_args()
@@ -303,13 +328,33 @@ def main() -> None:
             "确认上榜后走 scripts/promote_v3_candidate.py 转正，"
             "真要直写请显式加 --allow-production-overwrite")
     model_dir.mkdir(parents=True, exist_ok=True)
-    assert (model_dir / "baseline_model.json").exists(), \
-        "model/baseline_model.json 缺失 —— 它是 v1_ridge 生产模型的冻结拷贝"
+    if args.selection_manifest is None and not (model_dir / "baseline_model.json").exists():
+        raise SystemExit("baseline_model.json 缺失；自适应候选请传 --selection-manifest 重训 Ridge")
 
     print(f"加载训练数据（modulo {args.sample_modulo} / {args.sampling}）…", flush=True)
     d = load_rows(Path(args.data_root), args.sample_modulo, args.sampling)
     features, y, w, tid, aid = d["features"], d["target"], d["weight"], d["time_id"], d["asset_id"]
     del d
+    selection_sets = None
+    if args.selection_manifest is not None:
+        manifest_path = Path(args.selection_manifest)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        selection_sets = selection_sets_from_manifest(manifest, features.shape[1])
+        ridge_artifact, ridge_selected = fit_model(
+            features.copy(), y, w, tid,
+            feature_count=len(selection_sets["ridge"]),
+            ridge_alpha=args.ridge_alpha,
+            selected_indices=np.asarray(selection_sets["ridge"], dtype=np.int64),
+            ridge_tol=args.ridge_tol,
+            ridge_max_iter=args.ridge_max_iter,
+        )
+        ridge_artifact["prediction_scale"] = 1.0
+        ridge_artifact["prediction_clip"] = float(args.prediction_clip)
+        (model_dir / "baseline_model.json").write_text(
+            json.dumps(ridge_artifact, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"自适应 Ridge：{len(ridge_selected)} 列 -> {model_dir/'baseline_model.json'}",
+              flush=True)
     # ⚠️ weight 只有训练端有（推理端拿不到），所以它只能进**损失**，绝不能进特征。
     # 截面块带权是 08-13 立的（+4.50%）；市场块**刻意不带权**（带权 −3.5%）。
     sample_weight = np.maximum(w.astype(np.float64), 0.0) if args.weighted_cross_section else None
@@ -326,36 +371,54 @@ def main() -> None:
 
     # 预处理与选列（全量拟合 —— 这是最终模型，没有留出段）
     scratch, stats = robust_transform_fit(features.copy())
-    selected = select_features(scratch, e, np.ones_like(e), args.feature_count)
+    if selection_sets is None:
+        selected = select_features(scratch, e, np.ones_like(e), args.feature_count)
+        market_selected = selected
+    else:
+        selected = np.asarray(selection_sets["xs"], dtype=np.int64)
+        market_selected = np.asarray(selection_sets["market"], dtype=np.int64)
     del scratch
     lgbm_features = [f"feature_{i:03d}" for i in selected]
+    market_features = [f"feature_{i:03d}" for i in market_selected]
 
     raw = features[:, selected].copy()
-    del features
     apply_robust_transform(raw, stats["lower"][selected], stats["upper"][selected],
                            stats["center"][selected], stats["scale"][selected])
     dev = cross_sectional_deviation(raw, tid)
-    if not args.market_model:
-        del raw                                # 市场块要用它当前 200 列，别提前放掉
-    blocks = [dev]
+    market_raw = None
+    market_dev = None
+    if args.market_model:
+        market_raw = features[:, market_selected].copy()
+        apply_robust_transform(
+            market_raw, stats["lower"][market_selected], stats["upper"][market_selected],
+            stats["center"][market_selected], stats["scale"][market_selected]
+        )
+        market_dev = cross_sectional_deviation(market_raw, tid)
+    del features
+    history_blocks: list[np.ndarray] = []
 
     # ---- 每资产滚动历史。history 列在**选中的 200 列之内**按 e 选（无权，与选列同口径），
     # 于是 history 列的统计量已经在 meta 的那 200 个里，推理端不用扩输入契约。
     history_positions: list[int] = []
     if not args.no_history:
-        inner = select_features(dev, e, np.ones_like(e), args.history_count)
-        history_positions = sorted(int(i) for i in inner)
+        if selection_sets is None:
+            inner = select_features(dev, e, np.ones_like(e), args.history_count)
+            history_positions = sorted(int(i) for i in inner)
+        else:
+            history_positions = list(selection_sets["history_positions"])
         history_names = [lgbm_features[i] for i in history_positions]
         sl = np.asarray(history_positions, dtype=np.int64)
         history_stats = tuple(stats[k][selected][sl] for k in ("lower", "upper", "center", "scale"))
-        print(f"history 列 {len(history_names)} 个（取自选中的 {args.feature_count} 列，"
+        print(f"history 列 {len(history_names)} 个（取自选中的 {len(selected)} 列，"
               f"窗长 {args.history_window}）；再扫一遍全量建历史块…", flush=True)
-        blocks.extend(stream_history_blocks(Path(args.data_root), args.sample_modulo,
-                                            args.sampling, history_names, history_stats,
-                                            args.history_window))
+        if history_names:
+            history_blocks = stream_history_blocks(
+                Path(args.data_root), args.sample_modulo, args.sampling,
+                history_names, history_stats, args.history_window
+            )
 
-    blocks.append(aid.astype(np.float32))          # ⚠️ asset_id 必须留在最后一列
-    design = np.ascontiguousarray(np.column_stack(blocks))
+    asset_block = aid.astype(np.float32)
+    design = np.ascontiguousarray(np.column_stack([dev, *history_blocks, asset_block]))
     assert design.shape[0] == len(tid), "历史块与采样矩阵行数不一致 —— 两条读取路径口径不同"
     min_data = max(20, int(round(MIN_DATA_FRAC * len(design))))
 
@@ -363,13 +426,21 @@ def main() -> None:
         """从 --reuse-from 复用一片森林，并硬校验它与本次跑在同一个特征空间里。"""
         source = Path(args.reuse_from)
         source_meta = json.loads((source / "hybrid_meta.json").read_text(encoding="utf-8"))
-        if list(source_meta["lgbm_features"]) != lgbm_features:
+        source_contract = resolve_feature_contract(source_meta)
+        is_market = prefix.startswith("lgbm_market")
+        expected_features = market_features if is_market else lgbm_features
+        source_features = source_contract["market_features" if is_market else "xs_features"]
+        if list(source_features) != expected_features:
             raise SystemExit(f"{source} 的选列与本次不同 —— 两片森林会不在同一个特征空间里")
         for key in ("lower", "upper", "center", "scale"):
-            if not np.array_equal(np.asarray(source_meta[key], dtype=np.float64),
-                                  np.asarray(stats[key][selected], dtype=np.float64)):
+            source_key = f"market_{key}" if is_market else f"xs_{key}"
+            expected_indices = market_selected if is_market else selected
+            if not np.array_equal(np.asarray(source_contract[source_key], dtype=np.float64),
+                                  np.asarray(stats[key][expected_indices], dtype=np.float64)):
                 raise SystemExit(f"{source} 的预处理统计量 {key} 与本次不同")
-        key = "market_model_files" if prefix.startswith("lgbm_market") else "lgbm_model_files"
+        if list(source_meta.get("history_positions") or []) != history_positions:
+            raise SystemExit(f"{source} 的 history_positions 与本次不同")
+        key = "market_model_files" if is_market else "lgbm_model_files"
         names = list(source_meta[key])
         for name in names:
             if (source / name).resolve() != (model_dir / name).resolve():
@@ -415,16 +486,20 @@ def main() -> None:
                                       args.num_iteration))
     train_rows = len(design)          # ⚠️ 先取走再放 —— meta 在函数末尾才写
     del design
+    del raw
     gc.collect()
 
-    # ---- 行级市场模型：同一批块前面再拼上 raw，标签换成 y，**不带权**
+    # ---- 行级市场模型：自己的 raw/deviation，加共享的因果 history，标签 y，**不带权**
     market_files: list[str] = []
     if args.market_model:
-        market_design = np.ascontiguousarray(np.column_stack([raw, *blocks]))
-        del raw
+        assert market_raw is not None and market_dev is not None
+        market_design = np.ascontiguousarray(
+            np.column_stack([market_raw, market_dev, *history_blocks, asset_block])
+        )
+        del market_raw, market_dev
         gc.collect()
         print(f"市场块设计矩阵 {market_design.shape[0]:,} × {market_design.shape[1]}"
-              f"（= raw {len(selected)} 列 + 截面块 {market_design.shape[1] - len(selected)} 列），"
+              f"（raw+dev 各 {len(market_selected)} 列，history {4 * len(history_positions)} 列），"
               f"标签 y，无权", flush=True)
         market_files = (reuse_forest("lgbm_market_seed") if args.train_only == "cross_section"
                         else train_forest(market_design, y, None, "lgbm_market_seed",
@@ -432,7 +507,7 @@ def main() -> None:
                                           market_num_iteration))
         del market_design
         gc.collect()
-    del dev, blocks
+    del dev, history_blocks
 
     meta = {
         "strategy": "v3_hybrid_ridge_plus_lgbm_cross_section",
@@ -450,7 +525,7 @@ def main() -> None:
         # ---- 行级市场模型（`combo_market_weight` 的 mkt_we 格，08-13）
         "market_model_files": market_files,
         "market_lambda": float(args.market_lambda) if market_files else 0.0,
-        "market_design": "raw ‖ xs_dev ‖ history ‖ asset_id",
+        "market_design": "market_raw ‖ market_dev ‖ history ‖ asset_id",
         "market_note":
             "m̂ = (1−λ)·m̂_ridge + λ·逐 time_id 无权截面均值(行级 LGBM 打 y)。"
             "λ=0.5 是先验、不拟合（ROADMAP §5，本地实测优于 1.0）。"
@@ -471,6 +546,13 @@ def main() -> None:
         "upper": stats["upper"][selected].tolist(),
         "center": stats["center"][selected].tolist(),
         "scale": stats["scale"][selected].tolist(),
+        **({
+            "market_features": market_features,
+            "market_lower": stats["lower"][market_selected].tolist(),
+            "market_upper": stats["upper"][market_selected].tolist(),
+            "market_center": stats["center"][market_selected].tolist(),
+            "market_scale": stats["scale"][market_selected].tolist(),
+        } if selection_sets is not None else {}),
         "prediction_scale": args.prediction_scale,
         "prediction_clip": args.prediction_clip,
         "scale_note": "scale 是纯后处理旋钮；此处为本地最优占位，最终值由公榜两点法定",
@@ -488,7 +570,10 @@ def main() -> None:
         "train_rows": int(train_rows),
         "sample_modulo": args.sample_modulo,
         "sampling": args.sampling,
-        "ridge_model_sha_note": "baseline_model.json 是 v1_ridge 生产模型的冻结拷贝，不重训",
+        "selection_manifest": args.selection_manifest,
+        "ridge_model_sha_note": (
+            "baseline_model.json 按 selection manifest 重训" if selection_sets is not None
+            else "baseline_model.json 是 v1_ridge 生产模型的冻结拷贝，不重训"),
     }
     (model_dir / "hybrid_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")

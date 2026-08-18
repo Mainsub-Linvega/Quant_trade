@@ -150,6 +150,7 @@ def fit_model(
     design_basis: str = "raw_dev",
     market_alpha_ratio: float = 1.0,
     cross_sectional_scaling: str = "none",
+    selected_indices: np.ndarray | None = None,
     # 与 CLI 默认（--ridge-tol / --ridge-max-iter）保持一致。历史值 1e-4/100 停得太早，
     # 换个 BLAS 线程数就训出不同模型（coef 相对差 4.75e-04）——绕过 CLI 直接调本函数的
     # 代码路径会悄悄退回那个不可复现的求解器，所以签名默认值也必须是严格档。
@@ -171,7 +172,16 @@ def fit_model(
     market_scale = 1.0 / math.sqrt(market_alpha_ratio) if design_basis == "mean_dev" else 1.0
 
     features, preprocessing = robust_transform_fit(features)
-    selected = select_features(features, target, weight, feature_count)
+    if selected_indices is None:
+        selected = select_features(features, target, weight, feature_count)
+    else:
+        selected = np.asarray(selected_indices, dtype=np.int64)
+        if selected.ndim != 1 or len(selected) == 0:
+            raise ValueError("selected_indices must be a non-empty 1D array")
+        if len(np.unique(selected)) != len(selected):
+            raise ValueError("selected_indices must be unique")
+        if selected.min() < 0 or selected.max() >= features.shape[1]:
+            raise ValueError("selected_indices are outside the feature matrix")
     design = make_design(features, time_ids, selected, design_basis, market_scale,
                          cross_sectional_scaling)
     del features

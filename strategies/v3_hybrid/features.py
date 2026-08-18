@@ -15,6 +15,86 @@ from __future__ import annotations
 import numpy as np
 
 
+_ROBUST_STAT_NAMES = ("lower", "upper", "center", "scale")
+
+
+def resolve_feature_contract(meta: dict[str, object]) -> dict[str, list[object]]:
+    """Resolve separate XS/market feature metadata with an old-model fallback."""
+    xs_features = list(meta["lgbm_features"])
+    contract: dict[str, list[object]] = {"xs_features": xs_features}
+    for name in _ROBUST_STAT_NAMES:
+        values = list(meta[name])
+        if len(values) != len(xs_features):
+            raise ValueError(f"{name} length does not match lgbm_features")
+        contract[f"xs_{name}"] = values
+
+    optional_keys = ["market_features", *[f"market_{name}" for name in _ROBUST_STAT_NAMES]]
+    present = [key in meta for key in optional_keys]
+    if any(present) and not all(present):
+        missing = [key for key, exists in zip(optional_keys, present) if not exists]
+        raise ValueError(f"incomplete market feature metadata: {missing}")
+
+    market_features = (list(meta["market_features"])
+                       if all(present) else list(xs_features))
+    contract["market_features"] = market_features
+    for name in _ROBUST_STAT_NAMES:
+        values = (list(meta[f"market_{name}"])
+                  if all(present) else list(contract[f"xs_{name}"]))
+        if len(values) != len(market_features):
+            raise ValueError(f"market_{name} length does not match market_features")
+        contract[f"market_{name}"] = values
+    return contract
+
+
+def map_history_positions(
+    xs_indices: list[int] | np.ndarray,
+    history_indices: list[int] | np.ndarray,
+) -> list[int]:
+    """Map manifest-global history indices into the selected XS feature order."""
+    xs = [int(index) for index in xs_indices]
+    history = [int(index) for index in history_indices]
+    if len(set(xs)) != len(xs) or len(set(history)) != len(history):
+        raise ValueError("XS and history feature indices must be unique")
+    positions = {index: position for position, index in enumerate(xs)}
+    missing = [index for index in history if index not in positions]
+    if missing:
+        raise ValueError(f"history features must be selected by XS: {missing}")
+    return [positions[index] for index in history]
+
+
+def selection_sets_from_manifest(
+    manifest: dict[str, object], n_features: int
+) -> dict[str, list[int]]:
+    """Validate and resolve the four global feature sets from a selection manifest."""
+    if n_features <= 0:
+        raise ValueError("n_features must be positive")
+
+    def indices_for(task: str, *, allow_empty: bool = False) -> list[int]:
+        section = manifest.get(task)
+        if not isinstance(section, dict) or section.get("selected_indices") is None:
+            raise ValueError(f"selection manifest is missing {task}.selected_indices")
+        indices = [int(index) for index in section["selected_indices"]]
+        if not allow_empty and not indices:
+            raise ValueError(f"selection manifest has an empty {task} feature set")
+        if len(set(indices)) != len(indices):
+            raise ValueError(f"selection manifest has duplicate {task} indices")
+        if any(index < 0 or index >= n_features for index in indices):
+            raise ValueError(f"selection manifest has out-of-range {task} indices")
+        return indices
+
+    ridge = indices_for("ridge")
+    xs = indices_for("xs")
+    market = indices_for("market")
+    history = indices_for("history", allow_empty=True)
+    return {
+        "ridge": ridge,
+        "xs": xs,
+        "market": market,
+        "history": history,
+        "history_positions": map_history_positions(xs, history),
+    }
+
+
 def apply_robust_transform(
     features: np.ndarray,
     lower: np.ndarray,
