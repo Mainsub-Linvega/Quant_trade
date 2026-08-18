@@ -13,8 +13,22 @@ BASELINE_KEYS = ("lag1", "difference", "mean5", "deviation5")
 T1_EXTRA_KEYS = ("lag2", "lag5")
 T2_EXTRA_KEYS = ("ema3", "ema10", "std5", "std20", "slope5", "slope20")
 T3_EXTRA_KEYS = (*T1_EXTRA_KEYS, *T2_EXTRA_KEYS, "observation_gap")
+# T5：`deviation5` 的**波动归一化**版本。baseline 已有未归一化的 deviation5，
+# t2_state 已有裸 std5 —— 但两者的比值从没被测过，而 residual atlas 显示
+# market_vol_quartile 桶间 model-vs-market delta 相差 4 倍。
+T5_EXTRA_KEYS = ("zscore5",)
 REGIME_KEYS = ("regime_current", "regime_lag1", "regime_difference")
-ARMS = ("baseline", "t1_lags", "t2_state", "t3_full", "t4_regime")
+ARMS = ("baseline", "t1_lags", "t2_state", "t3_full", "t4_regime", "t5_zscore")
+ALL_ASSET_KEYS = (*BASELINE_KEYS, *T1_EXTRA_KEYS, *T2_EXTRA_KEYS, *T5_EXTRA_KEYS)
+
+# std5 的下限。特征已过 robust transform（尺度约为 1），1e-3 只挡住真正恒定的历史，
+# 避免除以接近 0 的标准差把 z-score 炸开。
+ZSCORE_STD_FLOOR = np.float32(1e-3)
+
+
+def zscore_from(deviation: np.ndarray, std: np.ndarray) -> np.ndarray:
+    """`deviation5 / max(std5, floor)` —— 在线与离线两条路径**共用这一份实现**。"""
+    return (deviation / np.maximum(std, ZSCORE_STD_FLOOR)).astype(np.float32)
 
 
 class MultiScaleAssetHistory:
@@ -65,8 +79,7 @@ class MultiScaleAssetHistory:
         if len(current) != len(asset_ids) or len(current) != len(time_ids):
             raise ValueError("current/asset_ids/time_ids 行数必须一致")
         n, width = current.shape
-        out = {key: np.zeros((n, width), dtype=np.float32)
-               for key in (*BASELINE_KEYS, *T1_EXTRA_KEYS, *T2_EXTRA_KEYS)}
+        out = {key: np.zeros((n, width), dtype=np.float32) for key in ALL_ASSET_KEYS}
         gap = np.zeros((n, 1), dtype=np.float32)
 
         # 必须逐行推进：同一批可含多个 time_id，同一资产后面的行要看见前面的行。
@@ -91,6 +104,7 @@ class MultiScaleAssetHistory:
             _, std20, slope20 = self._mean_std_slope(history, 20, width)
             out["mean5"][row] = mean5
             out["deviation5"][row] = value - mean5
+            out["zscore5"][row] = zscore_from(out["deviation5"][row], std5)
             out["std5"][row] = std5
             out["std20"][row] = std20
             out["slope5"][row] = slope5
@@ -157,8 +171,7 @@ def temporal_atoms_from_lags(current: np.ndarray, lags: np.ndarray, counts: np.n
     n, window, width = lags.shape
     if window < 20 or current.shape != (n, width):
         raise ValueError("lags 至少需要 20 期且 current/lag 形状必须一致")
-    atoms = {key: np.zeros((n, width), dtype=np.float32)
-             for key in (*BASELINE_KEYS, *T1_EXTRA_KEYS, *T2_EXTRA_KEYS)}
+    atoms = {key: np.zeros((n, width), dtype=np.float32) for key in ALL_ASSET_KEYS}
     for key, index in (("lag1", 0), ("lag2", 1), ("lag5", 4)):
         valid = counts > index
         atoms[key][valid] = lags[valid, index]
@@ -188,6 +201,7 @@ def temporal_atoms_from_lags(current: np.ndarray, lags: np.ndarray, counts: np.n
     _, std20, slope20 = statistics(20)
     atoms["mean5"] = mean5
     atoms["deviation5"] = current - mean5
+    atoms["zscore5"] = zscore_from(atoms["deviation5"], std5)
     atoms["std5"], atoms["std20"] = std5, std20
     atoms["slope5"], atoms["slope20"] = slope5, slope20
 
@@ -219,6 +233,8 @@ def temporal_arm_blocks(atoms: dict[str, np.ndarray], arm: str) -> tuple[np.ndar
         keys.extend(T3_EXTRA_KEYS)
     elif arm == "t4_regime":
         keys.extend(REGIME_KEYS)
+    elif arm == "t5_zscore":
+        keys.extend(T5_EXTRA_KEYS)
     return tuple(atoms[key] for key in keys)
 
 
@@ -226,4 +242,4 @@ def temporal_arm_width(feature_count: int, arm: str) -> int:
     return int(sum(block.shape[1] for block in temporal_arm_blocks(
         {key: np.empty((0, (1 if key == "observation_gap" else
                                   20 if key in REGIME_KEYS else feature_count)), dtype=np.float32)
-         for key in (*BASELINE_KEYS, *T1_EXTRA_KEYS, *T2_EXTRA_KEYS, "observation_gap", *REGIME_KEYS)}, arm)))
+         for key in (*ALL_ASSET_KEYS, "observation_gap", *REGIME_KEYS)}, arm)))

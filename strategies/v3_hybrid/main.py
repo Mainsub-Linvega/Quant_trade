@@ -83,6 +83,84 @@ def _asset_scaled_zero_mean(values: np.ndarray, asset_ids: np.ndarray, scales: n
     return adjusted - np.repeat(np.add.reduceat(adjusted, starts) / counts, counts)
 
 
+class PredictionTrail:
+    """逐 asset 维护**自身预测**的因果滚动均值（slow 分量）。**有状态**，调用即推进。
+
+    窗口按**真实 time_id 步长**定义（不是「多少个观测」）：一行的 slow 是该资产在
+    ``[t − window, t)`` 内**此前**所有预测的均值。与离线端
+    ``experiments/slow_fast_csv.py:causal_trailing_mean`` 逐位一致，包括两个边界规则：
+
+    1. 该资产**首次**出现 ⟹ slow = 当期值本身（于是 fast = 0，不制造假信号）；
+    2. 见过但窗口内**没有**任何历史（跳号超过 window）⟹ slow = 0.0。
+       这看着别扭，但离线实现就是这个语义（``count = max(index − left, 1)``、分子为 0）。
+       两端必须一致，所以照搬而不是「修正」。
+
+    ⚠️ **为什么维护累积和而不是直接求窗口和**：离线算的是
+    ``(cumsum[index] − cumsum[left]) / count``。直接对窗口求和虽然数学等价，
+    但求和顺序不同 —— 实测两者差 1.29e-15（99.3% 的行不逐位相同）。这里改成同样的
+    「增量累积和相减」，两边就是**同一个算式**、逐位相同。
+    （幅度上 1e-15 本来无害：slow 是**线性**进入最终预测的，不像 history 那样喂给树 ——
+    树差一个 ulp 会翻叶子，实测能放大到 2.85e-03。但能免费做到逐位一致就不该留口子。）
+
+    官方 runner 每次 predict 恰好喂一个 time_id 的全部行、且 time_id 严格递增 ⟹
+    窗口左端只需单向右移，均摊 O(1)。
+    """
+
+    __slots__ = ("window", "_times", "_cum", "_count", "_head")
+
+    _INITIAL = 1024
+
+    def __init__(self, window: int):
+        if window <= 0:
+            raise ValueError("slow_fast_window must be positive")
+        self.window = int(window)
+        self._times: dict[int, np.ndarray] = {}
+        self._cum: dict[int, np.ndarray] = {}     # cum[k] = 前 k 个值之和，cum[0] = 0
+        self._count: dict[int, int] = {}
+        self._head: dict[int, int] = {}
+
+    def _append(self, asset: int, time_id: int, value: float) -> None:
+        n = self._count[asset]
+        times, cum = self._times[asset], self._cum[asset]
+        if n + 1 >= len(times):                    # 几何扩容，避免逐次 realloc
+            times = np.resize(times, len(times) * 2)
+            cum = np.resize(cum, len(cum) * 2)
+            self._times[asset], self._cum[asset] = times, cum
+        times[n] = time_id
+        cum[n + 1] = cum[n] + value                # 与 np.cumsum 的顺序累加逐位相同
+        self._count[asset] = n + 1
+
+    def transform_online(self, values: np.ndarray, asset_ids: np.ndarray,
+                         time_id: int) -> np.ndarray:
+        """返回这批行的 slow 分量，然后把当期值推进状态。"""
+        values = np.asarray(values, dtype=np.float64)
+        asset_ids = np.asarray(asset_ids, dtype=np.int64)
+        if values.ndim != 1 or len(values) != len(asset_ids):
+            raise ValueError("values 与 asset_ids 行数必须一致")
+        cutoff = int(time_id) - self.window
+        slow = np.empty(len(values), dtype=np.float64)
+        for row in range(len(values)):
+            asset = int(asset_ids[row])
+            if asset not in self._count:           # 规则 1：首次出现
+                self._times[asset] = np.zeros(self._INITIAL, dtype=np.int64)
+                self._cum[asset] = np.zeros(self._INITIAL, dtype=np.float64)
+                self._count[asset] = 0
+                self._head[asset] = 0
+                slow[row] = values[row]
+                self._append(asset, int(time_id), float(values[row]))
+                continue
+            n = self._count[asset]
+            times, cum = self._times[asset], self._cum[asset]
+            head = self._head[asset]
+            while head < n and times[head] < cutoff:
+                head += 1
+            self._head[asset] = head
+            count = n - head
+            slow[row] = ((cum[n] - cum[head]) / count) if count > 0 else 0.0
+            self._append(asset, int(time_id), float(values[row]))
+        return slow
+
+
 class Model:
     """Sequential inference: production ridge + LightGBM cross-sectional blend."""
 
@@ -134,6 +212,19 @@ class Model:
                 raise ValueError("asset_cross_scales must be a non-empty 1D array")
             if not np.all(np.isfinite(self.asset_cross_scales)):
                 raise ValueError("asset_cross_scales must be finite")
+
+        # ---- slow/fast 分离（①类后处理）。逐 asset 对**自身预测**做因果滚动均值，
+        # 慢/快两块各给一个 scale。公榜实测 0.0039977510 → 0.0041150085（+2.93%）。
+        # ⚠️ 两个 relative 是**相对 prediction_scale** 的乘数，不是绝对 scale ——
+        # OOF 的全局最优 scale 是 0.7296、公榜标定是 1.16（差 59%，本项目已知的尺子分歧），
+        # 只搬 OOF 的**相对模式**、保留公榜标定的绝对水平。缺键 ⟹ 关闭 ⟹ 旧模型逐位不变。
+        window = meta.get("slow_fast_window")
+        self.slow_fast = PredictionTrail(int(window)) if window else None
+        if self.slow_fast is not None:
+            self.slow_relative = np.float64(meta["slow_fast_slow_relative"])
+            self.fast_relative = np.float64(meta["slow_fast_fast_relative"])
+            if not (np.isfinite(self.slow_relative) and np.isfinite(self.fast_relative)):
+                raise ValueError("slow_fast_*_relative must be finite")
 
         # ---- 第二个市场分量：行级 LGBM 打 y，取逐 time_id 无权截面均值（`combo_market_weight`）
         # 设计矩阵 = [raw ‖ xs_dev ‖ history ‖ asset_id]，只比截面块多前面那 200 列 raw。
@@ -309,8 +400,16 @@ class Model:
             market = (1.0 - self.market_lambda) * market + self.market_lambda * m_lgbm
 
         blended = market + (1.0 - self.blend_weight) * e_ridge + self.blend_weight * e_lgbm
-        return np.clip(blended * self.prediction_scale,
-                       -self.prediction_clip, self.prediction_clip)
+        if self.slow_fast is None:
+            return np.clip(blended * self.prediction_scale,
+                           -self.prediction_clip, self.prediction_clip)
+        # ⚠️ 有状态：喂给 trail 的必须是**未乘 scale**的 blended，与离线端
+        # `raw = pred / prediction_scale` 反解出来的量同口径。
+        slow = self.slow_fast.transform_online(blended, asset_ids, time_id)
+        fast = blended - slow
+        emitted = (self.prediction_scale * self.slow_relative) * slow \
+            + (self.prediction_scale * self.fast_relative) * fast
+        return np.clip(emitted, -self.prediction_clip, self.prediction_clip)
 
     def _forest_mean(self, design, asset_ids, boosters, forest, num_iteration: int) -> np.ndarray:
         """一片森林在这批行上的**平均**预测（lightgbm 主路径 / numpy 兜底两条）。"""

@@ -52,12 +52,12 @@ class TemporalHistoryTest(unittest.TestCase):
 
     def test_arm_widths_and_prefix(self) -> None:
         expected = {"baseline": 16, "t1_lags": 24, "t2_state": 40, "t3_full": 49,
-                    "t4_regime": 76}
+                    "t4_regime": 76, "t5_zscore": 20}
         atoms = {key: np.zeros((2, (1 if key == "observation_gap" else
                                       20 if key.startswith("regime_") else 4)), np.float32)
                  for key in ("lag1", "difference", "mean5", "deviation5", "lag2", "lag5",
                              "ema3", "ema10", "std5", "std20", "slope5", "slope20",
-                             "observation_gap", "regime_current", "regime_lag1",
+                             "zscore5", "observation_gap", "regime_current", "regime_lag1",
                              "regime_difference")}
         for arm in ARMS:
             self.assertEqual(sum(x.shape[1] for x in temporal_arm_blocks(atoms, arm)), expected[arm])
