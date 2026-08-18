@@ -146,6 +146,7 @@
 | 8/17 | **slow/fast 分离** | OOF +5.77%（6/6 门槛、3/4 折）、复现 +5.87%、全分辨率合并 +5.93%；**未建候选**；可纯改 CSV 验证 | `v3_slow_variance_3s480.md` / `v3_fullres_slow_probe_summary.md` |
 | 8/17 | z-score（temporal 最后一项） | `REJECTED`：+0.70%、3/5 折、去最好折为负 ⟹ **temporal 族全族关闭** | `temporal_zscore_screen.md` |
 | 8/18 | **P4 训练窗（收官）** | `CLOSED`：减数据明确有害（−24.5%/0-of-5），加数据测不出（+1.08%/2-of-5、CI 跨 0）⟹ **数据量已饱和**，78,960 维持 | `v3_recency_expanding_ladder_1s160.md` |
+| 8/18 | per-asset **叠加**（blend） | `REJECTED`：全部为负，per-asset 臂（−3.91%、0/4）比 `shared` 对照（−1.19%）**还差**；corr 0.57~0.63 非低相关 ⟹ 替换与叠加两种用法都关闭 | `asset_blend_check.md` |
 | 8/18 | per-asset 完整载荷 | `RESULT`→关闭：线性内异质性大（+95.8%、5/5 折、系数相关仅 +0.419），但 per-asset ridge 仍比生产 LGBM 截面块**低 50.5%** —— 树的 `asset_id` categorical 早已吃掉这块 | `asset_loading_diagnostic.md` |
 | 8/18 | responder 窗口图谱 | `RESULT`：测出窗口梯子 H=1/2/4/**5(target)**/7/10；但重建 R² 只 0.883、单步 u 不存在 ⟹ horizon 分解缺前提，不推进 | `responder_window_atlas.md` |
 | 8/18 | P4 训练窗缩短 | `REJECTED`：60k −9.50%（1/5）、40k −24.54%（0/5），机制是 ΔB 抬升而非 ΔA 丢失；维持 78,960。阶梯单调 ⟹ **扩展窗（+50% 数据）未测** | `v3_recency_ladder_3s480.md` |

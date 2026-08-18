@@ -1,0 +1,120 @@
+{
+  "experiment": "asset_blend_check",
+  "question": "per-asset ridge 能不能叠加到生产截面块上（而不是替换）？",
+  "baseline": "生产 e_lgbm 单独（同批验证行上的最优单 scale）",
+  "scar_note": "CLAUDE.md §8.6：低相关≠适合集成 ⟹ 只以配对 peak 增量判决，corr 仅作诊断",
+  "control_note": "`shared` 臂是对照：若它也能叠加，说明是「ridge 补树」而不是「per-asset 结构补树」",
+  "arms": {
+    "shared": {
+      "mean_delta": -1.2543046675645206e-05,
+      "relative": -0.011851695725296221,
+      "mean_delta_drop_best": -2.38732960045976e-05,
+      "positive_folds": 2,
+      "n_folds": 4,
+      "sign_test_p": 1.0,
+      "corr_with_lgbm": 0.5695544531277124,
+      "paired_bootstrap": {
+        "p2.5": 1.010974862544155e-06,
+        "p50": 2.0633420947103282e-05,
+        "p97.5": 3.888846817269277e-05
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_3_of_4_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_1pct": false,
+        "5_paired_bootstrap_ci_lower_bound_positive": true
+      },
+      "pass": false
+    },
+    "per_asset_k0": {
+      "mean_delta": -4.135237301728875e-05,
+      "relative": -0.03907310202962676,
+      "mean_delta_drop_best": -5.144853426331178e-05,
+      "positive_folds": 0,
+      "n_folds": 4,
+      "sign_test_p": 0.125,
+      "corr_with_lgbm": 0.59328873503788,
+      "paired_bootstrap": {
+        "p2.5": -7.804761555982298e-06,
+        "p50": 7.741785760445661e-07,
+        "p97.5": 9.144270929091984e-06
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_3_of_4_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_1pct": false,
+        "5_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "pass": false
+    },
+    "per_asset_k1": {
+      "mean_delta": -4.525002013005283e-05,
+      "relative": -0.04275591760223827,
+      "mean_delta_drop_best": -5.906995268965574e-05,
+      "positive_folds": 0,
+      "n_folds": 4,
+      "sign_test_p": 0.125,
+      "corr_with_lgbm": 0.6307239632397353,
+      "paired_bootstrap": {
+        "p2.5": -5.974509311860139e-06,
+        "p50": -7.170903427857291e-07,
+        "p97.5": 5.0678295447051e-07
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_3_of_4_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_1pct": false,
+        "5_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "pass": false
+    },
+    "per_asset_k10": {
+      "mean_delta": -2.679424337938575e-05,
+      "relative": -0.025317391215533985,
+      "mean_delta_drop_best": -3.998792008589507e-05,
+      "positive_folds": 2,
+      "n_folds": 4,
+      "sign_test_p": 1.0,
+      "corr_with_lgbm": 0.6158142116262184,
+      "paired_bootstrap": {
+        "p2.5": -4.502482291739778e-06,
+        "p50": 1.0445379515339388e-05,
+        "p97.5": 2.433504471384187e-05
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_3_of_4_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_1pct": false,
+        "5_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "pass": false
+    },
+    "per_asset_k100": {
+      "mean_delta": -1.0761287950811091e-05,
+      "relative": -0.010168144447150357,
+      "mean_delta_drop_best": -2.1906215495213105e-05,
+      "positive_folds": 1,
+      "n_folds": 4,
+      "sign_test_p": 0.625,
+      "corr_with_lgbm": 0.6174514343885465,
+      "paired_bootstrap": {
+        "p2.5": 1.9897957774667548e-06,
+        "p50": 1.9238797699094965e-05,
+        "p97.5": 3.5134824067058494e-05
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_3_of_4_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_1pct": false,
+        "5_paired_bootstrap_ci_lower_bound_positive": true
+      },
+      "pass": false
+    }
+  },
+  "elapsed_seconds": 89.85880280099809
+}
