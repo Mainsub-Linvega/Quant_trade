@@ -109,8 +109,10 @@ def main() -> None:
         overrides["num_iteration"] = args.num_iteration
     if args.scale is not None:
         overrides["prediction_scale"] = args.scale
-    if not overrides:
-        raise SystemExit("至少要覆盖一个参数，否则直接跑 runner 就行了")
+    # `--model-dir` 本身就是一个变体来源：拿另一套模型产物、用它自己的 meta 跑官方 runner。
+    # 这个守卫写在 --model-dir 之前，当时「变体」只能靠覆盖 meta 产生，现在不成立了。
+    if not overrides and args.model_dir is None:
+        raise SystemExit("至少要覆盖一个参数或指定 --model-dir，否则直接跑 runner 就行了")
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +123,17 @@ def main() -> None:
               + (f"（模型产物来自 {args.model_dir}）" if args.model_dir else ""))
         package = stage(overrides, workspace,
                         Path(args.model_dir) if args.model_dir else None)
+
+        # 打印**实际入包**的模型身份 —— 08-13 的事故正是「候选 meta 与实际跑的不一致」。
+        staged_meta = json.loads((package / "model" / "hybrid_meta.json").read_text(encoding="utf-8"))
+        identity = {k: staged_meta.get(k) for k in
+                    ("blend_weight", "num_iteration", "prediction_scale", "prediction_clip",
+                     "market_lambda", "cross_section_weighted")}
+        identity["n_lgbm_files"] = len(staged_meta.get("lgbm_model_files", []))
+        identity["n_market_files"] = len(staged_meta.get("market_model_files", []))
+        scales = staged_meta.get("asset_cross_scales")
+        identity["asset_cross_scales"] = (f"{len(scales)} 个资产" if scales else "无")
+        print("  实际入包的模型身份：" + ", ".join(f"{k}={v}" for k, v in identity.items()))
 
         raw_path = workspace / "raw.csv"
         print(f"\n跑官方 runner（全量测试集）…", flush=True)
@@ -140,9 +153,10 @@ def main() -> None:
 
         frame = pd.read_csv(raw_path)
 
-    meta = json.loads((STRATEGY_DIR / "model" / "hybrid_meta.json").read_text(encoding="utf-8"))
+    # clip 必须取**入包那份**的值。原来读的是生产 meta —— 换 --model-dir 时那是另一个模型，
+    # 候选若用了不同的 clip，体检就会按错的阈值判（同 08-13 事故的那一类错配）。
     print("\n提交前体检：")
-    check(frame, float(meta["prediction_clip"]))
+    check(frame, float(staged_meta["prediction_clip"]))
 
     frame.to_csv(output, index=False, float_format=f"%.{args.decimals}f")
     print(f"\n写出 {output}（{output.stat().st_size/1e6:.1f} MB，{args.decimals} 位小数）")

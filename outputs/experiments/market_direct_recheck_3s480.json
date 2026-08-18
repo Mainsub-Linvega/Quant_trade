@@ -1,0 +1,140 @@
+{
+  "experiment": "market_direct_recheck",
+  "question": "换到今天的口径、对今天的两分量 m̂，直接回归 m_t 是不是仍然输？",
+  "preregistered_expectation": "仍然输；若相反则是推翻已结案结论，必须单独确认",
+  "caliber": {
+    "n_folds": 5,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "train_window_sampled_time_ids": 78960,
+    "embargo": 6,
+    "cross_sectional_mean": "unweighted",
+    "metric": "peak = A²/B（各臂在自己最优 scale 下的 R²_m）",
+    "fold_source": "直接读 OOF cache 的 fold 标签"
+  },
+  "prior_result": {
+    "source": "outputs/experiments/market_model.md",
+    "direct_u": "+2.0%、6/10 折、符号 p=0.754、四条判据全否（旧口径、旧基准）"
+  },
+  "baseline_peaks": [
+    0.0004912048039700663,
+    0.0013166769544565244,
+    0.001063794139245193,
+    0.0011484329715984246,
+    0.0017206407941188374
+  ],
+  "baseline_mean_peak": 0.001148149932677809,
+  "by_alpha": {
+    "10000": {
+      "mean_peak": 0.00029425435648041044,
+      "mean_delta": -0.0008538955761973986,
+      "mean_delta_drop_best": -0.0010216538563774364,
+      "relative": -0.7437143459181099,
+      "positive_folds": 0,
+      "n_folds": 5,
+      "sign_test_p": 0.0625,
+      "per_fold_delta": [
+        -0.00018286245547724771,
+        -0.0008240678900037825,
+        -0.0009381351563125069,
+        -0.0007133941453231105,
+        -0.0016110182338703457
+      ]
+    },
+    "100000": {
+      "mean_peak": 0.0005128526254772842,
+      "mean_delta": -0.000635297307200525,
+      "mean_delta_drop_best": -0.0007611694755295599,
+      "relative": -0.5533226010986498,
+      "positive_folds": 0,
+      "n_folds": 5,
+      "sign_test_p": 0.0625,
+      "per_fold_delta": [
+        -0.00013180863388438533,
+        -0.0006146629675455402,
+        -0.0008030582489719686,
+        -0.00042274260509992745,
+        -0.001204214080500803
+      ]
+    },
+    "1e+06": {
+      "mean_peak": 0.000789227696925064,
+      "mean_delta": -0.0003589222357527451,
+      "mean_delta_drop_best": -0.00042503982473380495,
+      "relative": -0.3126092033255948,
+      "positive_folds": 0,
+      "n_folds": 5,
+      "sign_test_p": 0.0625,
+      "per_fold_delta": [
+        -0.00012721501997640922,
+        -0.0006402760018558192,
+        -0.0005018486025351323,
+        -9.445187982850558e-05,
+        -0.0004308196745678591
+      ]
+    },
+    "1e+07": {
+      "mean_peak": 0.0008892541358178765,
+      "mean_delta": -0.0002588957968599326,
+      "mean_delta_drop_best": -0.0003581361485815601,
+      "relative": -0.22548953711656344,
+      "positive_folds": 1,
+      "n_folds": 5,
+      "sign_test_p": 0.375,
+      "per_fold_delta": [
+        -0.000282571074611009,
+        -0.0006690492784167114,
+        -0.00026198833522139274,
+        0.00013806561002657736,
+        -0.00021893590607712714
+      ]
+    },
+    "1e+08": {
+      "mean_peak": 0.0007037461583603405,
+      "mean_delta": -0.00044440377431746866,
+      "mean_delta_drop_best": -0.000572975570689558,
+      "relative": -0.38706075022884334,
+      "positive_folds": 1,
+      "n_folds": 5,
+      "sign_test_p": 0.375,
+      "per_fold_delta": [
+        -0.00040228723578439616,
+        -0.0009394956615044325,
+        -0.00011844664565349868,
+        6.988341117088875e-05,
+        -0.0008316727398159046
+      ]
+    },
+    "1e+09": {
+      "mean_peak": 0.00032177643012169533,
+      "mean_delta": -0.0008263735025561137,
+      "mean_delta_drop_best": -0.0009720264935995906,
+      "relative": -0.7197435448424214,
+      "positive_folds": 0,
+      "n_folds": 5,
+      "sign_test_p": 0.0625,
+      "per_fold_delta": [
+        -0.00049118523345289,
+        -0.001316103000483386,
+        -0.00024376153838220622,
+        -0.00036626388525249503,
+        -0.0017145538552095915
+      ]
+    }
+  },
+  "best_alpha": "1e+07",
+  "measured": {
+    "share_m": 0.7095328503217027,
+    "current_peak": 0.0015513685843760168
+  },
+  "score_gain_share": -0.11840840051316456,
+  "verdict": {
+    "checks": {
+      "1_paired_delta_positive_4of5": false,
+      "2_survives_drop_best_fold": false,
+      "3_positive_across_alpha_ladder": false,
+      "4_score_gain_at_least_5pct": false
+    },
+    "pass": false
+  }
+}

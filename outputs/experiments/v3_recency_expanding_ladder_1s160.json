@@ -1,0 +1,65 @@
+{
+  "experiment": "v3_recency_ladder",
+  "question": "未来更像最近的训练窗，还是完整历史窗？",
+  "paired_guarantee": "各臂与基准的 time_id/asset_id/fold/target/weight 逐位相同（已断言）；做法是固定 fold 版图、只截短训练段（--train-truncate），**不是**改 --train-window（那会把验证段一起挪走）",
+  "baseline": {
+    "cache": "v3_production_oof_phasebal_prodwindow_exact",
+    "train_window_sampled_time_ids": 78960,
+    "per_fold_peak": {
+      "0": 0.0008651385269344228,
+      "1": 0.0016338060906544057,
+      "2": 0.0014338875947802444,
+      "3": 0.001493022837370163,
+      "4": 0.0016161676135605862
+    },
+    "mean_peak": 0.0014084045326599643
+  },
+  "confounder_note": "窗口变短 ⟹ 行数变少 ⟹ min_data_in_leaf 自动变小 ⟹ 有效容量被动改变。`frozen` 臂把 min_data_in_leaf 冻结在 78,960 档，用来拆开这两件事。",
+  "promotion_limit": "第②类拟合紧密度轴，本项目已三次本地↔公榜量反 ⟹ 本地结果不单独晋级，须公榜或回补标签裁决（CLAUDE.md §8.1）。",
+  "detection_floor_estimate": 8.521804443866985e-05,
+  "arms": {
+    "expanding": {
+      "arm_cache": "v3_recency_expanding_1s160",
+      "per_fold_peak": {
+        "0": 0.0008651385269344228,
+        "1": 0.0015676193296363205,
+        "2": 0.0017264873900452438,
+        "3": 0.001537611152802187,
+        "4": 0.0014213391049996628
+      },
+      "per_fold_delta": [
+        0.0,
+        -6.618676101808512e-05,
+        0.0002925997952649994,
+        4.458831543202417e-05,
+        -0.00019482850856092338
+      ],
+      "mean_delta": 1.5234568223603017e-05,
+      "mean_delta_drop_best": -5.410673853674608e-05,
+      "relative": 0.010816898036269774,
+      "relative_drop_best": -0.03841704374137317,
+      "positive_folds": 2,
+      "n_folds": 5,
+      "sign_test_p": 1.0,
+      "mechanism": {
+        "relative_delta_A": 0.02507248273910358,
+        "relative_delta_B": 0.03674202353714686
+      },
+      "paired_bootstrap": {
+        "p2.5": -6.712975425049394e-05,
+        "p50": 1.9503490250505373e-05,
+        "p97.5": 0.00010330633462684575
+      },
+      "checks": {
+        "1_mean_delta_positive": true,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_1pct": true,
+        "5_two_delta_A_exceeds_delta_B": true,
+        "6_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "pass": false
+    }
+  },
+  "skipped_arms": []
+}

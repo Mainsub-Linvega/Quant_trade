@@ -63,6 +63,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--label", default="v3_production_oof_phasebal_prodwindow_exact")
     p.add_argument("--n-folds", type=int, default=5)
     p.add_argument("--train-window", type=int, default=REFERENCE_TRAIN_WINDOW)
+    p.add_argument("--train-truncate", type=int, default=None,
+                   help="P4 recency：**保持 fold 版图不变**，只把每折训练段截到最后 N 个采样 "
+                        "time_id。⚠️ 不要改 --train-window 来做这件事 —— rolling_time_folds 的 "
+                        "first_valid_idx = train_window + embargo，改它会把**验证段**也挪走，"
+                        "各臂就落在不同数据上，配对比较失效。")
+    p.add_argument("--expanding-train", action="store_true",
+                   help="P4 recency 的反方向：**保持 fold 版图不变**，把每折训练段扩到 embargo "
+                        "之前的全部历史（滑动窗在后面几折丢掉了本可用的数据）。"
+                        "fold 0 不变、验证段不变 ⟹ 与滑动窗基准天然配对。与 --train-truncate 互斥。")
+    p.add_argument("--expanding-cap", type=int, default=None,
+                   help="给 --expanding-train 封顶（内存不够时用），不影响配对性。")
+    p.add_argument("--freeze-min-data", action="store_true",
+                   help="P4 recency：把 min_data_in_leaf 冻结在 --train-window 那档的行数上，"
+                        "不随截断后的行数缩放。用来把「数据量」与「有效容量」两个混淆项拆开。")
     p.add_argument("--embargo", type=int, default=6)
     p.add_argument("--sample-modulo", type=int, default=5)
     p.add_argument("--sampling", choices=["periodic", "phase_balanced"], default="phase_balanced")
@@ -99,12 +113,15 @@ def row_slice(time_ids: np.ndarray, ids: np.ndarray) -> slice:
 def fit_predict_lgbm(design_train: np.ndarray, label: np.ndarray, weight: np.ndarray | None,
                      design_valid: np.ndarray, args: argparse.Namespace,
                      prefix: str, spec: dict[str, float], min_data_scale: float = 1.0,
-                     num_iteration: int | None = None) -> np.ndarray:
+                     num_iteration: int | None = None,
+                     min_data_rows: int | None = None) -> np.ndarray:
     import lightgbm as lgb
 
     rounds = args.num_iteration if num_iteration is None else num_iteration
     cat = design_train.shape[1] - 1
-    min_data = max(20, int(round(MIN_DATA_FRAC * len(design_train) * min_data_scale)))
+    # min_data_rows 只在 P4 的「冻结容量」臂里被指定；默认仍按实际训练行数缩放。
+    rows_for_min_data = len(design_train) if min_data_rows is None else min_data_rows
+    min_data = max(20, int(round(MIN_DATA_FRAC * rows_for_min_data * min_data_scale)))
     result = np.zeros(len(design_valid), dtype=np.float64)
     for seed_offset in range(args.n_seeds):
         seed = args.seed + seed_offset
@@ -131,13 +148,15 @@ def fit_predict_lgbm(design_train: np.ndarray, label: np.ndarray, weight: np.nda
 def fit_predict_lgbm_checkpoints(design_train: np.ndarray, label: np.ndarray,
                                   weight: np.ndarray | None, design_valid: np.ndarray,
                                   args: argparse.Namespace, prefix: str, spec: dict[str, float],
-                                  min_data_scale: float, checkpoints: list[int]) -> dict[int, np.ndarray]:
+                                  min_data_scale: float, checkpoints: list[int],
+                                  min_data_rows: int | None = None) -> dict[int, np.ndarray]:
     import lightgbm as lgb
 
     checkpoints = sorted(set(int(v) for v in checkpoints))
     max_rounds = max(checkpoints)
     cat = design_train.shape[1] - 1
-    min_data = max(20, int(round(MIN_DATA_FRAC * len(design_train) * min_data_scale)))
+    rows_for_min_data = len(design_train) if min_data_rows is None else min_data_rows
+    min_data = max(20, int(round(MIN_DATA_FRAC * rows_for_min_data * min_data_scale)))
     result = {v: np.zeros(len(design_valid), dtype=np.float64) for v in checkpoints}
     for seed_offset in range(args.n_seeds):
         seed = args.seed + seed_offset
@@ -178,6 +197,8 @@ def main() -> None:
     checkpoints = sorted(set([*args.market_checkpoints, market_rounds]))
     if cross_rounds <= 0 or market_rounds <= 0 or any(v <= 0 for v in checkpoints):
         raise SystemExit("all iteration counts must be positive")
+    if args.expanding_train and args.train_truncate is not None:
+        raise SystemExit("--expanding-train 与 --train-truncate 互斥")
     output_dir = Path(args.output_dir)
     cache_dir = Path(args.cache_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -220,8 +241,32 @@ def main() -> None:
 
     for index, (train_ids, valid_ids) in enumerate(folds):
         fold_started = time.perf_counter()
+        full_train_ids = train_ids
+        if args.expanding_train:
+            # 训练段扩到 embargo 之前的全部历史；valid_ids 一个不动 ⟹ 与滑动窗基准配对
+            v_start = int(np.searchsorted(unique_time_ids, valid_ids[0]))
+            expanded = unique_time_ids[: max(0, v_start - args.embargo)]
+            if args.expanding_cap is not None:
+                expanded = expanded[-args.expanding_cap:]
+            if len(expanded) < len(train_ids):
+                raise AssertionError("expanding window is shorter than the sliding window")
+            train_ids = expanded
+            print(f"fold {index}: 训练段 {len(full_train_ids):,} → {len(train_ids):,} 个 time_id"
+                  f"（+{len(train_ids)-len(full_train_ids):,}；验证段不变：{len(valid_ids):,}）",
+                  flush=True)
+        if args.train_truncate is not None:
+            if args.train_truncate > len(train_ids):
+                raise SystemExit(f"--train-truncate {args.train_truncate} 超过本折训练段 "
+                                 f"{len(train_ids)} 个 time_id")
+            # 只砍训练段的**前端**，valid_ids 不动 ⟹ 各臂落在完全相同的验证行上
+            train_ids = train_ids[-args.train_truncate:]
+            print(f"fold {index}: 训练段 {len(full_train_ids):,} → {len(train_ids):,} 个 time_id"
+                  f"（验证段不变：{len(valid_ids):,}）", flush=True)
         tr = row_slice(time_ids, train_ids)
         va = row_slice(time_ids, valid_ids)
+        # 冻结容量臂：min_data_in_leaf 按**未截断**训练段的行数算，不随截断缩小
+        full_tr = row_slice(time_ids, full_train_ids)
+        frozen_rows = (full_tr.stop - full_tr.start) if args.freeze_min_data else None
         train_features = features[tr].copy()
         valid_features = features[va].copy()
         y_tr, y_va = target[tr], target[va]
@@ -271,16 +316,23 @@ def main() -> None:
         d_va_xs = np.ascontiguousarray(np.column_stack(
             [xs_va, *history_va, aid_va.astype(np.float32)]))
         e_pred = fit_predict_lgbm(d_tr_xs, e_tr, w_tr, d_va_xs, args, "cross", XS_SPEC,
-                                   num_iteration=cross_rounds)
+                                   num_iteration=cross_rounds, min_data_rows=frozen_rows)
         e_lgbm = e_pred - group_mean(e_pred, va_starts, va_counts)
 
         d_tr_market = np.ascontiguousarray(np.column_stack(
             [transformed_train[:, xs_selected], xs_tr, *history_tr, aid_tr.astype(np.float32)]))
         d_va_market = np.ascontiguousarray(np.column_stack(
             [transformed_valid[:, xs_selected], xs_va, *history_va, aid_va.astype(np.float32)]))
+        # ⚠️ 内存：market 设计矩阵是全流程最大的一次分配（fold 越大越夸张）。
+        # 到这里 transformed_*/xs_*/history_* 都已经并进设计矩阵、不再被引用，
+        # 但原本要到折末才 del —— 于是它们在**峰值时刻**白占约 6 GB。
+        # 训练前先放掉，峰值直接降一大截（swap=0，没有缓冲，必须省）。
+        del (train_features, valid_features, transformed_train, transformed_valid,
+             xs_tr, xs_va, history_tr, history_va)
+        gc.collect()
         market_preds = fit_predict_lgbm_checkpoints(
             d_tr_market, y_tr, None, d_va_market, args, "market", MARKET_SPEC,
-            MARKET_MIN_DATA_SCALE, checkpoints)
+            MARKET_MIN_DATA_SCALE, checkpoints, min_data_rows=frozen_rows)
         checkpoint_components: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
         for checkpoint, market_pred_at_checkpoint in market_preds.items():
             market_lgbm_at_checkpoint = group_mean(market_pred_at_checkpoint, va_starts, va_counts)
@@ -331,9 +383,9 @@ def main() -> None:
         print(f"  fold {index}: score={fold_metric['score']:.8f}, peak={fold_metric['peak']:.8f}, "
               f"raw_peak={raw_metric['peak']:.8f}, elapsed={fold_rows[-1]['elapsed_seconds']:.0f}s",
               flush=True)
-        del (train_features, valid_features, transformed_train, transformed_valid, stats,
-             e_tr, xs_tr, xs_va, history_tr, history_va, d_tr_xs, d_va_xs,
-             d_tr_market, d_va_market, e_pred, market_preds, prediction)
+        # 上面那批已在 market 训练前提前释放，这里只收剩下的
+        del (stats, e_tr, d_tr_xs, d_va_xs, d_tr_market, d_va_market,
+             e_pred, market_preds, prediction)
         gc.collect()
 
     valid_mask = fold_id >= 0
@@ -354,7 +406,8 @@ def main() -> None:
         "config": {k: getattr(args, k) for k in (
             "n_folds", "train_window", "embargo", "sample_modulo", "sampling",
             "history_window", "num_iteration", "n_seeds", "seed", "num_threads", "prediction_scale",
-            "prediction_clip")},
+            "prediction_clip", "train_truncate", "freeze_min_data",
+            "expanding_train", "expanding_cap")},
         "rounds": {"cross": int(cross_rounds), "market": int(market_rounds),
                    "market_checkpoints": checkpoints},
         "architecture": {

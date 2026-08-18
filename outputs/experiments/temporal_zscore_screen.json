@@ -1,0 +1,243 @@
+{
+  "question": "Do pre-registered multi-scale temporal states beat the validated v3 history block?",
+  "configuration": {
+    "data_root": "/home/mainsub/Documents/Quant_trade/data",
+    "output_dir": "/home/mainsub/Documents/Quant_trade/outputs/experiments",
+    "label": "temporal_zscore_screen",
+    "arms": [
+      "baseline",
+      "t5_zscore"
+    ],
+    "n_folds": 5,
+    "train_window": 39480,
+    "embargo": 6,
+    "sample_modulo": 10,
+    "sampling": "phase_balanced",
+    "feature_count": 200,
+    "history_count": 40,
+    "ridge_alpha": 2000000.0,
+    "lgbm_rounds": 160,
+    "lgbm_seeds": 1,
+    "seed": 2026,
+    "num_threads": 8,
+    "cache_batch_size": 30000,
+    "transform_chunk": 20000,
+    "prediction_cache": null,
+    "force": false
+  },
+  "history_columns": [
+    5,
+    13,
+    14,
+    15,
+    17,
+    18,
+    34,
+    36,
+    39,
+    41,
+    95,
+    98,
+    100,
+    135,
+    157,
+    160,
+    175,
+    187,
+    188,
+    190,
+    191,
+    193,
+    199,
+    200,
+    202,
+    204,
+    218,
+    219,
+    236,
+    250,
+    256,
+    258,
+    268,
+    284,
+    286,
+    296,
+    298,
+    305,
+    308,
+    318
+  ],
+  "arm_definitions": {
+    "baseline": "lag1+difference+mean5+deviation5",
+    "t1_lags": "baseline+lag2+lag5",
+    "t2_state": "baseline+EWM3/EWM10/std5/std20/slope5/slope20",
+    "t3_full": "T1+T2+observation_gap",
+    "t4_regime": "baseline+20D current compressed regime+lag1+difference"
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "train_rows": 591851,
+      "valid_rows": 148022,
+      "arms": {
+        "baseline": {
+          "A": 0.0013327226898859892,
+          "B": 0.0025378211617051627,
+          "peak": 0.0006998719196365874,
+          "optimal_scale": 0.5251444467389232,
+          "score_at_unit_scale": 0.0001276242180668157,
+          "denominator": 480325.63549029303,
+          "design_columns": 361
+        },
+        "t5_zscore": {
+          "A": 0.0013498543370462051,
+          "B": 0.0025650235895584373,
+          "peak": 0.0007103664616028429,
+          "optimal_scale": 0.5262541609913924,
+          "score_at_unit_scale": 0.00013468508453397298,
+          "denominator": 480325.63549029303,
+          "design_columns": 401
+        }
+      },
+      "elapsed_seconds": 64.00969635305228
+    },
+    {
+      "fold": 1,
+      "train_rows": 591902,
+      "valid_rows": 145244,
+      "arms": {
+        "baseline": {
+          "A": 0.0017763728629597232,
+          "B": 0.0017284216099552631,
+          "peak": 0.0018256544179295453,
+          "optimal_scale": 1.027742798821927,
+          "score_at_unit_scale": 0.0018243241159641833,
+          "denominator": 391766.1944216382,
+          "design_columns": 361
+        },
+        "t5_zscore": {
+          "A": 0.001754071330300494,
+          "B": 0.0017279099505782658,
+          "peak": 0.001780628805773396,
+          "optimal_scale": 1.0151404763387544,
+          "score_at_unit_scale": 0.0017802327100227223,
+          "denominator": 391766.1944216382,
+          "design_columns": 401
+        }
+      },
+      "elapsed_seconds": 62.33502092096023
+    },
+    {
+      "fold": 2,
+      "train_rows": 589147,
+      "valid_rows": 145640,
+      "arms": {
+        "baseline": {
+          "A": 0.001514240861182659,
+          "B": 0.0017130050711386857,
+          "peak": 0.0013385397535052392,
+          "optimal_scale": 0.8839675297493998,
+          "score_at_unit_scale": 0.0013154766512266324,
+          "denominator": 392743.8703778386,
+          "design_columns": 361
+        },
+        "t5_zscore": {
+          "A": 0.0015349041660779762,
+          "B": 0.0017050543395638817,
+          "peak": 0.0013817335579147153,
+          "optimal_scale": 0.9002083572718119,
+          "score_at_unit_scale": 0.0013647539925920706,
+          "denominator": 392743.8703778386,
+          "design_columns": 401
+        }
+      },
+      "elapsed_seconds": 59.4558034419897
+    },
+    {
+      "fold": 3,
+      "train_rows": 586774,
+      "valid_rows": 147753,
+      "arms": {
+        "baseline": {
+          "A": 0.001322249183811828,
+          "B": 0.0016529316115813492,
+          "peak": 0.0010577224682746652,
+          "optimal_scale": 0.7999418575743981,
+          "score_at_unit_scale": 0.0009915667560423066,
+          "denominator": 468652.12415732414,
+          "design_columns": 361
+        },
+        "t5_zscore": {
+          "A": 0.0013515490033180607,
+          "B": 0.0016318016357286535,
+          "peak": 0.0011194281635551664,
+          "optimal_scale": 0.828255698318717,
+          "score_at_unit_scale": 0.001071296370907468,
+          "denominator": 468652.12415732414,
+          "design_columns": 401
+        }
+      },
+      "elapsed_seconds": 60.24984701897483
+    },
+    {
+      "fold": 4,
+      "train_rows": 586719,
+      "valid_rows": 144181,
+      "arms": {
+        "baseline": {
+          "A": 0.0018426103299689805,
+          "B": 0.0016403139268705797,
+          "peak": 0.0020698555151487637,
+          "optimal_scale": 1.123327858030411,
+          "score_at_unit_scale": 0.002044906733067381,
+          "denominator": 430560.55534497555,
+          "design_columns": 361
+        },
+        "t5_zscore": {
+          "A": 0.0018495598023250844,
+          "B": 0.0016698453495321305,
+          "peak": 0.0020486157375803034,
+          "optimal_scale": 1.1076234112597958,
+          "score_at_unit_scale": 0.002029274255118038,
+          "denominator": 430560.55534497555,
+          "design_columns": 401
+        }
+      },
+      "elapsed_seconds": 59.76290761999553
+    }
+  ],
+  "comparisons": {
+    "t5_zscore": {
+      "baseline_peak_mean": 0.0013983288148989603,
+      "candidate_peak_mean": 0.0014081545452852848,
+      "mean_delta": 9.825730386324623e-06,
+      "relative_gain": 0.007026766724416392,
+      "positive_folds": 3,
+      "n_folds": 5,
+      "mean_delta_drop_best": -3.1442608372195084e-06,
+      "delta_A_relative": 0.007975336815562927,
+      "delta_B_relative": 0.0022003152792640533,
+      "per_fold_delta": [
+        1.049454196625551e-05,
+        -4.502561215614931e-05,
+        4.319380440947606e-05,
+        6.170569528050115e-05,
+        -2.1239777568460294e-05
+      ],
+      "checks": {
+        "mean_delta_positive": true,
+        "positive_at_least_4of5_or_80pct": false,
+        "survives_drop_best": false,
+        "relative_gain_at_least_3pct": false,
+        "mechanism_2dA_gt_dB": true
+      },
+      "pass": false
+    }
+  },
+  "verdict": {
+    "passed_arms": [],
+    "enter_confirmation": false,
+    "next": "stop temporal expansion"
+  },
+  "elapsed_seconds": 341.11987920996035
+}

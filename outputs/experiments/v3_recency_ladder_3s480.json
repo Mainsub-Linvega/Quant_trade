@@ -1,0 +1,151 @@
+{
+  "experiment": "v3_recency_ladder",
+  "question": "未来更像最近的训练窗，还是完整历史窗？",
+  "paired_guarantee": "各臂与基准的 time_id/asset_id/fold/target/weight 逐位相同（已断言）；做法是固定 fold 版图、只截短训练段（--train-truncate），**不是**改 --train-window（那会把验证段一起挪走）",
+  "baseline": {
+    "cache": "v3_production_oof_confirm_3s480_phasebal_prodwindow",
+    "train_window_sampled_time_ids": 78960,
+    "per_fold_peak": {
+      "0": 0.0010559549784834236,
+      "1": 0.002007361217531494,
+      "2": 0.0016205898414578996,
+      "3": 0.0015591302889564043,
+      "4": 0.0017791513039779317
+    },
+    "mean_peak": 0.0016044375260814308
+  },
+  "confounder_note": "窗口变短 ⟹ 行数变少 ⟹ min_data_in_leaf 自动变小 ⟹ 有效容量被动改变。`frozen` 臂把 min_data_in_leaf 冻结在 78,960 档，用来拆开这两件事。",
+  "promotion_limit": "第②类拟合紧密度轴，本项目已三次本地↔公榜量反 ⟹ 本地结果不单独晋级，须公榜或回补标签裁决（CLAUDE.md §8.1）。",
+  "detection_floor_estimate": 0.00013891900839245726,
+  "arms": {
+    "w60000_scaled": {
+      "arm_cache": "v3_recency_w60000_scaled",
+      "per_fold_peak": {
+        "0": 0.0006673912250035698,
+        "1": 0.002056772466208013,
+        "2": 0.0016068538837670922,
+        "3": 0.0013030312858019028,
+        "4": 0.0016263350899174002
+      },
+      "per_fold_delta": [
+        -0.0003885637534798538,
+        4.9411248676518686e-05,
+        -1.3735957690807479e-05,
+        -0.0002560990031545015,
+        -0.00015281621406053152
+      ],
+      "mean_delta": -0.00015236073594183513,
+      "mean_delta_drop_best": -0.00020280373209642357,
+      "relative": -0.094962087002509,
+      "relative_drop_best": -0.12640176310992776,
+      "positive_folds": 1,
+      "n_folds": 5,
+      "sign_test_p": 0.375,
+      "mechanism": {
+        "relative_delta_A": -0.03172408917454018,
+        "relative_delta_B": 0.06488073451781567
+      },
+      "paired_bootstrap": {
+        "p2.5": -0.00031834120382276073,
+        "p50": -0.0002043714781883746,
+        "p97.5": -0.00010438354531348423
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_1pct": false,
+        "5_two_delta_A_exceeds_delta_B": false,
+        "6_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "pass": false
+    },
+    "w40000_scaled": {
+      "arm_cache": "v3_recency_w40000_scaled",
+      "per_fold_peak": {
+        "0": 0.0007331398298341587,
+        "1": 0.0016687723794955088,
+        "2": 0.00134585611253848,
+        "3": 0.0011802181845483864,
+        "4": 0.0011258732137431682
+      },
+      "per_fold_delta": [
+        -0.00032281514864926494,
+        -0.00033858883803598535,
+        -0.0002747337289194197,
+        -0.00037891210440801795,
+        -0.0006532780902347634
+      ],
+      "mean_delta": -0.0003936655820494903,
+      "mean_delta_drop_best": -0.0004233985453320079,
+      "relative": -0.24536049278961478,
+      "relative_drop_best": -0.26389219801289976,
+      "positive_folds": 0,
+      "n_folds": 5,
+      "sign_test_p": 0.0625,
+      "mechanism": {
+        "relative_delta_A": -0.0394539262959779,
+        "relative_delta_B": 0.23168930864456305
+      },
+      "paired_bootstrap": {
+        "p2.5": -0.0005594230757190141,
+        "p50": -0.0003925193363236508,
+        "p97.5": -0.00024327401279654914
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_1pct": false,
+        "5_two_delta_A_exceeds_delta_B": false,
+        "6_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "pass": false
+    },
+    "w40000_frozen": {
+      "arm_cache": "v3_recency_w40000_frozen",
+      "per_fold_peak": {
+        "0": 0.0007613167994544024,
+        "1": 0.001546497129963428,
+        "2": 0.0014469174199232564,
+        "3": 0.001172491318125136,
+        "4": 0.0011541489176315307
+      },
+      "per_fold_delta": [
+        -0.00029463817902902127,
+        -0.00046086408756806614,
+        -0.00017367242153464328,
+        -0.00038663897083126837,
+        -0.000625002386346401
+      ],
+      "mean_delta": -0.00038816320906188,
+      "mean_delta_drop_best": -0.0004417859059436892,
+      "relative": -0.2419310211535026,
+      "relative_drop_best": -0.27535251373899056,
+      "positive_folds": 0,
+      "n_folds": 5,
+      "sign_test_p": 0.0625,
+      "mechanism": {
+        "relative_delta_A": -0.06411999169380127,
+        "relative_delta_B": 0.15504445018186558
+      },
+      "paired_bootstrap": {
+        "p2.5": -0.0005414086656107661,
+        "p50": -0.0003798795948340455,
+        "p97.5": -0.00023800133668776393
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_1pct": false,
+        "5_two_delta_A_exceeds_delta_B": false,
+        "6_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "pass": false
+    }
+  },
+  "skipped_arms": [
+    "w60000_frozen"
+  ]
+}
