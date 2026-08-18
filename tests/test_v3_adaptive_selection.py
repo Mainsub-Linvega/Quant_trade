@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from experiments import v3_adaptive_selection_manifest as manifest_module
 from experiments.v3_adaptive_selection import (
     aggregate_path_support,
     circular_shift_shadows,
@@ -10,6 +11,13 @@ from experiments.v3_adaptive_selection import (
     linear_evidence,
     select_from_clusters,
     select_task_features,
+)
+from experiments.v3_adaptive_selection_manifest import (
+    assemble_manifest,
+    chronological_inner_splits,
+    make_shadow_columns,
+    selection_task_views,
+    validation_tree_evidence,
 )
 
 
@@ -347,3 +355,179 @@ def test_unrelated_cluster_rank_changes_do_not_flip_representative() -> None:
 
     assert representative_for(baseline, 10) == 0
     assert representative_for(changed, 10) == 0
+
+
+def test_chronological_inner_splits_expand_without_splitting_time_ids() -> None:
+    time_ids = np.array([0, 0, 1, 1, 2, 3, 3, 4])
+
+    splits = chronological_inner_splits(time_ids, n_blocks=4)
+
+    assert len(splits) == 3
+    expected = [
+        (np.array([0, 1, 2, 3]), np.array([4])),
+        (np.array([0, 1, 2, 3, 4]), np.array([5, 6])),
+        (np.array([0, 1, 2, 3, 4, 5, 6]), np.array([7])),
+    ]
+    for (train_rows, valid_rows), (expected_train, expected_valid) in zip(
+        splits, expected, strict=True
+    ):
+        np.testing.assert_array_equal(train_rows, expected_train)
+        np.testing.assert_array_equal(valid_rows, expected_valid)
+        assert time_ids[train_rows[-1]] < time_ids[valid_rows[0]]
+
+
+def test_make_shadow_columns_is_deterministic_and_non_identity() -> None:
+    features = np.arange(24, dtype=np.float64).reshape(8, 3)
+
+    first = make_shadow_columns(features, n_shadows=5)
+    second = make_shadow_columns(features, n_shadows=5)
+
+    np.testing.assert_array_equal(first, second)
+    assert first.shape == (8, 5)
+    for shadow in first.T:
+        assert all(
+            not np.array_equal(shadow, original) for original in features.T
+        )
+
+
+def test_validation_tree_evidence_uses_oos_contributions_and_excludes_shadows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    train_sizes: list[int] = []
+    valid_sizes: list[int] = []
+
+    class FakeBooster:
+        def __init__(self, n_columns: int) -> None:
+            self.n_columns = n_columns
+
+        def predict(
+            self, values: np.ndarray, *, pred_contrib: bool
+        ) -> np.ndarray:
+            assert pred_contrib is True
+            valid_sizes.append(len(values))
+            contribution = np.arange(
+                1, self.n_columns + 2, dtype=np.float64
+            )
+            return np.tile(contribution, (len(values), 1))
+
+        def dump_model(self) -> dict[str, object]:
+            return {
+                "tree_info": [
+                    {
+                        "tree_structure": {
+                            "split_feature": 0,
+                            "left_child": {
+                                "split_feature": 1,
+                                "left_child": {
+                                    "split_feature": 2,
+                                    "left_child": {
+                                        "split_feature": 3,
+                                        "left_child": {"leaf_value": 1.0},
+                                        "right_child": {"leaf_value": -1.0},
+                                    },
+                                    "right_child": {"leaf_value": 0.0},
+                                },
+                                "right_child": {"leaf_value": 0.0},
+                            },
+                            "right_child": {"leaf_value": 0.0},
+                        }
+                    }
+                ]
+            }
+
+    def fake_train(
+        features: np.ndarray,
+        target: np.ndarray,
+        weight: np.ndarray,
+        *,
+        params: dict[str, object],
+        num_boost_round: int,
+    ) -> FakeBooster:
+        assert len(features) == len(target) == len(weight)
+        assert params["max_depth"] == 4
+        assert params["num_leaves"] == 15
+        assert num_boost_round == 80
+        train_sizes.append(len(features))
+        return FakeBooster(features.shape[1])
+
+    monkeypatch.setattr(
+        manifest_module, "_train_lightgbm_booster", fake_train
+    )
+    features = np.arange(24, dtype=np.float64).reshape(8, 3)
+    target = np.linspace(-1.0, 1.0, 8)
+    weight = np.arange(1.0, 9.0)
+    time_ids = np.array([0, 0, 1, 1, 2, 3, 3, 4])
+
+    result = validation_tree_evidence(
+        features,
+        target,
+        weight,
+        time_ids,
+        n_shadows=2,
+    )
+
+    np.testing.assert_array_equal(
+        result["block_feature_evidence"],
+        np.tile([1.0, 2.0, 3.0], (3, 1)),
+    )
+    np.testing.assert_array_equal(
+        result["block_shadow_evidence"],
+        np.tile([4.0, 5.0], (3, 1)),
+    )
+    assert result["paths_by_block"] == [[(0, 1, 2)]] * 3
+    assert train_sizes == [4, 4, 4, 5, 5, 5, 7, 7, 7]
+    assert valid_sizes == [1, 1, 1, 2, 2, 2, 1, 1, 1]
+
+
+def test_assemble_manifest_keeps_task_contracts_and_history_pending() -> None:
+    def selection(indices: list[int]) -> dict[str, object]:
+        return {
+            "selected_indices": indices,
+            "representatives": indices[:1],
+            "alternates": indices[1:],
+            "evidence": [{"feature": index} for index in range(4)],
+            "reasons": {str(index): ["linear"] for index in indices},
+            "path_hyperedges": [
+                {"features": [0, 1, 2], "support": 3, "blocks": [0, 1, 2]}
+            ],
+            "thresholds": {"linear_shadow_floor": 0.1},
+        }
+
+    manifest = assemble_manifest(
+        ridge_selection=selection([0, 2]),
+        xs_selection=selection([1]),
+        market_selection=selection([2, 3]),
+        feature_names=["feature_00", "feature_01", "feature_02", "feature_03"],
+        protocol={"inner_splits": 3, "tree_rounds": 80},
+    )
+
+    assert manifest["schema_version"] == 1
+    assert manifest["ridge"]["selected_indices"] == [0, 2]
+    assert manifest["ridge"]["selected_names"] == ["feature_00", "feature_02"]
+    assert manifest["ridge"]["selected_count"] == 2
+    assert manifest["xs"]["selected_indices"] == [1]
+    assert manifest["market"]["selected_indices"] == [2, 3]
+    assert manifest["market"]["path_hyperedges"][0]["features"] == [0, 1, 2]
+    assert manifest["protocol"] == {"inner_splits": 3, "tree_rounds": 80}
+    assert manifest["history"] == {
+        "status": "pending_task_2b",
+        "selected_indices": None,
+        "selected_names": None,
+        "selected_count": None,
+    }
+
+
+def test_selection_task_views_use_unweighted_market_means() -> None:
+    features = np.array(
+        [
+            [1.0, 10.0],
+            [3.0, 30.0],
+            [2.0, 20.0],
+            [6.0, 60.0],
+        ]
+    )
+    target = np.array([1.0, 9.0, 2.0, 10.0])
+    weight = np.array([100.0, 1.0, 50.0, 1.0])
+    time_ids = np.array([10, 10, 11, 11])
+
+    views = selection_task_views(features, target, weight, time_ids)
