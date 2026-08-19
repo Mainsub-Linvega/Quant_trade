@@ -583,6 +583,44 @@ def make_task_null(
     return _shift_complete_time_groups(base, counts, embargo + 1)
 
 
+def make_split_task_nulls(
+    task: str,
+    train_residual: np.ndarray,
+    valid_residual: np.ndarray,
+    train_time_ids: np.ndarray,
+    valid_time_ids: np.ndarray,
+    *,
+    seeds: Sequence[int],
+    embargo: int,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Construct null residuals independently on each side of a split."""
+    if (
+        len(seeds) == 0
+        or any(isinstance(seed, bool) or not isinstance(seed, int) for seed in seeds)
+        or len(set(seeds)) != len(seeds)
+    ):
+        raise ValueError("split null seeds must be unique integers")
+    return [
+        (
+            make_task_null(
+                task,
+                train_residual,
+                train_time_ids,
+                seed=int(seed),
+                embargo=embargo,
+            ),
+            make_task_null(
+                task,
+                valid_residual,
+                valid_time_ids,
+                seed=int(seed),
+                embargo=embargo,
+            ),
+        )
+        for seed in seeds
+    ]
+
+
 def empirical_null_threshold(
     null_gains: np.ndarray,
     quantile: float,

@@ -25,7 +25,7 @@ from experiments.v3_purified_interactions import (
     default_purified_protocol,
     empirical_null_threshold,
     interaction_stability_gate,
-    make_task_null,
+    make_split_task_nulls,
     score_pair_split,
     validate_purified_protocol,
 )
@@ -225,22 +225,28 @@ def run_diagnostic(
     splits = chronological_inner_splits(
         data["time_id"], n_blocks=int(protocol["inner_blocks"])
     )
-    null_residuals = [
-        make_task_null(
-            task,
-            data["residual"],
-            data["time_id"],
-            seed=int(seed),
-            embargo=int(protocol["outer"]["embargo"]),
+    split_payloads = [
+        (
+            train_rows,
+            valid_rows,
+            make_split_task_nulls(
+                task,
+                data["residual"][train_rows],
+                data["residual"][valid_rows],
+                data["time_id"][train_rows],
+                data["time_id"][valid_rows],
+                seeds=[int(seed) for seed in protocol["null"]["seeds"]],
+                embargo=int(protocol["outer"]["embargo"]),
+            ),
         )
-        for seed in protocol["null"]["seeds"]
+        for train_rows, valid_rows in splits
     ]
 
     scored: list[dict[str, object]] = []
     all_null_gains: list[float] = []
     for pair in pairs:
         block_scores: list[dict[str, object]] = []
-        for train_rows, valid_rows in splits:
+        for train_rows, valid_rows, split_nulls in split_payloads:
             score = score_pair_split(
                 data["features"][train_rows],
                 data["features"][valid_rows],
@@ -254,12 +260,12 @@ def run_diagnostic(
                 max_surface_cells=int(protocol["budgets"]["max_surface_cells"]),
             )
             block_scores.append(_json_score(score))
-            for null_values in null_residuals:
+            for null_train, null_valid in split_nulls:
                 null_score = score_pair_split(
                     data["features"][train_rows],
                     data["features"][valid_rows],
-                    null_values[train_rows],
-                    null_values[valid_rows],
+                    null_train,
+                    null_valid,
                     data["weight"][train_rows],
                     data["weight"][valid_rows],
                     pair=pair,

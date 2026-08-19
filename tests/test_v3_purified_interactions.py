@@ -24,6 +24,7 @@ from experiments.v3_purified_interactions import (
     fit_weighted_residual_surface,
     empirical_null_threshold,
     interaction_stability_gate,
+    make_split_task_nulls,
     make_task_null,
     purify_pair_surface,
     score_pair_split,
@@ -318,6 +319,29 @@ def test_task_null_is_deterministic_and_requires_ordered_time() -> None:
         make_task_null(
             "xs", residual, time_id[::-1], seed=9, embargo=6
         )
+
+
+def test_split_nulls_never_move_validation_values_into_training() -> None:
+    train_residual = np.arange(24.0)
+    valid_residual = np.arange(100.0, 112.0)
+    train_time = np.repeat(np.arange(8), 3)
+    valid_time = np.repeat(np.arange(20, 24), 3)
+
+    nulls = make_split_task_nulls(
+        "ridge",
+        train_residual,
+        valid_residual,
+        train_time,
+        valid_time,
+        seeds=[2026, 2027],
+        embargo=2,
+    )
+
+    assert len(nulls) == 2
+    for null_train, null_valid in nulls:
+        assert set(null_train.tolist()) == set(train_residual.tolist())
+        assert set(null_valid.tolist()) == set(valid_residual.tolist())
+        assert max(null_train) < min(null_valid)
 
 
 def test_empirical_null_threshold_uses_requested_quantile() -> None:
