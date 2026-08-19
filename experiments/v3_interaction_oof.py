@@ -59,6 +59,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir", default=str(_REPO_ROOT / "outputs" / "experiments")
     )
+    parser.add_argument(
+        "--cache-dir", default=str(_REPO_ROOT / "outputs" / "cache")
+    )
     parser.add_argument("--label", default="v3_interactions_screen_1s160_07_117")
     parser.add_argument("--n-folds", type=int, default=FROZEN_SCREEN["n_folds"])
     parser.add_argument("--train-window", type=int, default=FROZEN_SCREEN["train_window"])
@@ -88,6 +91,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-interaction-cells", type=int, default=100_000_000)
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
+
+
+def spill_interaction_features(
+    data: dict[str, np.ndarray],
+    path: str | Path,
+    *,
+    chunk_rows: int = 100_000,
+) -> np.memmap:
+    """Move loaded features to a read-only disk mapping for the OOF screen."""
+    from experiments.v3_production_oof import spill_feature_matrix
+
+    loaded_features = data.pop("features")
+    mapped = spill_feature_matrix(loaded_features, path, chunk_rows=chunk_rows)
+    del loaded_features
+    gc.collect()
+    return mapped
 
 
 def validate_frozen_screen(args: argparse.Namespace) -> None:
@@ -212,6 +231,44 @@ def compose_hybrid_raw(
     market = (1.0 - market_lambda) * market_ridge + market_lambda * market_lgbm
     cross = (1.0 - blend_weight) * e_ridge + blend_weight * e_lgbm
     return market + cross
+
+
+def paired_component_predictions(
+    base_train: np.ndarray,
+    base_valid: np.ndarray,
+    interaction_train: np.ndarray,
+    interaction_valid: np.ndarray,
+    fit_predict: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    *,
+    asset_last: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit paired component predictions, reusing A when no columns are added."""
+    train_added = np.asarray(interaction_train, dtype=np.float32)
+    valid_added = np.asarray(interaction_valid, dtype=np.float32)
+    if train_added.ndim != 2 or valid_added.ndim != 2:
+        raise ValueError("paired interaction matrices must be two-dimensional")
+    if len(train_added) != len(base_train) or len(valid_added) != len(base_valid):
+        raise ValueError("paired interaction matrices must be row-aligned")
+    if train_added.shape[1] != valid_added.shape[1]:
+        raise ValueError("paired interaction widths must match")
+    if train_added.shape[1] == 0:
+        baseline = np.asarray(fit_predict(base_train, base_valid), dtype=np.float64)
+        return baseline, baseline.copy()
+    if asset_last:
+        augmented_train = append_interactions_before_asset(base_train, train_added)
+        augmented_valid = append_interactions_before_asset(base_valid, valid_added)
+    else:
+        augmented_train = np.ascontiguousarray(
+            np.column_stack([base_train, train_added]), dtype=np.float32
+        )
+        augmented_valid = np.ascontiguousarray(
+            np.column_stack([base_valid, valid_added]), dtype=np.float32
+        )
+    baseline = np.asarray(fit_predict(base_train, base_valid), dtype=np.float64)
+    interaction = np.asarray(
+        fit_predict(augmented_train, augmented_valid), dtype=np.float64
+    )
+    return baseline, interaction
 
 
 def run_paired_fold_sequence(
@@ -408,7 +465,9 @@ def main() -> None:
     validate_frozen_screen(args)
     data_root = Path(args.data_root)
     output_dir = Path(args.output_dir)
+    cache_dir = Path(args.cache_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
     manifest_dir = output_dir / f"{args.label}_manifests"
     manifest_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / f"{args.label}.json"
@@ -422,7 +481,8 @@ def main() -> None:
         flush=True,
     )
     data = load_rows(data_root, args.sample_modulo, args.sampling)
-    features = data["features"]
+    feature_spill_path = cache_dir / f".{args.label}_features.npy"
+    features = spill_interaction_features(data, feature_spill_path)
     target = data["target"].astype(np.float64, copy=False)
     weight = np.maximum(data["weight"].astype(np.float64, copy=False), 0.0)
     time_ids = data["time_id"].astype(np.int64, copy=False)
@@ -449,6 +509,7 @@ def main() -> None:
             "miner_row_cap": args.miner_row_cap,
             "max_source_cells": args.max_source_cells,
             "max_interaction_cells": args.max_interaction_cells,
+            "feature_spill_path": str(feature_spill_path),
         },
         "folds": completed,
         "gate": None,
@@ -713,6 +774,9 @@ def main() -> None:
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        split_cache.clear()
+        del lag_cache
+        gc.collect()
 
         interactions_train: dict[str, np.ndarray] = {}
         interactions_valid: dict[str, np.ndarray] = {}
@@ -746,70 +810,81 @@ def main() -> None:
         ridge_valid_base = ridge_designs(
             transformed_valid, tid_valid, ridge_selected, None
         )
-        ridge_train_added = np.ascontiguousarray(
-            np.column_stack([ridge_train_base, interactions_train["ridge"]]),
-            dtype=np.float32,
-        )
-        ridge_valid_added = np.ascontiguousarray(
-            np.column_stack([ridge_valid_base, interactions_valid["ridge"]]),
-            dtype=np.float32,
-        )
-        ridge_base_model = fit_ridge(
-            ridge_train_base, y_train, w_train, fold_alpha
-        )
-        ridge_added_model = fit_ridge(
-            ridge_train_added, y_train, w_train, fold_alpha
-        )
-        ridge_base_prediction = ridge_base_model.predict(ridge_valid_base)
-        ridge_added_prediction = ridge_added_model.predict(ridge_valid_added)
 
-        base_design_train = {
-            task: _task_design(
-                task, transformed_train, tid_train, aid_train,
-                xs_selected, outer_history_train,
-            )
-            for task in ("xs", "market")
-        }
-        base_design_valid = {
-            task: _task_design(
-                task, transformed_valid, tid_valid, aid_valid,
-                xs_selected, outer_history_valid,
-            )
-            for task in ("xs", "market")
-        }
-        added_design_train = {
-            task: append_interactions_before_asset(
-                base_design_train[task], interactions_train[task]
-            )
-            for task in ("xs", "market")
-        }
-        added_design_valid = {
-            task: append_interactions_before_asset(
-                base_design_valid[task], interactions_valid[task]
-            )
-            for task in ("xs", "market")
-        }
+        def fit_predict_ridge(
+            train_design: np.ndarray, valid_design: np.ndarray
+        ) -> np.ndarray:
+            model = fit_ridge(train_design, y_train, w_train, fold_alpha)
+            prediction = model.predict(valid_design).astype(np.float64)
+            del model
+            return prediction
+
+        ridge_base_prediction, ridge_added_prediction = paired_component_predictions(
+            ridge_train_base,
+            ridge_valid_base,
+            interactions_train["ridge"],
+            interactions_valid["ridge"],
+            fit_predict_ridge,
+            asset_last=False,
+        )
+        del ridge_train_base, ridge_valid_base
+        gc.collect()
 
         tree_predictions: dict[str, dict[str, np.ndarray]] = {
-            "baseline": {}, "interaction": {}
+            "baseline": {},
+            "interaction": {},
         }
         for task in ("xs", "market"):
             label = e_train if task == "xs" else y_train
             sample_weight = w_train if task == "xs" else None
             spec = XS_SPEC if task == "xs" else MARKET_SPEC
             min_scale = 1.0 if task == "xs" else MARKET_MIN_DATA_SCALE
-            tree_predictions["baseline"][task] = _fit_predict_lgbm(
-                base_design_train[task], label, sample_weight,
-                base_design_valid[task], spec=spec, min_data_scale=min_scale,
-                n_seeds=args.n_seeds, seed=2026,
-                num_iteration=args.num_iteration, num_threads=args.num_threads,
+            base_train = _task_design(
+                task,
+                transformed_train,
+                tid_train,
+                aid_train,
+                xs_selected,
+                outer_history_train,
             )
-            tree_predictions["interaction"][task] = _fit_predict_lgbm(
-                added_design_train[task], label, sample_weight,
-                added_design_valid[task], spec=spec, min_data_scale=min_scale,
-                n_seeds=args.n_seeds, seed=2026,
-                num_iteration=args.num_iteration, num_threads=args.num_threads,
+            base_valid = _task_design(
+                task,
+                transformed_valid,
+                tid_valid,
+                aid_valid,
+                xs_selected,
+                outer_history_valid,
             )
+
+            def fit_predict_tree(
+                train_design: np.ndarray,
+                valid_design: np.ndarray,
+            ) -> np.ndarray:
+                return _fit_predict_lgbm(
+                    train_design,
+                    label,
+                    sample_weight,
+                    valid_design,
+                    spec=spec,
+                    min_data_scale=min_scale,
+                    n_seeds=args.n_seeds,
+                    seed=2026,
+                    num_iteration=args.num_iteration,
+                    num_threads=args.num_threads,
+                )
+
+            baseline_task, interaction_task = paired_component_predictions(
+                base_train,
+                base_valid,
+                interactions_train[task],
+                interactions_valid[task],
+                fit_predict_tree,
+                asset_last=True,
+            )
+            tree_predictions["baseline"][task] = baseline_task
+            tree_predictions["interaction"][task] = interaction_task
+            del base_train, base_valid
+            gc.collect()
 
         baseline_prediction = compose_hybrid_raw(
             ridge_base_prediction,
@@ -865,12 +940,9 @@ def main() -> None:
             flush=True,
         )
         del (
-            transformed_train, transformed_valid, lag_cache,
+            transformed_train, transformed_valid,
             outer_history_train, outer_history_valid, split_cache,
-            interactions_train, interactions_valid, ridge_train_base,
-            ridge_valid_base, ridge_train_added, ridge_valid_added,
-            base_design_train, base_design_valid, added_design_train,
-            added_design_valid, tree_predictions,
+            interactions_train, interactions_valid, tree_predictions,
         )
         gc.collect()
         return {
@@ -915,6 +987,9 @@ def main() -> None:
     payload["sequence"] = sequence
     payload["elapsed_seconds"] = float(time.perf_counter() - started)
     _write_partial_report(json_path, markdown_path, payload)
+    del features
+    gc.collect()
+    feature_spill_path.unlink(missing_ok=True)
     print(f"wrote {json_path}\nwrote {markdown_path}\nstatus={status}", flush=True)
 
 

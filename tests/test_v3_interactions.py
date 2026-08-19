@@ -29,8 +29,10 @@ from experiments.v3_interaction_oof import (
     compose_hybrid_raw,
     interaction_gate,
     parse_args as parse_interaction_oof_args,
+    paired_component_predictions,
     positive_fold_gate_impossible,
     run_paired_fold_sequence,
+    spill_interaction_features,
 )
 from strategies.v3_hybrid.interactions import (
     build_interaction_columns,
@@ -799,6 +801,47 @@ def test_paired_fold_sequence_stops_when_four_positive_becomes_impossible() -> N
     assert result["stopped_early"] is True
     assert result["stop_reason"] == "four_of_five_positive_is_impossible"
     assert len(result["folds"]) == 2
+
+
+def test_paired_component_reuses_baseline_when_no_interactions() -> None:
+    calls: list[tuple[int, int]] = []
+    base_train = np.ones((4, 3), dtype=np.float32)
+    base_valid = np.ones((2, 3), dtype=np.float32)
+
+    def fit_predict(train: np.ndarray, valid: np.ndarray) -> np.ndarray:
+        calls.append((train.shape[1], valid.shape[1]))
+        return np.arange(len(valid), dtype=np.float64)
+
+    baseline, interaction = paired_component_predictions(
+        base_train,
+        base_valid,
+        np.empty((4, 0), dtype=np.float32),
+        np.empty((2, 0), dtype=np.float32),
+        fit_predict,
+        asset_last=True,
+    )
+
+    assert calls == [(3, 3)]
+    np.testing.assert_array_equal(interaction, baseline)
+
+
+def test_interaction_screen_spills_loaded_features_to_read_only_memmap(
+    tmp_path: Path,
+) -> None:
+    expected = np.arange(30, dtype=np.float32).reshape(6, 5)
+    loaded = {
+        "features": expected.copy(),
+        "target": np.arange(6, dtype=np.float32),
+    }
+
+    mapped = spill_interaction_features(
+        loaded, tmp_path / "features.npy", chunk_rows=2
+    )
+
+    assert "features" not in loaded
+    assert isinstance(mapped, np.memmap)
+    assert mapped.mode == "r"
+    np.testing.assert_array_equal(mapped, expected)
 
 
 def test_compose_hybrid_raw_uses_frozen_07_117_weights() -> None:
