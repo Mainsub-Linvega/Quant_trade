@@ -560,6 +560,17 @@ def test_mine_task_interactions_uses_strict_oos_residuals(
                for residual in captured_residuals)
     assert result["definitions"]
     assert result["protocol"]["strict_oos_residuals"] is True
+    assert result["protocol"]["quantile_bins"] == 32
+    assert result["protocol"]["support_quantile_bins"] == 16
+    assert result["protocol"]["support_bin_width"] == 2
+    assert all(
+        split["expanded_subpaths"] == split["candidate_paths"]
+        for split in result["protocol"]["splits"]
+    )
+    assert all(
+        split["unique_canonical_subpaths"] == split["expanded_subpaths"]
+        for split in result["protocol"]["splits"]
+    )
 
 
 def test_real_miner_finds_range_effect_but_not_constant_residual() -> None:

@@ -678,6 +678,7 @@ def mine_task_interactions(
     n_blocks: int = 4,
     min_blocks: int = 2,
     quantile_bins: int = 32,
+    support_bin_width: int = 2,
     num_boost_round: int = 80,
     row_cap: int = 150_000,
     seed: int = 2026,
@@ -708,6 +709,13 @@ def mine_task_interactions(
         raise ValueError("source catalog contains duplicates")
     if row_cap <= 0 or num_boost_round <= 0 or num_threads <= 0:
         raise ValueError("miner budgets must be positive")
+    if (
+        isinstance(support_bin_width, bool)
+        or not isinstance(support_bin_width, (int, np.integer))
+        or support_bin_width <= 0
+        or quantile_bins % support_bin_width != 0
+    ):
+        raise ValueError("support_bin_width must positively divide quantile_bins")
     if not np.all(np.isfinite(y)) or not np.all(np.isfinite(w)) or np.any(w <= 0):
         raise ValueError("target and positive weights must be finite")
 
@@ -781,13 +789,24 @@ def mine_task_interactions(
             split_sources,
             block_index=block_index,
         )
-        canonical_paths.extend(canonicalize_path(path, grids) for path in candidates)
+        expanded = expand_candidate_subpaths(candidates)
+        unique_in_block: dict[str, CanonicalPath] = {}
+        for path in expanded:
+            canonical = canonicalize_path(
+                path,
+                grids,
+                support_bin_width=support_bin_width,
+            )
+            unique_in_block.setdefault(canonical.support_key, canonical)
+        canonical_paths.extend(unique_in_block.values())
         split_payloads.append({
             "block": block_index,
             "train_rows": int(len(kept_train)),
             "validation_rows": int(len(kept_valid)),
             "miner_rows": int(len(kept_valid)),
             "candidate_paths": int(len(candidates)),
+            "expanded_subpaths": int(len(expanded)),
+            "unique_canonical_subpaths": int(len(unique_in_block)),
         })
 
     accepted = aggregate_repeated_paths(canonical_paths, min_blocks=min_blocks)
@@ -815,6 +834,8 @@ def mine_task_interactions(
             "inner_validation_splits": len(splits),
             "minimum_support_blocks": int(min_blocks),
             "quantile_bins": int(quantile_bins),
+            "support_quantile_bins": int(quantile_bins // support_bin_width),
+            "support_bin_width": int(support_bin_width),
             "num_boost_round": int(num_boost_round),
             "max_depth": 4,
             "num_leaves": 15,
