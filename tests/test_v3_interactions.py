@@ -10,11 +10,13 @@ import experiments.v3_interaction_features as interaction_features_module
 from experiments.history_peak import retained_lag_rows
 from experiments.v3_interaction_features import (
     PathCandidate,
+    PathCondition,
     Source,
     aggregate_repeated_paths,
     build_interaction_source_views,
     interaction_source_arrays,
     canonicalize_path,
+    expand_candidate_subpaths,
     extract_candidate_paths,
     mine_task_interactions,
     resolve_quantile_thresholds,
@@ -336,6 +338,43 @@ def test_extract_candidate_paths_rejects_duplicate_and_five_source_paths() -> No
     )
     assert all(len(path.conditions) <= 4 for path in paths)
     assert all(len(path.conditions) >= 2 for path in paths)
+
+
+def _path_candidate_with_sources(count: int) -> PathCandidate:
+    return PathCandidate(
+        conditions=tuple(
+            PathCondition(Source("current", index), "le", float(index), False)
+            for index in range(count)
+        ),
+        block_index=1,
+        tree_index=2,
+        leaf_index=3,
+    )
+
+
+def test_expand_candidate_subpaths_emits_all_three_condition_combinations() -> None:
+    expanded = expand_candidate_subpaths([_path_candidate_with_sources(3)])
+
+    assert [
+        tuple(condition.source.feature_index for condition in path.conditions)
+        for path in expanded
+    ] == [(0, 1), (0, 2), (1, 2), (0, 1, 2)]
+    assert all((path.block_index, path.tree_index, path.leaf_index) == (1, 2, 3)
+               for path in expanded)
+
+
+def test_expand_candidate_subpaths_emits_eleven_four_condition_combinations() -> None:
+    expanded = expand_candidate_subpaths([_path_candidate_with_sources(4)])
+    widths = [len(path.conditions) for path in expanded]
+
+    assert widths.count(2) == 6
+    assert widths.count(3) == 4
+    assert widths.count(4) == 1
+    assert all(
+        list(condition.source.feature_index for condition in path.conditions)
+        == sorted(condition.source.feature_index for condition in path.conditions)
+        for path in expanded
+    )
 
 
 def test_canonical_path_is_order_invariant_within_quantile_bin() -> None:

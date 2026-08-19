@@ -10,6 +10,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 import copy
 from dataclasses import dataclass
+from itertools import combinations
 from typing import Any
 
 import numpy as np
@@ -389,6 +390,32 @@ def extract_candidate_paths(
             tuple((item.source, item.direction) for item in path.conditions),
         ),
     )
+
+
+def expand_candidate_subpaths(
+    paths: Sequence[PathCandidate],
+    *,
+    min_sources: int = 2,
+    max_sources: int = 4,
+) -> list[PathCandidate]:
+    """Expand complete paths into all ordered distinct-source condition subsets."""
+    if min_sources <= 0 or max_sources < min_sources:
+        raise ValueError("invalid interaction subpath bounds")
+    expanded: list[PathCandidate] = []
+    for path in paths:
+        maximum = min(max_sources, len(path.conditions))
+        for width in range(min_sources, maximum + 1):
+            for positions in combinations(range(len(path.conditions)), width):
+                conditions = tuple(path.conditions[position] for position in positions)
+                if len({condition.source for condition in conditions}) != width:
+                    continue
+                expanded.append(PathCandidate(
+                    conditions=conditions,
+                    block_index=path.block_index,
+                    tree_index=path.tree_index,
+                    leaf_index=path.leaf_index,
+                ))
+    return expanded
 
 
 def training_quantile_grids(
