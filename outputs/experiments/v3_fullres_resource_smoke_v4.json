@@ -1,0 +1,24 @@
+{
+  "status": "ok",
+  "oof_valid": false,
+  "rows": {
+    "train": 1182292,
+    "valid": 300000
+  },
+  "rounds": 20,
+  "train_range": [
+    315836,
+    394896
+  ],
+  "valid_range": [
+    394932,
+    414931
+  ],
+  "train_timeids": 78960,
+  "valid_timeids": 20000,
+  "xs_seconds": 13.18564389400126,
+  "market_seconds": 15.944710293999378,
+  "elapsed_seconds": 42.69593221799914,
+  "max_rss_kb": 11535656,
+  "note": "resource smoke only; fixed production stats/features; Ridge and OOF score skipped"
+}
