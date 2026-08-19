@@ -217,6 +217,15 @@ def run_diagnostic(
     """Run bounded chronological real/null scoring for one task."""
     validate_purified_protocol(protocol)
     data = validate_diagnostic_arrays(arrays)
+    if task not in protocol["tasks"]:
+        raise ValueError(f"unknown diagnostic task: {task}")
+    _, time_counts = np.unique(data["time_id"], return_counts=True)
+    if task == "market" and np.any(time_counts != 1):
+        raise ValueError("market diagnostic requires exactly one row per time_id")
+    if task in {"ridge", "xs"} and np.any(time_counts < 2):
+        raise ValueError(
+            f"{task} diagnostic requires multiple assets per time_id"
+        )
     budget = int(protocol["budgets"]["max_pairs"])
     if max_pairs <= 0 or max_pairs > budget:
         raise ValueError(f"max_pairs must be between 1 and frozen budget {budget}")

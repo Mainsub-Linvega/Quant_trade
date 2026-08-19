@@ -482,3 +482,34 @@ def test_synthetic_smoke_accepts_the_planted_pair() -> None:
     assert result["accepted_pairs"] == 1
     assert result["pairs"][0]["pair"] == [0, 1]
     assert result["pairs"][0]["gate"]["passed"] is True
+
+
+def test_diagnostic_rejects_row_level_market_input() -> None:
+    arrays = _synthetic_arrays()
+
+    with pytest.raises(ValueError, match="one row per time_id"):
+        run_diagnostic(
+            arrays,
+            task="market",
+            protocol=default_purified_protocol(),
+            max_pairs=1,
+        )
+
+
+def test_diagnostic_rejects_aggregated_xs_input() -> None:
+    rng = np.random.default_rng(12)
+    rows = 20
+    arrays = {
+        "features": rng.normal(size=(rows, 323)).astype(np.float32),
+        "residual": rng.normal(size=rows),
+        "weight": np.ones(rows),
+        "time_id": np.arange(rows),
+    }
+
+    with pytest.raises(ValueError, match="multiple assets per time_id"):
+        run_diagnostic(
+            arrays,
+            task="xs",
+            protocol=default_purified_protocol(),
+            max_pairs=1,
+        )
