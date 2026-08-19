@@ -11,7 +11,11 @@ from experiments.v3_purified_interactions import (
     default_purified_protocol,
     fit_quantile_edges,
     fit_weighted_residual_surface,
+    empirical_null_threshold,
+    interaction_stability_gate,
+    make_task_null,
     purify_pair_surface,
+    score_pair_split,
     transform_purified_surface,
     validate_purified_protocol,
 )
@@ -210,3 +214,134 @@ def test_surface_rejects_budget_before_allocation() -> None:
             left_feature=0,
             right_feature=1,
         )
+
+
+def test_pair_score_detects_nonadditive_signal_not_additive_signal() -> None:
+    rng = np.random.default_rng(7)
+    features = rng.normal(size=(800, 2))
+    weight = np.ones(800)
+    joint = (
+        (features[:, 0] > 0.0) & (features[:, 1] > 0.0)
+    ).astype(np.float64)
+    nonlinear = score_pair_split(
+        features[:600],
+        features[600:],
+        joint[:600],
+        joint[600:],
+        weight[:600],
+        weight[600:],
+        pair=(0, 1),
+        bins=4,
+        min_cell_weight=5.0,
+        max_surface_cells=16,
+    )
+    additive_y = features[:, 0] + 2.0 * features[:, 1]
+    additive = score_pair_split(
+        features[:600],
+        features[600:],
+        additive_y[:600],
+        additive_y[600:],
+        weight[:600],
+        weight[600:],
+        pair=(0, 1),
+        bins=4,
+        min_cell_weight=5.0,
+        max_surface_cells=16,
+    )
+
+    assert nonlinear["gain"] > 0.05
+    assert abs(additive["gain"]) < nonlinear["gain"]
+    assert nonlinear["surface_checksum"] != additive["surface_checksum"]
+
+
+def test_xs_null_preserves_time_groups_but_breaks_asset_alignment() -> None:
+    residual = np.arange(12.0)
+    time_id = np.repeat(np.arange(4), 3)
+
+    got = make_task_null(
+        "xs", residual, time_id, seed=2026, embargo=6
+    )
+
+    for value in np.unique(time_id):
+        rows = time_id == value
+        np.testing.assert_array_equal(
+            np.sort(got[rows]), np.sort(residual[rows])
+        )
+    assert not np.array_equal(got, residual)
+
+
+def test_market_null_uses_an_embargo_safe_time_shift() -> None:
+    residual = np.arange(12.0)
+    time_id = np.arange(12)
+
+    got = make_task_null(
+        "market", residual, time_id, seed=2026, embargo=3
+    )
+
+    np.testing.assert_array_equal(got, np.roll(residual, 4))
+
+
+def test_ridge_null_breaks_both_asset_and_time_alignment() -> None:
+    residual = np.arange(24.0)
+    time_id = np.repeat(np.arange(8), 3)
+
+    got = make_task_null(
+        "ridge", residual, time_id, seed=2026, embargo=2
+    )
+
+    assert not np.array_equal(got, residual)
+    assert set(got.tolist()) == set(residual.tolist())
+    for rows in np.split(got, 8):
+        assert len(rows) == 3
+
+
+def test_task_null_is_deterministic_and_requires_ordered_time() -> None:
+    residual = np.arange(12.0)
+    time_id = np.repeat(np.arange(4), 3)
+
+    first = make_task_null("xs", residual, time_id, seed=9, embargo=6)
+    second = make_task_null("xs", residual, time_id, seed=9, embargo=6)
+
+    np.testing.assert_array_equal(first, second)
+    with pytest.raises(ValueError, match="nondecreasing"):
+        make_task_null(
+            "xs", residual, time_id[::-1], seed=9, embargo=6
+        )
+
+
+def test_empirical_null_threshold_uses_requested_quantile() -> None:
+    got = empirical_null_threshold(
+        np.array([-0.3, -0.1, 0.1, 0.4]), 0.75
+    )
+
+    assert got == pytest.approx(0.175)
+
+
+def test_stability_gate_requires_null_coverage_and_drop_best_gain() -> None:
+    passing = interaction_stability_gate(
+        [
+            {"gain": 0.08, "coverage": 0.9, "dominant_cell_gain_share": 0.3},
+            {"gain": 0.04, "coverage": 0.85, "dominant_cell_gain_share": 0.4},
+            {"gain": 0.02, "coverage": 0.95, "dominant_cell_gain_share": 0.2},
+        ],
+        null_threshold=0.01,
+        minimum_positive_blocks=2,
+        minimum_coverage=0.8,
+        maximum_single_cell_gain_share=0.5,
+    )
+    assert passing["passed"] is True
+    assert passing["drop_best_mean_gain"] > 0.0
+
+    tail_only = interaction_stability_gate(
+        [
+            {"gain": 0.08, "coverage": 0.9, "dominant_cell_gain_share": 0.8},
+            {"gain": 0.04, "coverage": 0.9, "dominant_cell_gain_share": 0.7},
+            {"gain": 0.02, "coverage": 0.9, "dominant_cell_gain_share": 0.9},
+        ],
+        null_threshold=0.01,
+        minimum_positive_blocks=2,
+        minimum_coverage=0.8,
+        maximum_single_cell_gain_share=0.5,
+    )
+    assert tail_only["passed"] is False
+    assert tail_only["checks"]["tail_concentration"] is False

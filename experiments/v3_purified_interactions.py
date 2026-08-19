@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import copy
 from dataclasses import dataclass
+import hashlib
 import math
 from typing import Any
 
@@ -366,3 +367,286 @@ def transform_purified_surface(
     if not np.all(np.isfinite(result)):
         raise AssertionError("purified interaction transform produced non-finite values")
     return result
+
+
+def weighted_residual_gain(
+    residual: np.ndarray,
+    prediction: np.ndarray,
+    weight: np.ndarray,
+) -> float:
+    """Return normalized weighted SSE reduction against a zero prediction."""
+    y = np.asarray(residual, dtype=np.float64)
+    fitted = np.asarray(prediction, dtype=np.float64)
+    w = np.asarray(weight, dtype=np.float64)
+    if (
+        y.ndim != 1
+        or y.shape != fitted.shape
+        or y.shape != w.shape
+        or not np.all(np.isfinite(y))
+        or not np.all(np.isfinite(fitted))
+        or not np.all(np.isfinite(w))
+        or np.any(w < 0.0)
+    ):
+        raise ValueError("gain inputs must be aligned finite arrays with nonnegative weight")
+    denominator = float(np.dot(w, y * y))
+    if denominator <= 0.0:
+        return 0.0
+    error = y - fitted
+    return float((denominator - np.dot(w, error * error)) / denominator)
+
+
+def _surface_checksum(surface: PurifiedPairSurface) -> str:
+    digest = hashlib.sha256()
+    digest.update(np.asarray(
+        [surface.left_feature, surface.right_feature], dtype=np.int64
+    ).tobytes())
+    for array in (
+        surface.edges_left,
+        surface.edges_right,
+        surface.values,
+        surface.cell_weights,
+    ):
+        digest.update(np.ascontiguousarray(array).tobytes())
+    return digest.hexdigest()
+
+
+def _validation_surface_diagnostics(
+    surface: PurifiedPairSurface,
+    left: np.ndarray,
+    right: np.ndarray,
+    residual: np.ndarray,
+    prediction: np.ndarray,
+    weight: np.ndarray,
+) -> tuple[float, float]:
+    left_bin = assign_quantile_bins(left, surface.edges_left)
+    right_bin = assign_quantile_bins(right, surface.edges_right)
+    w = np.asarray(weight, dtype=np.float64)
+    y = np.asarray(residual, dtype=np.float64)
+    fitted = np.asarray(prediction, dtype=np.float64)
+    valid = (left_bin >= 0) & (right_bin >= 0) & (w > 0.0)
+    supported = np.zeros(len(w), dtype=bool)
+    supported[valid] = (
+        surface.cell_weights[left_bin[valid], right_bin[valid]] > 0.0
+    )
+    valid_weight = float(np.sum(w[valid]))
+    coverage = (
+        float(np.sum(w[supported])) / valid_weight
+        if valid_weight > 0.0
+        else 0.0
+    )
+
+    denominator = float(np.dot(w, y * y))
+    if denominator <= 0.0 or not np.any(supported):
+        return coverage, 0.0
+    contributions = w * (2.0 * y * fitted - fitted * fitted) / denominator
+    bins = surface.values.shape[0]
+    flat = left_bin[supported] * bins + right_bin[supported]
+    by_cell = np.bincount(
+        flat,
+        weights=contributions[supported],
+        minlength=bins * bins,
+    )
+    absolute = np.abs(by_cell)
+    total = float(np.sum(absolute))
+    dominant = float(np.max(absolute) / total) if total > 0.0 else 0.0
+    return coverage, dominant
+
+
+def score_pair_split(
+    train_features: np.ndarray,
+    valid_features: np.ndarray,
+    train_residual: np.ndarray,
+    valid_residual: np.ndarray,
+    train_weight: np.ndarray,
+    valid_weight: np.ndarray,
+    *,
+    pair: tuple[int, int],
+    bins: int,
+    min_cell_weight: float,
+    max_surface_cells: int,
+) -> dict[str, object]:
+    """Fit one pure pair on training rows and score it on later rows."""
+    train = np.asarray(train_features)
+    valid = np.asarray(valid_features)
+    if train.ndim != 2 or valid.ndim != 2 or train.shape[1] != valid.shape[1]:
+        raise ValueError("train and validation features must have equal 2D width")
+    left_feature, right_feature = pair
+    if (
+        isinstance(left_feature, bool)
+        or isinstance(right_feature, bool)
+        or not isinstance(left_feature, int)
+        or not isinstance(right_feature, int)
+        or left_feature == right_feature
+        or min(left_feature, right_feature) < 0
+        or max(left_feature, right_feature) >= train.shape[1]
+    ):
+        raise ValueError("pair must contain two distinct valid feature indices")
+    surface = fit_weighted_residual_surface(
+        train[:, left_feature],
+        train[:, right_feature],
+        train_residual,
+        train_weight,
+        bins=bins,
+        min_cell_weight=min_cell_weight,
+        max_surface_cells=max_surface_cells,
+        left_feature=left_feature,
+        right_feature=right_feature,
+    )
+    prediction = transform_purified_surface(
+        surface, valid[:, left_feature], valid[:, right_feature]
+    )
+    gain = weighted_residual_gain(valid_residual, prediction, valid_weight)
+    coverage, dominant = _validation_surface_diagnostics(
+        surface,
+        valid[:, left_feature],
+        valid[:, right_feature],
+        valid_residual,
+        prediction,
+        valid_weight,
+    )
+    return {
+        "pair": [int(left_feature), int(right_feature)],
+        "gain": float(gain),
+        "coverage": float(coverage),
+        "dominant_cell_gain_share": float(dominant),
+        "finite": bool(np.all(np.isfinite(prediction))),
+        "surface_checksum": _surface_checksum(surface),
+        "surface": surface,
+    }
+
+
+def _group_bounds(time_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    ids = np.asarray(time_ids, dtype=np.int64)
+    if ids.ndim != 1 or len(ids) == 0 or np.any(np.diff(ids) < 0):
+        raise ValueError("time_ids must be nonempty and nondecreasing")
+    starts = np.r_[0, np.flatnonzero(ids[1:] != ids[:-1]) + 1]
+    counts = np.diff(np.r_[starts, len(ids)])
+    return starts, counts
+
+
+def _within_group_nonidentity_shuffle(
+    values: np.ndarray,
+    starts: np.ndarray,
+    counts: np.ndarray,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    shuffled = np.asarray(values, dtype=np.float64).copy()
+    for start, count in zip(starts, counts):
+        if count <= 1:
+            continue
+        shift = int(rng.integers(1, int(count)))
+        rows = slice(int(start), int(start + count))
+        shuffled[rows] = np.roll(shuffled[rows], shift)
+    return shuffled
+
+
+def _shift_complete_time_groups(
+    values: np.ndarray,
+    counts: np.ndarray,
+    shift: int,
+) -> np.ndarray:
+    if len(set(int(value) for value in counts)) != 1:
+        raise ValueError("time-shift null requires equal rows per time_id")
+    width = int(counts[0])
+    matrix = np.asarray(values, dtype=np.float64).reshape(len(counts), width)
+    return np.roll(matrix, int(shift), axis=0).reshape(-1)
+
+
+def make_task_null(
+    task: str,
+    residual: np.ndarray,
+    time_ids: np.ndarray,
+    *,
+    seed: int,
+    embargo: int,
+) -> np.ndarray:
+    """Break task alignment while retaining the relevant panel structure."""
+    values = np.asarray(residual, dtype=np.float64)
+    ids = np.asarray(time_ids, dtype=np.int64)
+    if values.ndim != 1 or values.shape != ids.shape or not np.all(np.isfinite(values)):
+        raise ValueError("null residual and time_ids must be aligned finite arrays")
+    if embargo < 0:
+        raise ValueError("embargo must be nonnegative")
+    starts, counts = _group_bounds(ids)
+    rng = np.random.default_rng(seed)
+    if task == "xs":
+        return _within_group_nonidentity_shuffle(values, starts, counts, rng)
+    if task not in {"market", "ridge"}:
+        raise ValueError(f"unknown null task: {task}")
+    if len(counts) <= embargo + 1:
+        raise ValueError("not enough time groups for an embargo-safe null shift")
+    base = (
+        _within_group_nonidentity_shuffle(values, starts, counts, rng)
+        if task == "ridge"
+        else values.copy()
+    )
+    return _shift_complete_time_groups(base, counts, embargo + 1)
+
+
+def empirical_null_threshold(
+    null_gains: np.ndarray,
+    quantile: float,
+) -> float:
+    """Return a finite empirical upper-tail gain threshold."""
+    values = np.asarray(null_gains, dtype=np.float64)
+    if values.ndim != 1 or len(values) == 0 or not np.all(np.isfinite(values)):
+        raise ValueError("null gains must be a nonempty finite vector")
+    if not 0.5 < float(quantile) < 1.0:
+        raise ValueError("null quantile must be between 0.5 and 1")
+    return float(np.quantile(values, float(quantile)))
+
+
+def interaction_stability_gate(
+    block_scores: Sequence[Mapping[str, object]],
+    *,
+    null_threshold: float,
+    minimum_positive_blocks: int,
+    minimum_coverage: float,
+    maximum_single_cell_gain_share: float,
+) -> dict[str, object]:
+    """Apply pre-registered chronological stability checks to one pair family."""
+    if len(block_scores) == 0 or not math.isfinite(float(null_threshold)):
+        raise ValueError("stability gate requires block scores and a finite null")
+    gains = np.asarray(
+        [score.get("gain") for score in block_scores], dtype=np.float64
+    )
+    coverages = np.asarray(
+        [score.get("coverage") for score in block_scores], dtype=np.float64
+    )
+    concentrations = np.asarray(
+        [score.get("dominant_cell_gain_share") for score in block_scores],
+        dtype=np.float64,
+    )
+    if not (
+        np.all(np.isfinite(gains))
+        and np.all(np.isfinite(coverages))
+        and np.all(np.isfinite(concentrations))
+    ):
+        raise ValueError("block stability metrics must be finite")
+    if minimum_positive_blocks <= 0 or minimum_positive_blocks > len(gains):
+        raise ValueError("minimum_positive_blocks is invalid")
+    drop_best = (
+        float(np.mean(np.delete(gains, int(np.argmax(gains)))))
+        if len(gains) > 1
+        else float(gains[0])
+    )
+    checks = {
+        "positive_blocks": int(np.sum(gains > 0.0)) >= minimum_positive_blocks,
+        "above_null": float(np.median(gains)) > float(null_threshold),
+        "coverage": bool(np.all(coverages >= float(minimum_coverage))),
+        "tail_concentration": bool(np.all(
+            concentrations <= float(maximum_single_cell_gain_share)
+        )),
+        "positive_drop_best": drop_best > 0.0,
+    }
+    return {
+        "passed": all(checks.values()),
+        "checks": checks,
+        "positive_blocks": int(np.sum(gains > 0.0)),
+        "median_gain": float(np.median(gains)),
+        "mean_gain": float(np.mean(gains)),
+        "drop_best_mean_gain": drop_best,
+        "minimum_coverage": float(np.min(coverages)),
+        "maximum_single_cell_gain_share": float(np.max(concentrations)),
+        "null_threshold": float(null_threshold),
+    }
