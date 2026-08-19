@@ -10,7 +10,7 @@ Preserve the established V3 correlation-selected feature contracts and add task-
 
 The frozen base is:
 
-- Ridge: the 200 current anonymous features with highest absolute weighted marginal correlation to the full target.
+- Ridge: the 200 current anonymous feature sources with highest absolute weighted marginal correlation to the full target, represented by 200 robust current-value columns plus their 200 cross-sectional-deviation columns.
 - XS LightGBM: the 200 current features with highest absolute unweighted marginal correlation to the cross-sectional target deviation, plus 40 causal history bases selected inside those 200 and expanded to 160 columns.
 - Market LightGBM: the production XS top 200 represented as raw values and cross-sectional deviations, plus the same 160 causal history columns.
 - Existing `asset_id`, preprocessing, fusion, clipping, `market_lambda=0.7`, and `blend_weight=1.17` remain unchanged during interaction evaluation.
@@ -118,7 +118,7 @@ The final training matrices become:
 
 ```text
 Ridge:
-  base_current_200 + ridge_interactions
+  base_current_200 + base_deviation_200 + ridge_interactions
 
 XS LightGBM:
   xs_deviation_200 + history_160 + xs_interactions + asset_id
@@ -130,7 +130,7 @@ Market LightGBM:
 
 The same existing Ridge and LightGBM trainers fit these enlarged matrices. No prediction is produced by the path miner itself.
 
-The direct base widths remain unchanged. An interaction referencing a top-200-external source increases only the interaction width, not the raw baseline width.
+The direct base widths remain unchanged: Ridge keeps 400 direct columns from 200 selected sources, XS keeps 360 direct non-asset columns, and Market keeps 560 direct non-asset columns. An interaction referencing a top-200-external source increases only the interaction width, not any direct baseline width.
 
 ### 6. Metadata and inference
 
@@ -191,7 +191,7 @@ Production artifacts and the current `0.7/1.17` candidate remain untouched. Roll
 
 ## Success Criteria
 
-- All established base features remain present and in their original order.
+- All established direct base columns remain present and in their original order, including both Ridge blocks derived from its 200 selected sources.
 - Interaction discovery covers all 323 current anonymous features while direct raw inputs remain the production correlation-selected top 200.
 - At least one repeated two-to-four-source conditional interaction is represented, or the report proves none satisfies the frozen training-only stability gate.
 - No additional prediction model or fusion parameter is introduced.
