@@ -521,8 +521,12 @@ def _train_residual_booster(
 def mine_task_interactions(
     *,
     task: str,
-    source_values: np.ndarray,
-    catalog: Sequence[Source],
+    source_values: np.ndarray | None,
+    catalog: Sequence[Source] | None,
+    source_builder: Callable[
+        [np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray, Sequence[Source]],
+    ] | None = None,
     target: np.ndarray,
     weight: np.ndarray,
     time_ids: np.ndarray,
@@ -538,16 +542,25 @@ def mine_task_interactions(
     """Mine repeated paths from strict expanding OOS baseline residuals."""
     if task not in {"ridge", "xs", "market"}:
         raise ValueError(f"unknown interaction task: {task}")
-    values = np.asarray(source_values)
     y = np.asarray(target, dtype=np.float64)
     w = np.asarray(weight, dtype=np.float64)
     ids = np.asarray(time_ids, dtype=np.int64)
-    sources = tuple(catalog)
-    if values.ndim != 2 or values.shape[1] != len(sources):
-        raise ValueError("source_values columns must match catalog")
-    if not (len(values) == len(y) == len(w) == len(ids)):
+    values: np.ndarray | None = None
+    sources: tuple[Source, ...] | None = None
+    if source_builder is None:
+        if source_values is None or catalog is None:
+            raise ValueError("source_values and catalog are required without source_builder")
+        values = np.asarray(source_values)
+        sources = tuple(catalog)
+        if values.ndim != 2 or values.shape[1] != len(sources):
+            raise ValueError("source_values columns must match catalog")
+        if len(values) != len(y):
+            raise ValueError("source_values must align with target rows")
+    elif source_values is not None or catalog is not None:
+        raise ValueError("source_builder cannot be combined with source_values or catalog")
+    if not (len(y) == len(w) == len(ids)):
         raise ValueError("interaction miner inputs must have equal rows")
-    if len(sources) != len(set(sources)):
+    if sources is not None and len(sources) != len(set(sources)):
         raise ValueError("source catalog contains duplicates")
     if row_cap <= 0 or num_boost_round <= 0 or num_threads <= 0:
         raise ValueError("miner budgets must be positive")
@@ -575,38 +588,61 @@ def mine_task_interactions(
     split_payloads: list[dict[str, int]] = []
     splits = chronological_inner_splits(ids, n_blocks=n_blocks)
     for block_index, (train_rows, valid_rows) in enumerate(splits, start=1):
+        kept_train = _time_preserving_cap(train_rows, ids, row_cap)
+        kept_valid = _time_preserving_cap(valid_rows, ids, row_cap)
         prediction = np.asarray(
-            baseline_predictor(train_rows.copy(), valid_rows.copy()),
+            baseline_predictor(kept_train.copy(), kept_valid.copy()),
             dtype=np.float64,
         )
-        if prediction.shape != (len(valid_rows),) or not np.all(np.isfinite(prediction)):
+        if prediction.shape != (len(kept_valid),) or not np.all(np.isfinite(prediction)):
             raise ValueError("baseline_predictor returned invalid OOS predictions")
-        residual = y[valid_rows] - prediction
-        kept_rows = _time_preserving_cap(valid_rows, ids, row_cap)
-        valid_positions = np.searchsorted(valid_rows, kept_rows)
+        residual = y[kept_valid] - prediction
+        if source_builder is None:
+            assert values is not None and sources is not None
+            train_sources = values[kept_train]
+            valid_sources = values[kept_valid]
+            split_sources = sources
+        else:
+            train_sources, valid_sources, built_catalog = source_builder(
+                kept_train.copy(), kept_valid.copy()
+            )
+            train_sources = np.asarray(train_sources)
+            valid_sources = np.asarray(valid_sources)
+            split_sources = tuple(built_catalog)
+            if len(split_sources) != len(set(split_sources)):
+                raise ValueError("source builder returned duplicate catalog entries")
+            if sources is None:
+                sources = split_sources
+            elif sources != split_sources:
+                raise ValueError("source builder catalog changed across inner splits")
+        if (
+            train_sources.shape != (len(kept_train), len(split_sources))
+            or valid_sources.shape != (len(kept_valid), len(split_sources))
+        ):
+            raise ValueError("source builder returned misaligned matrices")
         booster = _train_residual_booster(
-            values[kept_rows],
-            residual[valid_positions],
-            w[kept_rows],
+            valid_sources,
+            residual,
+            w[kept_valid],
             params=params,
             num_boost_round=num_boost_round,
         )
         grids = training_quantile_grids(
-            values[train_rows],
-            sources,
+            train_sources,
+            split_sources,
             bins=quantile_bins,
         )
         candidates = extract_candidate_paths(
             booster.dump_model(),
-            sources,
+            split_sources,
             block_index=block_index,
         )
         canonical_paths.extend(canonicalize_path(path, grids) for path in candidates)
         split_payloads.append({
             "block": block_index,
-            "train_rows": int(len(train_rows)),
-            "validation_rows": int(len(valid_rows)),
-            "miner_rows": int(len(kept_rows)),
+            "train_rows": int(len(kept_train)),
+            "validation_rows": int(len(kept_valid)),
+            "miner_rows": int(len(kept_valid)),
             "candidate_paths": int(len(candidates)),
         })
 

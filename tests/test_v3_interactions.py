@@ -18,6 +18,12 @@ from experiments.v3_production_oof import (
     build_interaction_fold_manifest,
     build_task_lgbm_designs,
 )
+from experiments.v3_interaction_oof import (
+    append_interactions_before_asset,
+    interaction_gate,
+    positive_fold_gate_impossible,
+    run_paired_fold_sequence,
+)
 from strategies.v3_hybrid.interactions import (
     build_interaction_columns,
     interaction_source_keys,
@@ -476,6 +482,59 @@ def test_real_miner_finds_range_effect_but_not_constant_residual() -> None:
     assert null["definitions"] == []
 
 
+def test_miner_builds_sources_after_time_preserving_split_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built_rows: list[tuple[int, int]] = []
+    trained_values: list[np.ndarray] = []
+    catalog = [Source("current", 30), Source("current", 250)]
+
+    class FakeBooster:
+        def dump_model(self) -> dict[str, object]:
+            return _two_source_tree()
+
+    def source_builder(
+        train_rows: np.ndarray, valid_rows: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, list[Source]]:
+        built_rows.append((len(train_rows), len(valid_rows)))
+        return (
+            np.column_stack([train_rows, train_rows]).astype(np.float32),
+            np.column_stack([valid_rows, valid_rows]).astype(np.float32),
+            catalog,
+        )
+
+    def fake_train(
+        features: np.ndarray,
+        residual: np.ndarray,
+        weight: np.ndarray,
+        **kwargs: object,
+    ) -> FakeBooster:
+        trained_values.append(features.copy())
+        return FakeBooster()
+
+    monkeypatch.setattr(
+        interaction_features_module, "_train_residual_booster", fake_train
+    )
+    time_ids = np.repeat(np.arange(12), 2)
+
+    mine_task_interactions(
+        task="ridge",
+        source_values=None,
+        catalog=None,
+        source_builder=source_builder,
+        target=np.zeros(len(time_ids)),
+        weight=np.ones(len(time_ids)),
+        time_ids=time_ids,
+        baseline_predictor=lambda train, valid: np.zeros(len(valid)),
+        n_blocks=4,
+        row_cap=8,
+        num_threads=1,
+    )
+
+    assert built_rows == [(6, 6), (8, 6), (8, 6)]
+    assert all(len(values) <= 8 for values in trained_values)
+
+
 def test_task_source_views_cover_all_current_but_only_history40() -> None:
     transformed = np.arange(4 * 323, dtype=np.float32).reshape(4, 323)
     time_ids = np.array([1, 1, 2, 2])
@@ -616,3 +675,67 @@ def test_fold_manifest_mines_three_tasks_with_history40(
         "rows": 16,
     }
     assert set(manifest["tasks"]) == {"ridge", "xs", "market"}
+
+
+def test_interaction_gate_requires_all_four_conditions() -> None:
+    passing = interaction_gate(
+        np.array([0.01, 0.02, 0.03, 0.01, -0.001]),
+        delta_a=0.05,
+        delta_b=0.04,
+    )
+    assert passing["passed"] is True
+    assert passing["positive_folds"] == 4
+    assert passing["drop_best_mean"] > 0.0
+
+    too_few = interaction_gate(
+        np.array([0.1, 0.1, -0.01, -0.01, -0.01]),
+        delta_a=1.0,
+        delta_b=0.1,
+    )
+    assert too_few["passed"] is False
+    assert too_few["checks"]["four_of_five_positive"] is False
+
+    energy_only = interaction_gate(
+        np.array([0.01] * 5), delta_a=0.01, delta_b=0.03
+    )
+    assert energy_only["passed"] is False
+    assert energy_only["checks"]["target_alignment"] is False
+
+
+def test_positive_fold_gate_stops_after_two_nonpositive_folds() -> None:
+    assert positive_fold_gate_impossible([-0.01], total_folds=5, required_positive=4) is False
+    assert positive_fold_gate_impossible(
+        [-0.01, 0.0], total_folds=5, required_positive=4
+    ) is True
+    assert positive_fold_gate_impossible(
+        [0.01, -0.01, 0.02], total_folds=5, required_positive=4
+    ) is False
+
+
+def test_append_interactions_keeps_direct_prefix_and_asset_last() -> None:
+    base = np.array([
+        [1.0, 2.0, 0.0],
+        [3.0, 4.0, 1.0],
+    ], dtype=np.float32)
+    interactions = np.array([[5.0, 6.0], [7.0, 8.0]], dtype=np.float32)
+
+    got = append_interactions_before_asset(base, interactions)
+
+    np.testing.assert_array_equal(got[:, :2], base[:, :2])
+    np.testing.assert_array_equal(got[:, 2:4], interactions)
+    np.testing.assert_array_equal(got[:, -1], base[:, -1])
+
+
+def test_paired_fold_sequence_stops_when_four_positive_becomes_impossible() -> None:
+    calls: list[int] = []
+
+    def run_fold(index: int) -> dict[str, float]:
+        calls.append(index)
+        return {"peak_delta": -0.01, "delta_a": -0.1, "delta_b": 0.0}
+
+    result = run_paired_fold_sequence(5, run_fold, required_positive=4)
+
+    assert calls == [0, 1]
+    assert result["stopped_early"] is True
+    assert result["stop_reason"] == "four_of_five_positive_is_impossible"
+    assert len(result["folds"]) == 2
