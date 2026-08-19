@@ -9,6 +9,11 @@
 3. 原来不核 slow/fast。`main.py:222` 是 `PredictionTrail(int(window)) if window else None` ——
    `slow_fast_window` 缺失时 slow/fast 被**静默关掉**、不报错，交出去的就是低 2.93% 的旧模型。
    `--expect-public-baseline` 会拿 `promote_v3_candidate.PUBLIC_BASELINE` 全表核对。
+
+⚠️ 2026-08-19 又补一个方向相反的洞：原来只查**缺**文件，不查**多**文件。
+打包那边当时是「除 `train.py` 外全收 `*.py`」，于是纯研究模块 `temporal.py` 混进了包 ——
+它不在 `main.py` 的 import 闭包里，却会因为研究改动改变提交包字节。
+入包清单现在由 `make_submission.SUBMISSION_MODULES` 唯一定义，本脚本派生并双向核对。
 """
 
 from __future__ import annotations
@@ -22,9 +27,16 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# 包内容身份的唯一定义在 make_submission 里（那边还会拿 main.py 的 AST import 闭包
+# 双向对拍）。这里**派生**而不是再抄一张表 —— 08-13 就因为两处手抄同一份口径、
+# 只改了一处而当场 KeyError。
+if str(_REPO_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+from make_submission import SUBMISSION_MODULES
+
 # main.py 顶层无条件 import features / lgbm_numpy / history ⟹ 少一个就装不起来
-REQUIRED = {"main.py", "features.py", "lgbm_numpy.py", "history.py",
-            "model/baseline_model.json", "model/hybrid_meta.json"}
+DECLARED_MODULES = SUBMISSION_MODULES["v3_hybrid"]
+REQUIRED = {*DECLARED_MODULES, "model/baseline_model.json", "model/hybrid_meta.json"}
 FORBIDDEN_NAMES = {"train.py"}
 FORBIDDEN_PREFIXES = ("src/", "data/", "outputs/", ".git/")
 
@@ -102,6 +114,12 @@ def audit(path: Path, expected_scale: float | None = None,
                            if Path(name).name in FORBIDDEN_NAMES
                            or name.startswith(FORBIDDEN_PREFIXES)
                            or "__pycache__" in Path(name).parts or name.endswith(".pyc"))
+        # ⚠️ 2026-08-19 补：原来只查「缺文件」，**不查多文件**。而打包那边当时是
+        # 「除 train.py 外全收 *.py」⟹ 研究模块 temporal.py 一路混进私榜包，
+        # 08-19 对它的研究改动直接改变了提交包的字节，全程没有任何门禁出声。
+        # 包内的 .py 在评测端就是 sys.path 上的顶层名字，多塞一个还可能遮蔽标准库。
+        unexpected_modules = sorted(name for name in names
+                                    if name.endswith(".py") and name not in DECLARED_MODULES)
         meta = json.loads(archive.read("model/hybrid_meta.json")) if not missing else {}
         model_files = list(meta.get("lgbm_model_files") or [])
         market_files = list(meta.get("market_model_files") or [])
@@ -111,6 +129,7 @@ def audit(path: Path, expected_scale: float | None = None,
         drift = public_baseline_drift(meta) if (expect_public_baseline and not missing) else []
         checks = {
             "required_files_present": not missing,
+            "no_unexpected_modules": not unexpected_modules,
             "no_forbidden_files": not forbidden,
             "no_duplicate_entries": not duplicates,
             "all_declared_models_present": not absent_models,
@@ -126,6 +145,7 @@ def audit(path: Path, expected_scale: float | None = None,
         return {
             "zip": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size,
             "files": names, "missing": missing, "forbidden": forbidden,
+            "unexpected_modules": unexpected_modules,
             "duplicates": duplicates, "absent_declared_models": absent_models,
             "absent_declared_market_models": absent_market,
             "public_baseline_drift": drift,

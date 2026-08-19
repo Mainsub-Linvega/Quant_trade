@@ -1,6 +1,7 @@
 """生成私榜提交 zip：只读复制 + 校验 + 压缩，不修改策略源目录。
 
-入包内容：策略根目录下的所有 `*.py`（除 `train.py`）+ `model/`。
+入包内容：`SUBMISSION_MODULES` 声明的那几个 `*.py` + `model/`；
+声明集与 `main.py` 的 AST import 闭包双向对拍，缺模块和多模块都当场失败。
 校验项：main.py 在包根、Model 可实例化、predict 返回长度正确且全为有限浮点。
 
 用法：
@@ -12,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import datetime
 import importlib.util
 import json
@@ -24,8 +26,96 @@ import numpy as np
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# 训练侧模块，不进提交包（依赖 src/ 与 sklearn，评测端没有）
-EXCLUDED_MODULES = {"train.py"}
+# 明确**不**入包的模块，连同理由。策略目录下的每个 .py 都必须被分类：
+# 要么在 SUBMISSION_MODULES 里（入包），要么在这里（不入包）。
+# 出现没被分类的新文件一律硬失败 —— 偏离必须是按下去的，不是漏掉的。
+EXCLUDED_MODULES: dict[str, str] = {
+    "train.py": "训练侧，依赖 src/ 与 sklearn，评测端两者都没有",
+    # ⚠️ 2026-08-19：它此前是**入包**的（旧口径「除 train.py 外全收」），
+    # 而它只被 experiments/temporal_multiscale.py 与 tests 使用，
+    # main.py 的 import 闭包根本够不到 ⟹ 研究改动会白白改变提交包的字节。
+    "temporal.py": "V4-T 研究模块，不在 main.py 的 import 闭包里",
+}
+
+# 提交包的**内容身份**：包里该有哪些 .py，唯一定义在这里。
+# 与 `promote_v3_candidate.PUBLIC_BASELINE`（模型身份）分工对称 ——
+# 一个管「装的是不是榜上那个模型」，一个管「装的是不是该装的那些代码」，
+# 两者都由 `scripts/audit_submission_zip.py` 消费，不在别处抄第二份。
+#
+# ⚠️ 这张表**不是唯一依据**。`main()` 里那条注释记着「写死清单曾漏过 lgbm_numpy.py」，
+# 所以它只是一份**被校验的声明**：`resolve_local_modules()` 用 AST 求出 main.py 的
+# 本地 import 闭包与它对拍，两边不一致当场退出 —— 既不会漏模块，也不会多塞模块。
+SUBMISSION_MODULES: dict[str, frozenset[str]] = {
+    "v1_ridge": frozenset({"main.py", "features.py"}),
+    "v3_hybrid": frozenset({"main.py", "features.py", "lgbm_numpy.py", "history.py"}),
+}
+
+
+def resolve_local_modules(strategy_dir: Path) -> set[str]:
+    """`main.py` 靠 import 真正能拉起来的本地模块闭包（含 `main.py` 自己）。
+
+    只跟进「策略目录里确实存在同名 .py」的名字，所以 `main.py` 里那句延迟的
+    `import lightgbm` 会被自动忽略（评测端由 pip 提供，不该进包）。
+    用 `ast.walk` 而不是只看顶层，函数体内的 import 同样算数。
+    """
+    local = {path.stem for path in strategy_dir.glob("*.py")}
+    seen: set[str] = set()
+    stack = ["main"]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        tree = ast.parse((strategy_dir / f"{current}.py").read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                # 相对 import（level>0）在提交包里不成立：包根是平铺的顶层模块
+                names = [node.module] if node.level == 0 and node.module else []
+            else:
+                continue
+            for name in names:
+                root = name.split(".")[0]
+                if root in local and root not in seen:
+                    stack.append(root)
+    return {f"{name}.py" for name in seen}
+
+
+def check_submission_modules(strategy: str, strategy_dir: Path) -> list[str]:
+    """定下入包的 .py 清单，并把三种偏离都变成硬失败。
+
+    ⚠️ 2026-08-19 补的这道闸门。原实现是「除 `train.py` 外全收 `*.py`」，于是纯研究模块
+    `temporal.py` 也进了私榜包 —— 它不在 `main.py` 的 import 闭包里，却会因为研究改动
+    **改变提交包的字节**；而当时的审计只查缺文件、不查多文件 ⟹ 全程没有任何东西报警。
+    多塞模块还有第二层风险：包内 .py 在评测端就是 `sys.path` 上的顶层名字，
+    哪天出现一个叫 `types.py` / `logging.py` 的研究文件就会遮蔽标准库。
+    """
+    declared = SUBMISSION_MODULES.get(strategy)
+    present = {path.name for path in strategy_dir.glob("*.py")}
+    if declared is None:
+        print(f"⚠️ {strategy} 未在 SUBMISSION_MODULES 里声明，"
+              f"按旧口径「除 {'/'.join(sorted(EXCLUDED_MODULES))} 外全收」打包")
+        return sorted(present - set(EXCLUDED_MODULES))
+
+    reachable = resolve_local_modules(strategy_dir)
+    problems: list[str] = []
+    if declared != reachable:
+        problems.append(
+            "声明集与 main.py 的 import 闭包不一致："
+            f"闭包里有而未声明 {sorted(reachable - declared) or '—'}；"
+            f"声明了但闭包里够不到 {sorted(declared - reachable) or '—'}")
+    missing = sorted(declared - present)
+    if missing:
+        problems.append(f"声明了但策略目录里不存在：{missing}")
+    unclassified = sorted(present - declared - set(EXCLUDED_MODULES))
+    if unclassified:
+        problems.append(
+            f"策略目录里有未分类的模块：{unclassified} —— main.py 需要它就加进 "
+            f"SUBMISSION_MODULES['{strategy}']，是研究代码就加进 EXCLUDED_MODULES 并写明理由")
+    if problems:
+        raise SystemExit("提交包内容校验失败：\n  " + "\n  ".join(problems))
+    return sorted(declared)
 
 
 def _as_float(value) -> float:
@@ -161,15 +251,15 @@ def main() -> None:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    # 复制策略根目录下的所有 .py（不递归）+ model/ 产物。
-    # 排除 train.py —— 它依赖 src/ 与 sklearn，评测端两者都没有。
-    # 用「除 train.py 外全收」而不是写死清单，是因为写死过一次就漏过一次：
-    # v3_hybrid 加了 lgbm_numpy.py，而清单还停在 (main.py, features.py)。
-    sources = sorted(path for path in strategy_dir.glob("*.py")
-                     if path.name not in EXCLUDED_MODULES)
-    assert any(path.name == "main.py" for path in sources), "策略目录里没有 main.py"
-    for path in sources:
-        shutil.copy2(path, staging / path.name)
+    # 入包的 .py 由 SUBMISSION_MODULES 声明，再与 main.py 的 AST import 闭包双向对拍。
+    # 旧口径是「除 train.py 外全收」—— 它确实漏不掉模块（当年写死清单漏过 lgbm_numpy.py，
+    # 那条教训成立），但也拦不住**多余**模块：08-19 研究模块 temporal.py 就是这样进的包。
+    # 现在两个方向都有门。
+    names = check_submission_modules(args.strategy, strategy_dir)
+    assert "main.py" in names, "策略目录里没有 main.py"
+    print("入包模块: " + ", ".join(names))
+    for name in names:
+        shutil.copy2(strategy_dir / name, staging / name)
     model_dir = Path(args.model_dir) if args.model_dir else (strategy_dir / "model")
     if model_dir.is_dir():
         shutil.copytree(model_dir, staging / "model",

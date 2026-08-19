@@ -1,0 +1,39 @@
+{
+  "experiment": "slow_fast_vertex_solution",
+  "plan_path": "/home/mainsub/Documents/Quant_trade/outputs/experiments/slow_fast_line_geometry.json",
+  "plan_sha256": "36a8c3501ba03279bc7051871c7516daa89a02b0b97f617a8c09d9a4de0dec3c",
+  "s0": 0.003997751,
+  "s1": 0.0041150085,
+  "s2": 0.0039374211,
+  "t3": 2.0,
+  "integrity_upper_bound": 0.004232265999999999,
+  "solve": {
+    "a": -0.00014742245000000007,
+    "b": 0.00026467995,
+    "c": 0.003997751,
+    "t3": 2.0,
+    "concave": true,
+    "t_star": 0.8976921425468097,
+    "score_at_vertex": 0.004116551555702341,
+    "gain_full": 1.5430557023413106e-06
+  },
+  "c_star": [
+    0.5222795019347464,
+    1.2434853692568533
+  ],
+  "t_used": 0.9488460712734048,
+  "c_used": [
+    0.4859397509673732,
+    1.2482426846284265
+  ],
+  "relative_used": [
+    0.4189135784201493,
+    1.076071279852092
+  ],
+  "gain_shrunk": 1.157291776755983e-06,
+  "reachable": true,
+  "max_clip_free_t": 2.696778564861605,
+  "adopt": false,
+  "verdict": "不改交付，私榜维持 t=1",
+  "verdict_note": "收缩后预测增益 1.157e-06 < 阈值 1e-05（预注册的「不可辨别」线）⟹ **不改交付**。"
+}

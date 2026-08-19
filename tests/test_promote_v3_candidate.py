@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from promote_v3_candidate import PUBLIC_BASELINE, stage_candidate
+from promote_v3_candidate import PUBLIC_BASELINE, slow_fast_defaults, stage_candidate
 
 
 def make_candidate(root: Path, **overrides) -> tuple[Path, list[str], list[str]]:
@@ -77,6 +77,51 @@ class PromoteV3CandidateTest(unittest.TestCase):
             self.assertEqual(staged["market_model_files"], market[:2])
             self.assertFalse((stage / models[2]).exists())
             self.assertFalse((stage / market[2]).exists())
+
+    def test_staging_writes_slow_fast_keys_absent_from_candidate(self) -> None:
+        """2026-08-19 的回归：`train.py` 的 CLI 里没有 slow/fast 概念。
+
+        ⟹ 8/23 重训出来的候选 meta 一定缺这三个键，而 `main.py:222` 是
+        `PredictionTrail(int(window)) if window else None` —— 缺键会**静默关掉**
+        slow/fast、退回单一 scale 的旧模型（公榜低 2.93%）。
+        staging 必须像补 scale/blend_weight 一样把它们补上。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, _, _ = make_candidate(root)
+            # 模拟重训候选：把三个键从候选 meta 里彻底拿掉
+            meta_path = source / "hybrid_meta.json"
+            meta = json.loads(meta_path.read_text())
+            for key in slow_fast_defaults():
+                meta.pop(key)
+            meta_path.write_text(json.dumps(meta))
+
+            stage = root / "stage"
+            manifest = stage_candidate(source, stage, scale=1.16, n_seeds=3)
+            staged = json.loads((stage / "hybrid_meta.json").read_text())
+            for key, expected in slow_fast_defaults().items():
+                self.assertEqual(staged[key], expected, key)
+                self.assertEqual(manifest["configuration"][key], expected, key)
+
+    def test_explicit_slow_fast_recalibration_needs_off_baseline(self) -> None:
+        """RUNBOOK D1 的 (a) 路：用新 OOF 重标定两个 relative。
+
+        写进 staged meta，但因为偏离公榜基线，必须显式按下 `--off-baseline` 才放行 ——
+        偏离要是按下去的，不是漏掉的。
+        """
+        recalibrated = dict(slow_fast_defaults())
+        recalibrated["slow_fast_slow_relative"] = 0.42
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, _, _ = make_candidate(root)
+            with self.assertRaises(ValueError):
+                stage_candidate(source, root / "stage", scale=1.16, n_seeds=3,
+                                slow_fast=recalibrated)
+            staged_dir = root / "stage_off"
+            stage_candidate(source, staged_dir, scale=1.16, n_seeds=3,
+                            slow_fast=recalibrated, off_baseline=True)
+            staged = json.loads((staged_dir / "hybrid_meta.json").read_text())
+            self.assertEqual(staged["slow_fast_slow_relative"], 0.42)
 
     def test_structural_switches_are_gated(self) -> None:
         """λ=0 会让整片市场森林白跑、不带权会换掉截面块的损失 —— 都必须被拦住。"""

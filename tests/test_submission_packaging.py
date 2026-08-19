@@ -4,14 +4,16 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from audit_submission_zip import audit
-from make_submission import check_v3_hybrid_meta
+from audit_submission_zip import DECLARED_MODULES, REQUIRED, audit
+from make_submission import (EXCLUDED_MODULES, SUBMISSION_MODULES, check_submission_modules,
+                             check_v3_hybrid_meta, resolve_local_modules)
 from promote_v3_candidate import PUBLIC_BASELINE
 
 
@@ -180,6 +182,37 @@ class SubmissionPackagingTest(unittest.TestCase):
             self.assertFalse(strict["passed"])
             self.assertEqual(len(strict["public_baseline_drift"]), 3)
 
+    def test_audit_rejects_unexpected_module(self) -> None:
+        """2026-08-19 的回归：原实现只查**缺**文件，不查**多**文件。
+
+        打包那边当时是「除 train.py 外全收 *.py」⟹ 纯研究模块 `temporal.py` 混进了
+        私榜包；它不在 `main.py` 的 import 闭包里，却会因为研究改动改变提交包字节。
+        这一条钉住反方向：包里多一个 .py 就必须 FAIL。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stowaway.zip"
+            meta = baseline_meta()
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("main.py", "class Model: pass")
+                for module in sorted(DECLARED_MODULES - {"main.py"}):
+                    archive.writestr(module, "")
+                archive.writestr("temporal.py", "# 研究模块，不该在包里")
+                archive.writestr("model/baseline_model.json", "{}")
+                archive.writestr("model/hybrid_meta.json", json.dumps(meta))
+                for name in meta["lgbm_model_files"] + meta["market_model_files"]:
+                    archive.writestr(f"model/{name}", "model")
+            result = audit(path, expect_public_baseline=True)
+            self.assertFalse(result["passed"])
+            self.assertEqual(result["unexpected_modules"], ["temporal.py"])
+            # 只有这一条该红：模型身份本身是干净的（正是 20260818.zip 的真实处境）
+            self.assertEqual([name for name, ok in result["checks"].items() if not ok],
+                             ["no_unexpected_modules"])
+
+    def test_required_is_derived_from_declared_modules(self) -> None:
+        """`REQUIRED` 必须由 `SUBMISSION_MODULES` 派生，不能是第二份手抄清单。"""
+        self.assertEqual(DECLARED_MODULES, SUBMISSION_MODULES["v3_hybrid"])
+        self.assertTrue(DECLARED_MODULES <= REQUIRED)
+
     def test_audit_rejects_train_py(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "bad.zip"
@@ -190,6 +223,68 @@ class SubmissionPackagingTest(unittest.TestCase):
                 archive.writestr("model/baseline_model.json", "{}")
                 archive.writestr("model/hybrid_meta.json", json.dumps(meta))
             self.assertFalse(audit(path)["passed"])
+
+
+class SubmissionModuleWhitelistTest(unittest.TestCase):
+    """入包 .py 清单这道闸门。
+
+    ⚠️ 旧口径是「除 `train.py` 外全收 `*.py`」，注释里写明理由是**写死清单曾漏过
+    `lgbm_numpy.py`**。所以这里不能退回硬编码：声明集必须与 `main.py` 的 AST import
+    闭包双向对拍 —— 漏模块和多模块都要当场炸。
+    """
+
+    def test_declared_modules_match_main_import_closure(self) -> None:
+        """拿**真实**策略目录跑。以后再往 strategies/v3_hybrid/ 扔研究文件会在这里红。"""
+        closure = resolve_local_modules(ROOT / "strategies" / "v3_hybrid")
+        self.assertEqual(closure, set(SUBMISSION_MODULES["v3_hybrid"]))
+        # 目录里的每个 .py 都必须被分类：入包，或显式排除并写明理由
+        present = {path.name for path in (ROOT / "strategies" / "v3_hybrid").glob("*.py")}
+        self.assertEqual(present - set(SUBMISSION_MODULES["v3_hybrid"]) - set(EXCLUDED_MODULES),
+                         set(), "有未分类的模块")
+        self.assertEqual(check_submission_modules("v3_hybrid", ROOT / "strategies" / "v3_hybrid"),
+                         sorted(SUBMISSION_MODULES["v3_hybrid"]))
+
+    def _strategy_dir(self, directory: str, files: dict[str, str]) -> Path:
+        path = Path(directory) / "probe"
+        path.mkdir()
+        for name, body in files.items():
+            (path / name).write_text(body, encoding="utf-8")
+        return path
+
+    def test_rejects_unclassified_module(self) -> None:
+        """研究文件掉进策略目录 ⟹ 打包必须失败，而不是把它一起装进去。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._strategy_dir(directory, {
+                "main.py": "from helper import thing\n",
+                "helper.py": "thing = 1\n",
+                "scratch.py": "# 研究草稿\n",
+            })
+            declared = {"probe": frozenset({"main.py", "helper.py"})}
+            with unittest.mock.patch.dict(SUBMISSION_MODULES, declared, clear=False):
+                with self.assertRaises(SystemExit) as caught:
+                    check_submission_modules("probe", path)
+        self.assertIn("scratch.py", str(caught.exception))
+
+    def test_rejects_module_reachable_but_undeclared(self) -> None:
+        """闭包里有、声明集里没有 —— 就是当年漏掉 `lgbm_numpy.py` 的那个方向。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._strategy_dir(directory, {
+                "main.py": "import helper\n",
+                "helper.py": "value = 1\n",
+            })
+            declared = {"probe": frozenset({"main.py"})}
+            with unittest.mock.patch.dict(SUBMISSION_MODULES, declared, clear=False):
+                with self.assertRaises(SystemExit) as caught:
+                    check_submission_modules("probe", path)
+        self.assertIn("helper.py", str(caught.exception))
+
+    def test_deferred_third_party_import_is_not_local(self) -> None:
+        """`main.py:266` 那句延迟的 `import lightgbm` 不能被当成本地模块。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._strategy_dir(directory, {
+                "main.py": "def go():\n    import lightgbm\n    return lightgbm\n",
+            })
+            self.assertEqual(resolve_local_modules(path), {"main.py"})
 
 
 if __name__ == "__main__":

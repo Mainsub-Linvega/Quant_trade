@@ -1,0 +1,187 @@
+{
+  "experiment": "slow_fast_line_geometry",
+  "role": "PRE-REGISTRATION —— 必须先于第三点提交落盘",
+  "s0": 0.003997751,
+  "s1": 0.0041150085,
+  "t3": 2.0,
+  "c0": [
+    1.16,
+    1.16
+  ],
+  "c1": [
+    0.4496,
+    1.253
+  ],
+  "c_t3": [
+    -0.2607999999999999,
+    1.3459999999999999
+  ],
+  "relative_t3": [
+    -0.2248275862068965,
+    1.160344827586207
+  ],
+  "prediction_scale": 1.16,
+  "prediction_clip": 0.5,
+  "integrity_upper_bound": 0.004232265999999999,
+  "clip_geometry": {
+    "probes": [
+      {
+        "t": 0.0,
+        "max_abs_pred": 0.4046632,
+        "clipped_rows": 0,
+        "coefficients": [
+          1.16,
+          1.16
+        ]
+      },
+      {
+        "t": 0.5,
+        "max_abs_pred": 0.41255647,
+        "clipped_rows": 0,
+        "coefficients": [
+          0.8048,
+          1.2065
+        ]
+      },
+      {
+        "t": 1.0,
+        "max_abs_pred": 0.42044974,
+        "clipped_rows": 0,
+        "coefficients": [
+          0.4496,
+          1.253
+        ]
+      },
+      {
+        "t": 1.5,
+        "max_abs_pred": 0.42834301,
+        "clipped_rows": 0,
+        "coefficients": [
+          0.09440000000000004,
+          1.2994999999999999
+        ]
+      },
+      {
+        "t": 2.0,
+        "max_abs_pred": 0.44593395,
+        "clipped_rows": 0,
+        "coefficients": [
+          -0.2607999999999999,
+          1.3459999999999999
+        ]
+      },
+      {
+        "t": 2.5,
+        "max_abs_pred": 0.484351895,
+        "clipped_rows": 0,
+        "coefficients": [
+          -0.6159999999999999,
+          1.3924999999999998
+        ]
+      },
+      {
+        "t": 3.0,
+        "max_abs_pred": 0.5241125899999999,
+        "clipped_rows": 2,
+        "coefficients": [
+          -0.9711999999999998,
+          1.4389999999999998
+        ]
+      }
+    ],
+    "max_clip_free_t": 2.696778564861605,
+    "rows": 3217458
+  },
+  "anchor_cross_check": {
+    "max_abs_difference": 5.000010877553862e-09,
+    "median_abs_difference": 2.50015121886632e-09,
+    "rows_over_1e_7": 0,
+    "rows": 3217458,
+    "k_real_steps": 2000,
+    "passes": true,
+    "note": "从 t=0 的 CSV 按 ledger 记录的 slow/fast 变换重算 t=1；CSV 是 8 位小数 ⟹ 期望 ~1e-8 的舍入地板"
+  },
+  "s2_table": [
+    {
+      "s2": 0.0038,
+      "t_star": 0.7712623708549828,
+      "score_at_vertex": 0.004126316773725264,
+      "relative_gain": 0.002748055982208552,
+      "relative_gain_shrunk": 0.0020610419866564137,
+      "reachable": true
+    },
+    {
+      "s2": 0.0039,
+      "t_star": 0.8529024937850995,
+      "score_at_vertex": 0.004118603232082503,
+      "relative_gain": 0.0008735661378349977,
+      "relative_gain_shrunk": 0.0006551746033762483,
+      "reachable": true
+    },
+    {
+      "s2": 0.003997751,
+      "t_star": 1.0,
+      "score_at_vertex": 0.0041150085,
+      "relative_gain": 0.0,
+      "relative_gain_shrunk": 0.0,
+      "reachable": true
+    },
+    {
+      "s2": 0.00405,
+      "t_star": 1.1433317239638767,
+      "score_at_vertex": 0.004116880734811347,
+      "relative_gain": 0.0004549771431449392,
+      "relative_gain_shrunk": 0.00034123285735870445,
+      "reachable": true
+    },
+    {
+      "s2": 0.0041,
+      "t_star": 1.3865279058866247,
+      "score_at_vertex": 0.004124889022962251,
+      "relative_gain": 0.0024010941805467424,
+      "relative_gain_shrunk": 0.0018008206354100567,
+      "reachable": true
+    },
+    {
+      "s2": 0.00412,
+      "t_star": 1.544461368535448,
+      "score_at_vertex": 0.004131648464460522,
+      "relative_gain": 0.004043725416490034,
+      "relative_gain_shrunk": 0.0030327940623675253,
+      "reachable": true
+    },
+    {
+      "s2": 0.00415,
+      "t_star": 1.9253458293827435,
+      "score_at_vertex": 0.004150229244294423,
+      "relative_gain": 0.008559093934902775,
+      "relative_gain_shrunk": 0.006419320451177081,
+      "reachable": true
+    },
+    {
+      "s2": 0.00418,
+      "t_star": 2.7434756820877784,
+      "score_at_vertex": 0.004194445174896203,
+      "relative_gain": 0.019304133854451,
+      "relative_gain_shrunk": 0.014478100390838251,
+      "reachable": false
+    },
+    {
+      "s2": 0.0042,
+      "t_star": 4.134088514225458,
+      "score_at_vertex": 0.0042734750669783965,
+      "relative_gain": 0.038509414252338836,
+      "relative_gain_shrunk": 0.02888206068925413,
+      "reachable": false
+    }
+  ],
+  "shrink": 0.5,
+  "shrink_keeps_fraction_of_gain": 0.75,
+  "adopt_min_delta": 1e-05,
+  "adopt_min_delta_source": "2026-08-17 asset adapter 预注册判据「|Δ| < 1e-5 视为不可辨别」",
+  "t_star_adopt_threshold": 1.46958,
+  "s2_adopt_threshold": 0.00411132961517358,
+  "csv_t0": "/home/mainsub/Documents/Quant_trade/outputs/submission_mkt_shrunk.csv",
+  "csv_t1": "/home/mainsub/Documents/Quant_trade/outputs/submission_mkt_shrunk_slowfast.csv",
+  "anchor_note": "⚠️ `public_replay_inventory` 里 `submission_mkt_shrunk.csv` 的归属是 **inferred（按模型名推断）**，不是 sha256 硬校验 —— 而整条抛物线都架在它是 t=0 上。\n\n从它按 ledger 记录的 slow/fast 变换重算 t=1，与盘上那份逐行比对：\n\n```text\n逐行比对        3,217,458 行（K_real = 2000）\nmax|Δ|          5.000e-09     ← CSV 是 8 位小数，舍入地板就在 ~1e-8\n中位|Δ|         2.500e-09\n超过 1e-7 的行  0\n```\n\n⟹ **两份 CSV 相互印证，S0 锚点可信。**"
+}

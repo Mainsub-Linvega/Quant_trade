@@ -7,7 +7,10 @@
 ## 1. 当前目标与节点
 
 - **8/23**：公榜停止更新并等待主办方标签/数据回补；收到更新包后先审计，不先训练。
-- **8/31**：私榜策略文件提交截止；私榜共 10 次机会，至少保留 3 次余量。
+- **8/31**：私榜策略文件提交截止。⚠️ 主办方原文是「共可以进行最多 `10` 次策略文件提交，
+  **最终采用最新提交版本**」（`docs/competition_description.md:201`）——
+  **不是 best-of-10**。⟹ 最后一次上传的那份就是最终答案；10 次是上传失败的重试余量，
+  **不是**「交一组分散候选、由主办方挑最好」的额度。高方差候选在这里**没有期权价值**。
 - **当前主目标**：守住已转正的 `v3_hybrid_slowfast`，完成交付与数据版本验证；8/23 若数据更新
   真实存在，再按预注册矩阵重训和重标定。
 - **研究原则**：当前结构轴已经带来主要收益，普通容量和轮数旋钮接近耗尽；不再用无边界网格搜索
@@ -119,9 +122,18 @@
 
 ## 4. 行动面板
 
-### P0 — 私榜交付闭环
+### P0 — 私榜交付闭环 —— `CLOSED`（2026-08-19）
 
-- **状态**：`AWAITING_USER`（2026-08-18：动作 1–3 全部完成并落盘；只剩动作 4，只能由用户执行）
+- **状态**：`CLOSED`。动作 1–3 于 08-18 完成并落盘，动作 4 于 08-19 由用户执行完毕。
+- **结案证据**：`outputs/experiments/submission_audit_v3_hybrid_20260819.json` ——
+  `outputs/v3_hybrid_submission_20260819.zip`（sha256 `3f1da29cad36d89b7…`，5,819,904 B）
+  审计 **`passed: true`**、`public_baseline_drift: []`、`unexpected_modules: []`、
+  `missing: []`，包内恰好 4 个执行模块 + 8 个模型文件。
+  ⟹ 「模型身份」与「包内容身份」两道门同时通过，且**有落盘证据**。
+- ⚠️ 盘上现有三个 v3 提交包，只有 **20260819** 那份是当前生产 + 通过全部门禁的；
+  20260813 是 slow/fast 转正**前**的旧模型，20260818 多带一个研究模块 `temporal.py`。
+  8/31 上传前用文件名日期核对，并重跑一次带 `--expect-public-baseline --output` 的审计。
+- 以下为 08-18 的原始记录，保留备查：
 - **目标**：确认生产目录可被完整、可审计、在时限内打包和运行。
 - **动作**：
   1. ✅ 完整 unittest（**73 passed / 18 subtests**）、双后端一致性、全量 runner 都已重跑。
@@ -130,6 +142,15 @@
   3. ✅ **4 核下两条路径都实测完**（此前 ROADMAP 记的 5.15 / 10.44 分钟没有落盘产物、
      也没记线程数，而开发机是 32 核 ⟹ 那两个数不能替 4 核背书）。
   4. ⏳ **由用户执行**：`scripts/make_submission.py` + zip 审计；至少留 3 次私榜机会。
+     ⚠️ **2026-08-19 复查**：`outputs/v3_hybrid_submission_20260818.zip` 已经存在（08-18 16:32），
+     8 个模型文件与 `main/features/history/lgbm_numpy` 四个执行模块与生产**逐字节相同**
+     （sha256 实测），4 个 slow_fast 键齐全 ⟹ **模型身份是对的**。两个缺口：
+     (a) 盘上**没有任何审计记录** —— `audit_submission_zip.py` 默认只打印，不带 `--output` 就不落盘；
+     (b) 它多装了一个 `temporal.py`（研究模块，不在 `main.py` 的 import 闭包里）。
+     新审计对它的判定是 `passed=false`，**且失败项只有 `no_unexpected_modules`**、
+     `public_baseline_drift` 为空 —— 正好印证上面两句。
+     ⟹ 重新打包一次并带 `--output` 落盘审计即可结案，**不需要重测耗时**
+     （执行路径上的四个模块一字节未动）。
 - **4 核实测**（`scripts/verify_delivery_runtime.py`，走官方 runner 的 `run_loaded_model`，
   全程不写任何 CSV）：
 
@@ -181,17 +202,54 @@
   4. 若 train split 变化，先在回补标签上复算历史提交和真实指标，修正本地尺子。
 - **验收条件**：审计 JSON 明确 added/removed/modified；数据 hash 可追溯；任何训练动作都有审计结果
   作为输入。
+- **⭐ 2026-08-19 已端到端演练**（用当前数据，全 file hash，未用 `--no-file-hash`）：
+  `outputs/data_audits/data_release_20260819_rehearsal.json` 报 `comparison.changed = false`、
+  `train.row_delta = 0`，`retrain_extended.py` 随即以
+  「audit does not prove a changed training split; fixed retraining is blocked」**明确拒绝**。
+  ⟹ 工具链与第一道闸门都验过，8/23 当天只需换 `--output` 日期。
 
 ### P2 — 扩展数据固定结构重训与联合重标定
 
 - **状态**：`BLOCKED_BY_P1`
 - **目标**：量化纯数据收益，再比较预注册的相关参数组合。
-- **动作**：
+- **动作**（顺序不可颠倒）：
   1. 使用 `scripts/retrain_extended.py` 先 dry-run；只写候选目录，不写生产目录。
-  2. 固定当前结构重训，作为“只增加数据”的基线。
-  3. 执行 `outputs/experiments/joint_recalibration_plan.json` 中冻结的 Ridge 12 格和 LGBM 9 格。
-  4. 原规格复验 V4-R regime；不重开 T1/T2/T3 和 MLP 搜索。
+     ⚠️ dry-run 输出里现在有一段 `production_structure`，**先核它再 `--execute`**。
+  2. **用当前代码现跑配对基准**。⚠️ 不得复用 `outputs/cache/v3_production_oof_phasebal_prodwindow_exact.npz`
+     —— 它出自已不存在的代码版本（08-18 `INCIDENT`），与当前输出差 3.37e-05，
+     **与被测效应同量级**。
+  3. **recency 阶梯**（⭐ 2026-08-19 新增预注册臂，见下）。
+  4. 固定当前结构重训，作为“只增加数据”的基线。
+  5. 执行 `outputs/experiments/joint_recalibration_plan.json` 中冻结的 Ridge 12 格和 LGBM 9 格。
+  6. 原规格复验 V4-R regime；不重开 T1/T2/T3 和 MLP 搜索。
 - **验收条件**：训练/验证严格时序；不读结果扩格；报告包含配对增量、同号折数、A/B 和推理成本。
+
+#### P2-R — recency 阶梯（预注册，`BLOCKED_BY_P1`）
+
+⚠️ **P4 的「数据已饱和」不覆盖这一条。** 两者是不同的轴：
+
+```text
+P4 已测（CLOSED）  滑动窗 78,960 → 扩展窗，往训练段**前端**加旧数据   = volume 轴
+                   结果：+1.08%、2/5 折、CI 跨 0 ⟹ 测不出效应
+8/23 回补          紧邻私榜期的新标签，往训练段**后端**加新数据       = recency 轴
+                   此前**根本没法测**（没有更近的标签），不是被否决
+```
+
+回补后训练期延长约 **+24.5% 的 time_id**，而且是**最靠近 9 月实盘期**的那一段；
+私榜是 9/1–9/30 前向实盘 ⟹ recency 与 volume 的先验完全不同。
+
+- **设计（跑前钉死）**：fold 版图固定、只往后端延训练段（沿用 `v3_production_oof.py`
+  的 `--train-truncate` 那套「固定 fold 版图、只动训练段边界」的做法，不改验证段）；
+  与动作 2 的现跑基准天然配对。
+- **门槛**：沿用 RUNBOOK D2 的六道 + 检出下限（折均 > 0、≥4/5 折、去最好折 > 0、
+  相对 ≥ 3%、`2ΔA>ΔB`、配对 CI 下界 > 0）。
+  ⚠️ 1s160/5 折的检出下限实测是基准 peak 的 **6.1%**，3s480 是 **8.7%** —— 3% 那档没有牙，
+  所以「不过门槛」在这里的正确读法是**测不出来**，不是「没有效果」。
+- **⚠️ 这一条不需要公榜裁决**：8/23 后公榜已停更，且本地尺子要先经 D0.3 校准；
+  采纳与否只能靠 OOF + 机制，因此门槛只能守严不能放松。
+- **顺序**：审计 → 现跑基准 → recency 阶梯 → **才轮到**②类本地网格（alpha/轮数/history 宽度）。
+  ②类是回补标签的首要用途（`NOTES.md §2` 第 3 条），但要在 recency 定了之后做，
+  否则两个轴混在一起无法归因。
 
 ### P3 — 市场森林独立轮数 —— `CLOSED_FAIL`（2026-08-17 同步；实验其实早已跑完）
 
@@ -234,6 +292,136 @@
   服务器；任何 fixed-production smoke 报告必须保留 `oof_valid=false`，不得进入候选排名。
 - **生产决策**：`v3_hybrid_slowfast` 原样保持，不根据 phase/periodic/fullres smoke 改 meta。
 
+### P7 — slow/fast 抛物线顶点标定 —— `CLOSED`（2026-08-19，顶点已测出）
+
+- **状态**：`CLOSED`。第三点已交（`S2 = 0.0039374211`），顶点闭式解出，**判定不改交付**。
+- **结果**：
+
+  ```text
+  完整性检查   a = −1.474225e−04 < 0                          PASS
+  三点联立     t* = 0.897692     Score(t*) = 0.0041165516
+  ⭐ 当前生产点 t=1 已处在这条线峰值的 99.9625%
+  ⭐ slow/fast 捕获了线上总可得增益的 98.70%
+  挪到真顶点   +0.0375%（绝对 +1.543e−06）
+  半步收缩后   +1.157e−06  <  预注册的 1e−05「不可辨别」线   ⟹ 不改交付
+  ```
+
+- ⭐ **这条轴现在是「测出了顶点位置」，不是「没测」。** 私榜维持 `t=1`
+  （即当前生产的 `slow_fast_*_relative = 0.387610 / 1.080181`），**生产目录不动**。
+- ⚠️ `S2 < S0`（0.0039374 < 0.0039978）⟹ t=2 比**完全不做 slow/fast** 还差，与 `t*≈0.9` 自洽。
+- ⭐ **顺带验证了一个方法**：08-17 那次凭 OOF **相对模式**搬来的 `(0.4496, 1.2530)`
+  （「只搬相对模式、保留公榜标定的绝对水平」），事后证明落在最优点的 **0.04% 以内**。
+  这个做法本身被独立确认了一次。
+- **重新开放条件**：模型本身改变（森林重训 ⟹ slow/fast 的最优配比要重解），
+  或 8/23 回补数据后按原规格复验。**不得**在同一模型上继续搜第二个收缩系数或换第三点位置。
+- **证据**：`outputs/experiments/slow_fast_vertex_solution.{json,md}`（预注册
+  `slow_fast_line_geometry.json` 的 sha256 记在里面 ⟹ 判据先于结果可核验）、
+  `experiments/ledger.csv` 2026-08-19 行。
+- 以下为立项时的预注册记录，保留备查：
+- **机制**：沿 `c(t) = (1−t)·(1.16,1.16) + t·(0.4496,1.2530)`，`pred(t)` 逐行线性 ⟹
+  `Score(t)` 是 t 的**精确二次式**，二次项系数 `a = −⟨d,d⟩_w/D` **恒为负**（构造决定）。
+  已有 t=0（0.0039977510）与 t=1（0.0041150085）两点，**再取一点即闭式解出顶点**。
+- **第三点**：`t=2`，`c=(−0.2608, 1.3460)`，meta relative `(−0.224828, 1.160345)`。
+  ⭐ **限幅已实测**（不是估算）：`max|pred| = 0.445934`、**触限 0 行**；
+  二分出的 clip 边界是 **t ≈ 2.6968**。
+- **预注册**（`outputs/experiments/slow_fast_line_geometry.{json,md}`，**先于提交落盘**）：
+  - 完整性：`S2 < 2·S1 − S0 = 0.0042322660`，否则 `a ≥ 0` ⟹ **停下来查触限/查模型身份**；
+  - 增益闭式 `gain = (S1−S0)(t*−1)²/(2t*−1)`，只取决于 t*；
+  - 私榜**半步收缩** `c_used = c1 + 0.5(c*−c1)`（恰好拿到理论增益的 75%）；
+  - 采纳线沿用 08-17 asset adapter 的「|Δ| < 1e-5 视为不可辨别」⟹
+    **t\* < 1.470（约 S2 < 0.0041113）就不改交付**。
+- **⚠️ 期望值要诚实**：典型情形只有 **+0.0%~+0.9%**；+2% 以上只在 S2 贴近 `a→0` 边界时出现，
+  而那时 t\* 已越过 clip 边界、拿不到全部。花它的理由是**公榜名额 8/23 作废、不用即归零**，
+  且三点同源（ρ≈0.99）⟹ 顶点估计很精确 —— **不是**因为它能翻盘。
+- **用户执行**：
+
+  ```bash
+  .venv/bin/python experiments/slow_fast_csv.py \
+      --scale-slow -0.2608 --scale-fast 1.3460 \
+      --output outputs/submission_slowfast_t2.csv
+  # 提交 → 回填 ledger → 解顶点
+  .venv/bin/python experiments/slow_fast_vertex.py --s2 <公榜分>
+  ```
+
+- **采纳路径**：**不是**改 CSV 交私榜。系数必须走
+  `scripts/promote_v3_candidate.py --slow-fast-slow-relative/--slow-fast-fast-relative`
+  写进候选 meta，再过完整套转正门禁（CLAUDE.md §6）。
+- **不做**：5 点平面顶点。先看 S2 再议（当前 2 点 + t=2 已是 3 个方程，平面 5 参数还差 2 个
+  非共线点 ⟹ 线优先不浪费额度）。
+
+### P8 — 多任务辅助监督 —— `CLOSED_FAIL`（2026-08-19）
+
+- **状态**：`CLOSED_FAIL`。Stage 1 fold-0 符号筛不过，按预注册停止，**未跑 Stage 2**。
+- **结果**：⭐ **机制是真的，增量不存在**。辅助损失确实让 MLP 自身 peak 从基准的 17.4% 提到
+  **20.3%**（相对 +16.7%），残差信号由 −7.17e−05 翻正到 +7.14e−05；但即便在 **oracle 上界**
+  口径下，与生产 3s480 的两分量最优配比增益也只有 **+0.026%**（比 3% 门槛低约 115 倍），
+  最优配比给 MLP 的幅度占比仅 **1.8%**。
+- **为什么与立项时的 oracle +6.97% 差 270 倍 —— 基准强度**：
+  `target_mlp_screen` 的基准是 1s160 / modulo 10 / 窗 39,480 / 100 特征（fold0 peak 0.00069987），
+  生产 3s480 强 **1.51×**（0.00105595）；MLP 相对强度从 40.2% 掉到 17~20%，与基准的 corr
+  从 0.24 升到 0.41~0.42 ⟹ **MLP 那点信息生产基准里已经有了**。
+  正是 CLAUDE.md §8.6/§8.7 点名的形状。⚠️ 两次 screen 折版图不同，不是配对比较。
+- **⚠️ 预注册里一道门槛写错并已订正**：原第二道 `2ΔA>ΔB` 在「配比被重解」时不成立
+  （`A→cA`、`B→c²B`，peak 不变但 ΔA/ΔB 只反映缩放）。已换成尺度不变的残差分解
+  `Δpeak = (A_m − A_b·C/B_b)²/(B_m − C²/B_b)`（恒等式独立验算，相对差 2.9e−13）
+  加上本就该有的 **3% 幅度门槛** —— **收紧，不是放松**，重跑后判定不变。
+- **重新开放条件**：8/23 回补数据后基准本身变化，按**原规格**复验一次；
+  或出现能让 MLP 自身 peak 达到基准 **70%** 以上的模型族（当前 20.3%）。
+- **证据**：`outputs/experiments/multitask_mlp_stage1.{json,md}`、
+  `target_mlp_oracle_blend.{json,md}`；单测 `tests/test_multitask_mlp.py`。
+- 以下为立项时的预注册记录，保留备查：
+- **为什么重开**（08-12 那条否决**不覆盖**这个机制）：被否的是把 responder 的**预测值**
+  当**输入特征**（两阶段误差累积，且 runner 剥列 ⟹ 线上不成立）；本条是**辅助损失**
+  （共享 trunk，responder 只在训练时提供梯度，推理只留 target 头）。08-18
+  `horizon_auxiliary_cache_probe` 的重开条件是「不是换目标 / 线性叠加 / 对预测值做二层校准」
+  —— 三条都不是，字面满足。
+- **⭐ 新证据**（`outputs/experiments/target_mlp_oracle_blend.{json,md}`，08-19，不训练）：
+  从 `target_mlp_screen` 逐折 A/B 反解交叉项，算出 **oracle 最优配比折均 +6.97%、5/5 折、
+  去最好折 +4.86%** ⟹ 当年「等权集成 −54.49%」否掉的是**等权掺弱模型**，
+  不是「MLP 没有独立信息」。⚠️ 但那是 **oracle 上界**；按仓库量过的冻结系数让步
+  （−2.54%~−3.84%）折算只剩 **+3.1%~+4.4%**，**恰好卡在③类 +3% 门槛上**。
+- **预注册**（`experiments/multitask_mlp.py` 的模块常量 + docstring + 单测三处钉死）：
+
+  ```text
+  λ            0.3（唯一超参，不搜索）
+  辅助目标集   梯子 5 个 responder_00/02/03/04/05（H=1/2/4/7/10，夹着 target 的 H=5）
+  实现         多输出 MLPRegressor，辅助列乘 √λ ⟺ 该头损失权重 λ（alpha=0 时严格）
+  对照臂       target_only（同架构/同种子/同迭代）—— 没有它，正结果无法归因给辅助损失
+  Stage 1      fold 0，oracle 配比，只看符号：Δpeak>0 且 2ΔA>ΔB 且 multitask > target_only
+  Stage 2      五折冻结系数：折均 ≥ +3%、≥3/5 正折、去最好折 > 0、2ΔA>ΔB
+  ```
+
+- **停止条件**：Stage 1 任一门槛不过即停 —— **不调 λ、不调 hidden、不换激活、不换辅助目标集**。
+  ⚠️ 最大的风险不是「NN 学不出来」，是**超参搜索会让 OOF 尺子当场失效**。
+- **验收条件**：过 Stage 2 才谈公榜验迁移率（1 次，且必须在 8/23 之前 —— 公榜停更后没有外部裁判）。
+
+### P6 — 磁盘清理（**清单由 AI 出，删除/改名由用户执行**，CLAUDE.md §1.1）
+
+- **状态**：`AWAITING_USER`（2026-08-19 盘点）。
+- **为什么现在提**：`/` 剩 **64G**，其中 `data` 20G、`outputs` 21G。8/23 回补数据约 +24.5% time_id，
+  加上 D1 重训与 D2 现跑基准的新缓存，先腾空间比事到临头腾安全。
+- **可回收，约 18.2G**：
+
+  | 路径 | 体积 | 依据 |
+  |---|---:|---|
+  | `outputs/cache/fullres_rows_mod1/` | **17G** | 08-19 full-resolution 的 disk-backed memmap。P5 已判 `FORMAL_OOF_DEFERRED`，不在关键路径；可由 `experiments/v3_fullres_resource_smoke.py --cache` 重建 |
+  | `outputs/cache/mt_aggregates.npz` | 1.1G | `.gitignore` 注明可由 `experiments/mt_lagged.py` 重新生成 |
+  | `nvim.log` | 0 B | 空文件 |
+
+- **建议改名而不是删除**（留证 + 消除误取风险）：
+
+  | 路径 | 体积 | 依据 |
+  |---|---:|---|
+  | `outputs/cache/v3_production_oof_phasebal_prodwindow_exact.npz` | 67M | **地雷**：出自已不存在的代码版本（08-18 `INCIDENT`），与当前代码差 `max\|Δ(market_ridge)\|=3.37e-05`（折均 peak 的 2.4%）。RUNBOOK D2 明令不得用作配对基准 ⟹ 加 `.STALE-DO-NOT-USE` 后缀比留着原名安全 |
+  | `outputs/v3_hybrid_submission_20260813.zip` + 同名目录 | 19M | slow/fast 转正**前**的旧模型，RUNBOOK 已两次警告 8/31 别拿它提交。加 `.PRE-SLOWFAST` 后缀即可 |
+
+- **⚠️ 绝对不要删**：
+  - `outputs/submission_*.csv`（**21 份，1.3G**）—— 它们是 RUNBOOK **D0.3「修尺子」的全部原料**
+    （逐行预测值，覆盖公榜 0.0015→0.0041 的整个 v3 时代）。删掉 8/23 就没有本地尺子可校准，
+    而 8/23 之后公榜停更、没有第二把尺子。**这一条是本清单里最重要的一句。**
+  - `outputs/candidates/v3_hybrid_slowfast/`、`outputs/promotions/`（含 `backups/`）—— 转正与回滚路径。
+  - `outputs/data_audits/data_release_20260818.json` —— D0.2 的比较基线。
+
 ## 5. 已结案项目
 
 | 日期 | 项目 | 结论 | 证据入口 |
@@ -270,8 +458,6 @@
 
 完整失败路径和结论翻转见 [`research_history/`](research_history/README.md)，不要从本表反推实验细节。
 
-| 2026-08-19 | **当前数据剩余结构搜索与 full-resolution 资源验证收官**：rank/change/lag/volatility/trend、market set/panel 全未过门禁；phase_id 仅弱 +1.1%、3/5，不升级；periodic 比较因 validation 组成不同不作裁决。修复 disk-backed loader、fixed history 映射和后台 systemd 监控；短跨度 fixed-200 双森林 160 轮 smoke 成功（max RSS≈11.5GB，`oof_valid=false`），同跨度正式 OOF 因 5.92m rows 暂缓。全量测试 73 passed / 18 subtests。 |
-
 ## 6. 更新规则
 
 - 当前生产模型变化时，同时更新本节、promotion manifest 引用和 ledger；不要只改文字。
@@ -286,6 +472,10 @@
 | 2026-08-18 | **`slow/fast` 转正为生产基线**（公榜 0.0041150085，+2.93%）；`check_consistency.py` 改为 slow/fast-aware 以免永久报红；P4 与 per-asset 两条轴结案。 |
 | 2026-08-17 | 顺着时间平滑的否定结论找到 `slow/fast` 分离（OOF +5.77%、全分辨率核对 +5.93%）；本节第 11 条被同日测量证伪并改写。`market_lambda` 结案。仍未建候选、未改生产。 |
 | 2026-08-17 | 公榜第一更新为 0.0060（用户报告）；market 侧同口径复测 `REJECTED`，六条路全关，我上一轮「下一个方向是 market」的判断标 `SUPERSEDED`；P3 同步为 `CLOSED_FAIL`，新增 P4 recency 预注册。 |
-| 2026-08-18 | 核对 `NEXT_STEPS_horizon_auxiliary_oof_validation.md`：引用数字全对，但立项论证漏引 08-14 的同机制否决；发现 `responder_00/02` 从未进 Stage C（被单成员族启发式挡住）。缓存探针补测 ⟹ `REJECTED`；重建测试补测落盘 ⟹ NOTES 数字确认、口径澄清为中心化 R²。生产目录与模型身份未改动。 |
+| 2026-08-18 | 核对当时的本地工作笔记 `NEXT_STEPS_horizon_auxiliary_oof_validation.md`（未入库、现已不在盘上；结论证据见 `outputs/experiments/horizon_auxiliary_cache_probe.{json,md}`）：引用数字全对，但立项论证漏引 08-14 的同机制否决；发现 `responder_00/02` 从未进 Stage C（被单成员族启发式挡住）。缓存探针补测 ⟹ `REJECTED`；重建测试补测落盘 ⟹ NOTES 数字确认、口径澄清为中心化 R²。生产目录与模型身份未改动。 |
 | 2026-08-18 | 选列宽度轴 `REJECTED`（三个单变量臂全不过，两效应精确可加）；发现 `*_exact` cache 出自已不存在的代码版本并落盘替代基准；`RUNBOOK_8_23.md` 与 `public_replay.py`（21 份 CSV 全归属）就位，8/23 当天无需再做设计决策；与公榜第一的差距订正为 +45.8%（IC +20.8%）。 |
 | 2026-08-18 | **P0 推进到 `AWAITING_USER`**：4 核下 LightGBM（5.26 分钟）与 NumPy 兜底（10.94 分钟）全量实测并落盘，兜底确认为单核绑定 ⟹ 不随核数恶化。修掉三道交付门禁都不认识 slow/fast 的缺口（丢键会静默交出低 2.93% 的旧模型），补 4 个回归用例；现存 `v3_hybrid_submission_20260813.zip` 已被新审计判为旧模型。只剩用户执行打包 + zip 审计。 |
+| 2026-08-19 | **当前数据剩余结构搜索与 full-resolution 资源验证收官**：rank/change/lag/volatility/trend、market set/panel 全未过门禁；phase_id 仅弱 +1.1%、3/5，不升级；periodic 比较因 validation 组成不同不作裁决。修复 disk-backed loader、fixed history 映射和后台 systemd 监控；短跨度 fixed-200 双森林 160 轮 smoke 成功（max RSS≈11.5GB，`oof_valid=false`），同跨度正式 OOF 因 5.92m rows 暂缓。全量测试 73 passed / 18 subtests。 |
+| 2026-08-19 | 补三道交付/重训缺口（本轮由仓库结构复查发现，均**不在**原行动面板上）：① `retrain_extended.py` 的「固定结构重训」计划缺 `--weighted-cross-section`/`--market-model`/`--market-spec`/`--market-min-data-scale`，跑出来的是 08-11 架构（比生产低 21.99%），现改为从生产 `hybrid_meta.json` 派生并与 `PUBLIC_BASELINE` 对拍；② `train.py` 没有 slow/fast 概念 ⟹ 重训候选必缺三键且会被 `main.py` 静默降级，现由 `promote_v3_candidate` 在 staging 写入（`--slow-fast-*`，默认即公榜值）；③ 提交包此前「除 train.py 外全收 `*.py`」，把研究模块 `temporal.py` 也装了进去，审计只查缺文件不查多文件 —— 现由 `make_submission.SUBMISSION_MODULES` 唯一声明 + `main.py` 的 AST import 闭包双向对拍。全量测试 **84 passed / 22 subtests**。 |
+| 2026-08-19 | 按外部 `HANDOFF.md` 推进 A/B/C 三线，并核出它三处与仓库不符（P0 的 wall-clock 复测 08-18 已完成；私榜是「**最新提交版本生效**」不是 best-of-10 —— 此前 ROADMAP/RUNBOOK 都漏了这半句；t=2 的 max|pred| 数对但仓库无证据）。**P0 结案**（用户 20260819 包审计 `passed:true`、零漂移、无多余模块）。**P7 预注册落盘**：slow/fast 顶点闭式解 + 限幅几何实测（clip 边界 t≈2.6968）+ 锚点交叉验证（max|Δ|=5.0e-09）；增益闭式 `(S1−S0)(t*−1)²/(2t*−1)`，诚实期望只有 +0.0%~+0.9%。**P8 `CLOSED_FAIL`**：辅助损失机制成立（MLP 自身 peak +16.7%）但对生产基准增量仅 +0.026%；顺带订正一道写错的机制门槛（收紧）。**P2-R** recency 预注册臂立项（P4 测的是 volume 轴，不覆盖）。**P1 端到端演练通过**（全 hash 审计 + 闸门正确拒绝）。全量测试 **92 passed / 22 subtests**。 |
+| 2026-08-19 | **P7 结案**：slow/fast 顶点第三点已交（`S2 = 0.0039374211`）。完整性检查 `a = −1.474e−04 < 0` 通过；`t* = 0.897692`、`Score(t*) = 0.0041165516` ⟹ **当前生产点已处在这条线峰值的 99.9625%**，slow/fast 捕获了线上总可得增益的 **98.70%**；半步收缩后增益 1.157e−06 < 预注册 1e−05 线 ⟹ **不改交付、生产不动**。⟹ 该轴从「没测」变成「顶点已测出」。顺带确认了 08-17「只搬 OOF 相对模式、保留公榜标定绝对水平」这个做法 —— 它落在最优点的 0.04% 以内。 |

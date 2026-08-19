@@ -1,0 +1,118 @@
+{
+  "experiment": "target_mlp_oracle_blend",
+  "question": "等权 −54.49% 否证的是「等权掺弱模型」还是「MLP 没有独立信息」？",
+  "method": "从 target_mlp_screen 的逐折 A/B 反解交叉项 C，闭式解两分量最优配比 peak",
+  "caveat": "ORACLE 上界：系数在评估折上重解；基准也弱于生产。不得当作可部署增益。",
+  "source": "/home/mainsub/Documents/Quant_trade/outputs/experiments/target_mlp_screen.json",
+  "source_configuration": {
+    "data_root": "/home/mainsub/Documents/Quant_trade/data",
+    "output_dir": "/home/mainsub/Documents/Quant_trade/outputs/experiments",
+    "label": "target_mlp_screen",
+    "baseline_cache": "/home/mainsub/Documents/Quant_trade/outputs/cache/temporal_v3_oof_1seed160.npz",
+    "candidate_meta": "/home/mainsub/Documents/Quant_trade/outputs/candidates/v3_hybrid_r480_phasebal_hist/hybrid_meta.json",
+    "n_folds": 5,
+    "train_window": 39480,
+    "embargo": 6,
+    "sample_modulo": 10,
+    "sampling": "phase_balanced",
+    "current_feature_count": 100,
+    "market_hidden": [
+      32
+    ],
+    "cross_hidden": [
+      64,
+      32
+    ],
+    "max_iter": 12,
+    "batch_size": 4096,
+    "learning_rate": 0.001,
+    "alpha": 0.001,
+    "seed": 2026,
+    "force": true
+  },
+  "frozen_concession_reference": {
+    "source": "outputs/experiments/horizon_auxiliary_cache_probe.json 的 null_frozen_scale 臂",
+    "range": [
+      -0.0384,
+      -0.0254
+    ]
+  },
+  "summary": {
+    "folds": [
+      {
+        "fold": 0,
+        "peak_baseline": 0.0006998708649960205,
+        "peak_mlp": 0.00028165573241866284,
+        "mlp_relative_to_baseline": 0.4024395735065559,
+        "cross_term": 0.003049511993084404,
+        "gram_cosine": 0.3260766491639308,
+        "prediction_correlation": 0.24233481465749418,
+        "peak_equal_blend": 0.0004591002238438066,
+        "relative_equal_blend": -0.34402152339000835,
+        "peak_oracle_blend": 0.0007743095685848066,
+        "relative_oracle_blend": 0.10636062638385346
+      },
+      {
+        "fold": 1,
+        "peak_baseline": 0.0018256566704338145,
+        "peak_mlp": 0.0009722373558427375,
+        "mlp_relative_to_baseline": 0.5325411790661129,
+        "cross_term": 0.0021567644532870037,
+        "gram_cosine": 0.36431706624014015,
+        "prediction_correlation": 0.3213337784148894,
+        "peak_equal_blend": 0.0014682944623977273,
+        "relative_equal_blend": -0.19574447584998034,
+        "peak_oracle_blend": 0.0021067746187805932,
+        "relative_oracle_blend": 0.15398182632004898
+      },
+      {
+        "fold": 2,
+        "peak_baseline": 0.0013385339178132259,
+        "peak_mlp": 8.235541583653862e-05,
+        "mlp_relative_to_baseline": 0.06152658123978162,
+        "cross_term": 0.002372319124434112,
+        "gram_cosine": 0.36799661626919716,
+        "prediction_correlation": 0.3420109540156991,
+        "peak_equal_blend": 0.0002790419935857318,
+        "relative_equal_blend": -0.7915316228657059,
+        "peak_oracle_blend": 0.0013608097213302355,
+        "relative_oracle_blend": 0.016641941769695245
+      },
+      {
+        "fold": 3,
+        "peak_baseline": 0.001057725696681333,
+        "peak_mlp": 0.00026234746778508304,
+        "mlp_relative_to_baseline": 0.24802977615861205,
+        "cross_term": 0.001274742879389593,
+        "gram_cosine": 0.24612503512218628,
+        "prediction_correlation": 0.2396446517879338,
+        "peak_equal_blend": 0.0005610342209519468,
+        "relative_equal_blend": -0.4695843896841879,
+        "peak_oracle_blend": 0.0011291706172432384,
+        "relative_oracle_blend": 0.06754579262474891
+      },
+      {
+        "fold": 4,
+        "peak_baseline": 0.002069852010468946,
+        "peak_mlp": 9.992982209799321e-05,
+        "mlp_relative_to_baseline": 0.04827872794410702,
+        "cross_term": 0.0016581781685086582,
+        "gram_cosine": 0.28009977469274655,
+        "prediction_correlation": 0.279641974066184,
+        "peak_equal_blend": 0.00041467193980774435,
+        "relative_equal_blend": -0.7996610686607512,
+        "peak_oracle_blend": 0.0020780394026390448,
+        "relative_oracle_blend": 0.003955544709809411
+      }
+    ],
+    "oracle_mean": 0.0696971463616312,
+    "oracle_positive_folds": 5,
+    "oracle_drop_best": 0.04862597637202676,
+    "equal_mean": -0.5201086160901267,
+    "equal_positive_folds": 0,
+    "honest_range_after_frozen_concession": [
+      0.0312971463616312,
+      0.0442971463616312
+    ]
+  }
+}

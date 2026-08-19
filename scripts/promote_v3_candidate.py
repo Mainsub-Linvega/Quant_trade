@@ -73,6 +73,22 @@ def parse_args() -> argparse.Namespace:
                         help="ê 里 LGBM 占的比重；1.0 = replace，就是公榜那份的口径。"
                              "候选目录落盘的是 0.5（本地占位），**不要**沿用它")
     parser.add_argument("--n-seeds", type=int, choices=[2, 3], default=PUBLIC_BASELINE["n_seeds"])
+    # ⚠️ 2026-08-19 补：`strategies/v3_hybrid/train.py` 的 CLI 里**根本没有 slow/fast 概念**
+    # ⟹ 任何重训候选的 meta 都不会带这三个键；而 `main.py:222` 是
+    # `PredictionTrail(int(window)) if window else None`，缺键会**静默关掉** slow/fast，
+    # 退回单一 scale 1.16 的旧模型（公榜低 2.93%）。在此之前唯一的补法是手改候选 JSON。
+    # 现在与 --scale / --blend-weight 同一条路：由 staging 写进 meta。
+    #   • 沿用当前标定  = 什么都不传（默认即 PUBLIC_BASELINE）
+    #   • 用新 OOF 重标定 = experiments/v3_slow_variance.py 算出两个 relative 后显式传入
+    parser.add_argument("--slow-fast-window", type=int,
+                        default=PUBLIC_BASELINE["slow_fast_window"],
+                        help="逐 asset 因果滚动均值的窗口（真实 time_id 步）")
+    parser.add_argument("--slow-fast-slow-relative", type=float,
+                        default=PUBLIC_BASELINE["slow_fast_slow_relative"],
+                        help="慢块 scale 相对 prediction_scale 的乘数")
+    parser.add_argument("--slow-fast-fast-relative", type=float,
+                        default=PUBLIC_BASELINE["slow_fast_fast_relative"],
+                        help="快块 scale 相对 prediction_scale 的乘数")
     parser.add_argument("--off-baseline", action="store_true",
                         help="显式允许 staging 配置偏离公榜基线（例如 2 种子的超时退路）。"
                              "默认拒绝 —— 偏离必须是有意的")
@@ -153,8 +169,15 @@ def check_against_public_baseline(*, scale: float, n_seeds: int, blend_weight: f
     return drift
 
 
+def slow_fast_defaults() -> dict[str, float]:
+    """slow/fast 三键的默认值 —— 唯一定义仍是 `PUBLIC_BASELINE`，这里只是取一份视图。"""
+    return {key: PUBLIC_BASELINE[key] for key in
+            ("slow_fast_window", "slow_fast_slow_relative", "slow_fast_fast_relative")}
+
+
 def stage_candidate(candidate: Path, destination: Path, *, scale: float, n_seeds: int,
                     blend_weight: float = PUBLIC_BASELINE["blend_weight"],
+                    slow_fast: dict[str, float] | None = None,
                     force: bool = False, off_baseline: bool = False) -> dict[str, Any]:
     required = [candidate / "baseline_model.json", candidate / "hybrid_meta.json"]
     if not all(path.is_file() for path in required):
@@ -178,15 +201,25 @@ def stage_candidate(candidate: Path, destination: Path, *, scale: float, n_seeds
     shutil.copy2(candidate / "baseline_model.json", destination / "baseline_model.json")
     for name in selected_models + selected_market:
         shutil.copy2(candidate / name, destination / name)
+    slow_fast = dict(slow_fast_defaults() if slow_fast is None else slow_fast)
     meta = dict(original_meta)
     meta["prediction_scale"] = float(scale)
     # ⚠️ 候选目录落盘的是 0.5（train.py 的先验占位），榜上那份是 1.0 —— 必须显式覆写。
     meta["blend_weight"] = float(blend_weight)
+    # ⚠️ 2026-08-19 补：train.py 不认识 slow/fast，重训候选一定缺这三个键，
+    # 而缺键会被 main.py 静默降级。与 scale/blend_weight 同一条路，由 staging 写入。
+    meta["slow_fast_window"] = int(slow_fast["slow_fast_window"])
+    meta["slow_fast_slow_relative"] = float(slow_fast["slow_fast_slow_relative"])
+    meta["slow_fast_fast_relative"] = float(slow_fast["slow_fast_fast_relative"])
+    meta.setdefault("slow_fast_note",
+                    "由 scripts/promote_v3_candidate.py 在 staging 时写入；"
+                    "train.py 不产出这三个键。默认值 = PUBLIC_BASELINE（公榜 0.0041150085 那份）")
     meta["lgbm_model_files"] = selected_models
     if selected_market:
         meta["market_model_files"] = selected_market
     meta["promotion_note"] = ("Staged by scripts/promote_v3_candidate.py; source artifacts are unchanged. "
-                              f"scale={scale}, blend_weight={blend_weight}, seeds={n_seeds}")
+                              f"scale={scale}, blend_weight={blend_weight}, seeds={n_seeds}, "
+                              f"slow_fast={slow_fast}")
     validate_meta(meta, scale=scale, n_seeds=n_seeds, blend_weight=blend_weight,
                   off_baseline=off_baseline)
     (destination / "hybrid_meta.json").write_text(
@@ -196,7 +229,8 @@ def stage_candidate(candidate: Path, destination: Path, *, scale: float, n_seeds
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "source": str(candidate.resolve()), "destination": str(destination.resolve()),
         "configuration": {"prediction_scale": scale, "blend_weight": blend_weight,
-                          "num_iteration": meta.get("num_iteration"), "n_seeds": n_seeds},
+                          "num_iteration": meta.get("num_iteration"), "n_seeds": n_seeds,
+                          **slow_fast},
         "public_baseline": dict(PUBLIC_BASELINE),
         "source_meta": {key: original_meta.get(key) for key in ("blend_weight", "prediction_scale",
                                                                 "num_iteration")},
@@ -391,8 +425,11 @@ def main() -> None:
               f"要重建请加 --force")
     else:
         stage_candidate(candidate, stage_dir, scale=args.scale, n_seeds=args.n_seeds,
-                        blend_weight=args.blend_weight, force=args.force,
-                        off_baseline=args.off_baseline)
+                        blend_weight=args.blend_weight,
+                        slow_fast={"slow_fast_window": args.slow_fast_window,
+                                   "slow_fast_slow_relative": args.slow_fast_slow_relative,
+                                   "slow_fast_fast_relative": args.slow_fast_fast_relative},
+                        force=args.force, off_baseline=args.off_baseline)
     validation = validate_staging(stage_dir, off_baseline=args.off_baseline)
     print(json.dumps(validation, ensure_ascii=False, indent=2))
     print(f"{'revalidated' if reused else 'staged and validated'}: {stage_dir}")

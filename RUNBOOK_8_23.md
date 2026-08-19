@@ -14,7 +14,10 @@
 | 实盘评估 | 9/1–9/30 | **私榜是前向实盘**，不是历史留出集 |
 
 - 公榜每天 5 次（`docs/competition_description.md:192`），8/23 后作废。
-- 私榜共 10 次，**至少留 3 次余量**。
+- 私榜共 10 次，**且「最终采用最新提交版本」**（`docs/competition_description.md:201` 原文）。
+  ⚠️ **不是 best-of-10** ⟹ **8/31 最后一次上传的那份就是最终答案**。
+  「留 3 次余量」的正确含义是**给上传失败/包损坏留重试**，不是「交一组分散候选让主办方挑」。
+  推论：任何实验性变体**都不能最后上传**；收尾顺序见 D6。
 - ⚠️ 8/23 之后**没有外部尺子**。本项目已三次本地↔公榜量反（CLAUDE.md §8.1）⟹
   D0 的「修尺子」是后面一切比较的前提，不能跳。
 
@@ -95,20 +98,35 @@ git diff --stat docs/ examples/ timeseries_api/     # 必须为空或已知变�
 
 写入 `outputs/candidates/v3_hybrid_extended_fixed/`，**不碰生产**。
 
-### ⚠️ D1 的两个已知坑（08-18 干跑发现）
+### ⚠️ D1 的坑（坑 1 / 坑 3 已于 08-19 接线，当天不需要临场决策）
 
-1. **重训候选的 meta 不含 `slow_fast_*` 三个键** —— `retrain_extended.py` 的命令计划里没有
-   任何 slow/fast 参数。这三个键是公榜 0.0041150085 与 0.0039977510 的**全部差别**，
-   而 `main.py:222` 是 `PredictionTrail(...) if window else None` ⟹ **缺键会静默关掉
-   slow/fast、不报错**。08-18 已给三道门禁补上检查，所以转正时会被**明确拦下**（设计如此）。
-   两条正确做法，**必须二选一并写进 ledger**：
-   - (a) 用新 OOF **重新标定** slow/fast 的两个 relative（`experiments/v3_slow_variance.py`），
-     这是原规格复验，扩展数据后本来就该重算；
-   - (b) 沿用当前三个键的值，把它们写进候选 meta。
-   **不要**用 `--off-baseline` 蒙混过去 —— 那是给「有意不带 slow/fast」准备的出口。
+1. ✅ **重训候选的 meta 不含 `slow_fast_*` 三个键** —— `train.py` 的 CLI 里根本没有这个概念，
+   所以任何重训候选都必定缺键；而 `main.py:222` 是 `PredictionTrail(...) if window else None`
+   ⟹ **缺键会静默关掉 slow/fast、不报错**（这三个键是公榜 0.0041150085 与 0.0039977510 的
+   **全部差别**）。**08-19 已给 `promote_v3_candidate` 加上生产者**，两条路各是一条命令，
+   仍然**必须二选一并写进 ledger**：
+   - (b) 沿用当前标定 = **什么都不传**，staging 自动按 `PUBLIC_BASELINE` 写入；
+   - (a) 用新 OOF 重标定（原规格复验，扩展数据后本来就该重算）：
+     先 `experiments/v3_slow_variance.py` 算出两个 relative，再
+
+     ```bash
+     .venv/bin/python scripts/promote_v3_candidate.py --candidate <候选> \
+         --slow-fast-slow-relative <新值> --slow-fast-fast-relative <新值> --off-baseline
+     ```
+
+     这里的 `--off-baseline` 是**有意偏离公榜标定**的正当用法（偏离要按下去），
+     不是绕过缺键检查。缺键那条路已经不存在了。
 2. `--prediction-scale 1.16` 是公榜两点法标定的。扩展数据重训后这个值是否还成立，
    **只能靠 D0.3 校准后的本地尺子判断**（公榜已停更）。不搜网格，按
    `outputs/experiments/joint_recalibration_plan.json` 里冻结的格子来。
+3. ✅ **命令计划此前不复现当前生产架构**（08-19 复查发现，原 runbook 没有这一条）：
+   缺 `--weighted-cross-section`、`--market-model`、`--market-lambda`、`--market-spec`、
+   `--market-min-data-scale`。前两个是 `store_true`，不传 = `False` ——
+   **不是「用默认值」，是另一个模型**：没有行级市场森林、截面块不带权，
+   等于退回 08-11 那版架构（公榜 0.0032523499，比生产低 21.99%）。
+   现在这些项由 `production_structure()` 从生产 `hybrid_meta.json` 派生，并与 `PUBLIC_BASELINE`
+   逐键对拍，对不上就**拒绝生成计划**。
+   ⟹ **dry-run 的输出里现在有一段 `production_structure`，先看它再 `--execute`。**
 
 ## D2：用**校准后的尺子**比较重训 vs 当前生产
 
@@ -180,20 +198,40 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 ```bash
 .venv/bin/python scripts/make_submission.py --strategy v3_hybrid
 .venv/bin/python scripts/audit_submission_zip.py \
-    outputs/v3_hybrid_submission_<YYYYMMDD>.zip --expect-public-baseline
+    outputs/v3_hybrid_submission_<YYYYMMDD>.zip --expect-public-baseline \
+    --output outputs/experiments/submission_audit_v3_hybrid_<YYYYMMDD>.json
 ```
 
 `--expect-public-baseline` 是 08-18 新增的，会拿 `PUBLIC_BASELINE` **全表**核对
 （含 slow/fast 三键）。**打私榜包务必带上。**
 
+⚠️ **`--output` 不要省** —— 不带它脚本只打印不落盘，等于「审过了但盘上没有证据」。
+08-18 那次就是这样：包是对的，却没有任何可追溯的审计记录。
+审计 JSON 放 `outputs/experiments/`（该目录入库），`outputs/private_submissions/` 是 gitignore 的。
+
+⚠️ 08-19 起审计还会核**包内容身份**（`no_unexpected_modules`）：包里的 `.py` 必须恰好是
+`make_submission.SUBMISSION_MODULES` 声明的那几个。现存 `20260818.zip` 会因为多带一个
+研究模块 `temporal.py` 判 FAIL —— 那是**当时的打包口径**造成的，模型身份本身零漂移
+（`public_baseline_drift == []`），重打一次即可。
+
 ⚠️ **现存 `outputs/v3_hybrid_submission_20260813.zip` 是 slow/fast 转正前的旧模型** ——
 旧审计八项全 PASS，加 `--expect-public-baseline` 才被拦下。**不要拿它提交。**
 
-## D6+：缓冲
+## D6+：缓冲与收尾顺序
 
-- 私榜留 **≥3 次**余量。
+- 私榜留 **≥3 次**余量（**重试用**，不是候选组合用 —— 见 §0）。
 - 若 D1–D3 全部不过门槛：**维持当前生产 `v3_hybrid_slowfast` 原样提交**。
   拒绝改动不需要额外证据；空动作就是保持现状。
+
+### ⚠️ 8/31 收尾顺序（因为「最新提交版本生效」，顺序本身就是纪律）
+
+1. 先确定**要交哪一份**，并对它跑
+   `audit_submission_zip.py --expect-public-baseline --output <落盘路径>`；
+2. 审计 `passed: true` 之后**才**上传；
+3. **上传完不要再上传任何东西** —— 之后的每一次上传都会覆盖它成为最终答案；
+4. 若必须重传（包损坏、网络失败），重传的**必须是同一份 zip**，并再核一次 sha256。
+
+⟹ 不存在「最后交个实验版试试」这种操作。想试的东西在 8/23 之前用公榜试完。
 
 ---
 

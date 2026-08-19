@@ -28,12 +28,12 @@
 - 负结果保留重新开放条件，避免后续重复试验。
 - “当前最好”“生产”“待办”只写在 ROADMAP；本文件用日期和模型名描述当时状态。
 
-## 2. 当前研究上下文（2026-08-13）
+## 2. 当前研究上下文（2026-08-19）
 
 ### 生产模型
 
-当前生产为 `strategies/v3_hybrid/model/`，来源候选 `v3_hybrid_mkt_shrunk`，公榜
-**0.0039977510**。核心结构：
+当前生产为 `strategies/v3_hybrid/model/`，来源候选 `v3_hybrid_slowfast`，公榜
+**0.0041150085**（2026-08-18 转正）。核心结构：
 
 ```text
 ridge market component
@@ -43,18 +43,35 @@ row-level unweighted LGBM market component
 weighted LGBM cross-sectional component (replace, blend_weight=1.0)
 +
 asset history40 features
-→ prediction_scale 1.16 → clip 0.5
+→ prediction_scale 1.16
+→ slow/fast 分离（逐 asset 自身预测的因果滚动均值，K=2000 真实 time_id 步；
+   slow 0.4496 / fast 1.2530，即 1.16 × relative 0.3876 / 1.0802）
+→ clip 0.5
 ```
 
 精确配置以 `strategies/v3_hybrid/model/hybrid_meta.json` 为准；不要从本节复制参数生成模型。
+⚠️ 本节 08-13 那版写的是 `v3_hybrid_mkt_shrunk` / 0.0039977510，已按 slow/fast 转正更新；
+「当前最好」的唯一真值在 ROADMAP §2 与 `experiments/ledger.csv`。
 
 ### 当前问题
 
-1. **交付风险**：当前模型的精确全量 wall-clock 尚需在最终环境复测；NumPy 双森林兜底约 15 分钟。
+1. ~~**交付风险**：当前模型的精确全量 wall-clock 尚需在最终环境复测；NumPy 双森林兜底约 15 分钟。~~
+   `RESOLVED`（2026-08-18）：4 核下两条路径全量实测并落盘 —— LightGBM `predict_total` 5.26 分钟、
+   NumPy 兜底 10.94 分钟（2.08×，且**单核绑定** ⟹ 不随核数恶化）。
+   证据：`outputs/experiments/delivery_runtime_{lightgbm,numpy_fallback}_4t.{json,md}`。
+   剩余交付事项只有用户执行打包 + 落盘 zip 审计（ROADMAP P0 动作 4）。
 2. **数据更新**：8/23 若收到回补数据，必须先审计 train split 是否改变，再决定重训。
+   执行细节全部写死在 `RUNBOOK_8_23.md`，当天不需要再做设计决策。
 3. **本地尺子**：alpha、轮数和 history 宽度曾与公榜量反；回补标签优先用于重建评估可信度。
-4. **剩余研究轴**：市场森林独立截短有机制依据且无需重训，但未排期，也不得在无裁判时替换生产。
+   ⟹ 这是**唯一仍然开着**的老问题；回答它的动作是 RUNBOOK D0.3（`experiments/public_replay.py`
+   离线复算 21 份历史公榜 CSV）。⚠️ 那 21 份 `outputs/submission_*.csv` 是它的全部原料，不能清理。
+4. ~~**剩余研究轴**：市场森林独立截短有机制依据且无需重训，但未排期。~~
+   `CLOSED_FAIL`（实验其实早已跑完，08-17 才同步到面板）：160/240/320/400/480 全部 FAIL、
+   `Selected: None`。证据：`outputs/experiments/v3_market_round_scan_phasebal_prodwindow.md`。
 5. **扩展数据复验**：V4-R regime 是唯一保留的原规格结构复验；其他 V4 和 responder 路线关闭。
+6. **交付链路的「装错东西」风险**（2026-08-19 新增）：模型身份有 `PUBLIC_BASELINE` 把关，
+   但**包内容身份**此前无人把关（「除 `train.py` 外全收 `*.py`」），重训计划也不复现生产结构。
+   两处现在都有门禁，见本文件同日日志。
 
 ## 3. 研究判定方法
 
@@ -145,6 +162,282 @@ IC    = sqrt(peak)
 ```
 
 ## 5. 近期研究日志
+
+> ⚠️ 本节多条旧记录引用 `NEXT_STEPS_*.md`（如 `NEXT_STEPS_horizon_auxiliary_oof_validation.md`
+> 的 §3 / §5 / P2）。那是当时的**本地工作笔记，从未入库**，现已不在盘上
+> （`git log --all -- '*NEXT_STEPS*'` 为空）。按 CLAUDE.md §7「旧结论不删除」，
+> 引用原样保留以说明当时的推理来源；可核验的证据一律在 `outputs/experiments/` 与
+> `experiments/ledger.csv`。
+
+### 2026-08-19 — `RESULT`：slow/fast 顶点测出来了 —— 当前生产点已在这条线峰值的 99.96%
+
+**接上条的预注册。** 第三点（t=2）已交，公榜 **S2 = 0.0039374211**。
+
+**完整性检查先过**：`S2 < 2·S1 − S0 = 0.0042322660` ⟹ `a = −1.474225e−04 < 0`，曲线是凹的。
+（这道检查不是形式主义：`a ≥ 0` 在数学上不可能由「三点都是同一组预测的线性变换且都没触限」
+产生，出现就意味着某点触了限或哪次提交的模型身份与记录不符。）
+
+**闭式解**：
+
+```text
+a  = −1.474225e−04     b = +2.646799e−04
+t* = 0.897692          Score(t*) = 0.0041165516
+```
+
+⭐ **顶点在 t=0.898，也就是当前生产点 t=1 的**稍前**一点。结算下来：
+
+| | 值 |
+|---|---:|
+| 当前点 t=1 处于这条线峰值的 | **99.9625%** |
+| slow/fast 已捕获线上总可得增益的 | **98.70%** |
+| 挪到真顶点还能多拿 | +0.0375%（绝对 +1.543e−06） |
+| 半步收缩后 | +1.157e−06 |
+| 预注册的采纳线 | 1e−05 |
+
+⟹ **不改交付，私榜维持 t=1**，生产目录一字节未动。
+
+**⭐ 这一枪的价值不在涨分，在于把轴关死。** 此前 slow/fast 的两个系数是从 OOF 的**相对模式**
+搬过来的（`1.16 × c/a_global`），公榜上从来没验证过它是不是这条线的最优点 ——
+「没测」和「测了发现已经最优」是两种完全不同的状态，后者才能结案。现在是后者。
+
+**⭐ 顺带独立验证了一个方法。** 08-17 那次的做法是「只搬 OOF 的相对模式、保留公榜标定的
+绝对水平」（因为 OOF 全局最优 scale 0.7296 与公榜标定的 1.16 差 59%，是本项目已知的
+本地/公榜尺子分歧）。事后看，这个做法给出的 `(0.4496, 1.2530)` **落在最优点的 0.04% 以内**。
+⟹ 该启发式在这一次上被独立确认；但它仍是**一次**验证，不是通则。
+
+**⚠️ 两个值得记的观察**：
+
+1. `S2 = 0.0039374211 < S0 = 0.0039977510` ⟹ **t=2 比完全不做 slow/fast 还差**。
+   与 `t*≈0.9` 完全自洽（顶点两侧对称衰减，t=2 离顶点 1.10 而 t=0 只离 0.90）。
+2. 曲率 `|a| = 1.474e−04` 相对 `S1−S0 = 1.173e−04` 是同量级 ⟹ **这条抛物线在顶点附近很平**。
+   这既解释了为什么 t=1 已经拿到 99.96%，也解释了为什么半步收缩只损失 25% 的理论增益 ——
+   平坦的顶点意味着「站得准」的边际价值本来就低。
+
+**决策**：slow/fast 系数轴 `CLOSED`。**重新开放条件**：模型本身改变（森林重训 ⟹ 最优配比
+要重解）或 8/23 回补数据后按原规格复验。**不得**在同一模型上继续搜第二个收缩系数、
+换第三点位置重取、或去做 5 点平面顶点 —— 线上的余量只有 0.0375%，平面版的期望值不可能
+支撑 3 次公榜额度。
+
+**证据**：`outputs/experiments/slow_fast_vertex_solution.{json,md}`
+（里面记着预注册 `slow_fast_line_geometry.json` 的 sha256 ⟹ 判据先于结果可核验）、
+`experiments/ledger.csv` 2026-08-19 行。
+
+### 2026-08-19 — `RESULT`：按外部 handoff 复盘，三处与仓库现状不符；并落盘 slow/fast 顶点预注册
+
+**背景**：收到一份外部复盘 `HANDOFF.md`（2026-08-19），提出三条「没有真正关闭」的线
+（A: slow/fast 顶点、B: 多任务辅助监督、C: 8/23 recency）。先逐条核对它引用的仓库事实。
+
+**⚠️ 核出三处不符，都改变优先级或设计**：
+
+| # | handoff 的说法 | 实际 |
+|---|---|---|
+| 1 | 今天第一优先是「P0 最终环境全量 wall-clock 复测」 | **08-18 就做完了**（4 核双路径 5.26 / 10.94 分钟，JSON 已落盘）。它读的是本文件 §2 更新前的旧版；加上 08-19 的打包审计 ⟹ **P0 已无剩余动作** |
+| 2 | 私榜是 best-of-10 还是指定一个？（列为待核实） | 主办方原文 `docs/competition_description.md:201`：「共可以进行最多 `10` 次策略文件提交，**最终采用最新提交版本**」⟹ **不是 best-of-10** |
+| 3 | 「你已核实 t=2 的 max\|pred\| = 0.4459」 | 仓库里**没有**这条记录，但**数是对的**：实测 0.445934、触限 0 行 |
+
+**第 2 条的后果最大，而且它此前只在主办方原文里、没进本仓库任何文档**：
+`ROADMAP.md:10` 与 `RUNBOOK_8_23.md:17` 都只写了「私榜共 10 次，至少留 3 次余量」，
+**漏掉了决定性的后半句**。正确纪律是：
+
+```text
+8/31 最后一次上传的那份 = 最终答案
+10 次是**上传失败的重试余量**，不是「交一组分散候选让主办方挑」
+⟹ 高方差候选在这里**没有期权价值**；不存在「最后交个实验版试试」这种操作
+```
+
+已写进 ROADMAP §1 与 RUNBOOK §0，并在 RUNBOOK D6 加了 4 步收尾顺序。
+
+**A 线（slow/fast 顶点）—— 预注册已落盘，等第三点**：
+
+沿 `c(t) = (1−t)·(1.16,1.16) + t·(0.4496,1.2530)`，`pred(t)` 逐行线性 ⟹ `Score(t)` 是 t 的
+**精确二次式**，且二次项系数 `a = −⟨d,d⟩_w/D` **恒为负**（构造决定，不是待检验假设）。
+两个已交点 + 再取一点 ⟹ 闭式解顶点。⭐ 由 `S1−S0 = a(1−2t*)` 可导出
+
+```text
+gain(t*) = (S1 − S0) · (t*−1)² / (2t*−1)        只取决于顶点位置
+```
+
+⟹ **花名额之前就能把「S2 落在哪 ⟹ 拿到多少」整张表写死**，这正是 CLAUDE.md §5.1 要的形状。
+
+⭐ **两件此前没有的实测**（都进了 `outputs/experiments/slow_fast_line_geometry.{json,md}`）：
+
+1. **限幅几何**：t=0/0.5/1/1.5/2/2.5 触限 0 行，t=3 有 2 行；二分出 clip 边界 **t ≈ 2.6968**。
+   t=2 的 `max|pred| = 0.445934` ⟹ handoff 那个数对，只是仓库里没有证据，现在有了。
+2. **锚点交叉验证**：`submission_mkt_shrunk.csv` 的归属在 `public_replay_inventory` 里是
+   **inferred（按模型名推断）**，不是 sha256 硬校验 —— 而整条抛物线都架在它是 t=0 上。
+   从它按记录的变换重算 t=1，与盘上 slowfast CSV 逐行比：**max|Δ| = 5.0e-09**
+   （正好是 8 位小数的舍入地板）、0 行超 1e-7 ⟹ **两份 CSV 相互印证，S0 锚点可信**。
+
+**预注册的判据**（钉死，看到 S2 后不得改）：完整性 `S2 < 0.0042322660`（否则 a≥0 ⟹ 查触限/
+查模型身份）；私榜**半步收缩** `c_used = c1 + 0.5(c*−c1)`，恰好拿到理论增益的 **75%**；
+采纳线沿用 08-17 asset adapter 的「|Δ| < 1e-5 视为不可辨别」⟹ **t\* < 1.470
+（约 S2 < 0.0041113）就不改交付**。
+
+⚠️ **期望值要诚实**：上表显示典型情形只有 **+0.0%~+0.9%**；+2% 以上只在 S2 贴近 `a→0` 边界时
+出现，而那时 t\* 已越过 clip 边界。花它的理由是**公榜名额 8/23 作废、不用即归零**，
+且三点同源（ρ≈0.99）⟹ 顶点估计很精确 —— 不是因为它能翻盘。
+
+**工程**：`slow_fast_csv.py` 加 `--scale-slow/--scale-fast`（成对给；都不给则走原常量推导，
+输出逐位不变，`--dry-run` 已核）。新增 `experiments/slow_fast_vertex.py`：`--emit-plan` 出预注册、
+`--s2` 解顶点，且**没有预注册文件时拒绝解**（判据必须先于结果落盘）。四个分支都测过：
+采纳 / 不改交付 / `a≥0` 停止 / 缺预注册拒绝。
+
+**C 线（8/23 流水线）—— 已端到端演练**：用当前数据、**全 file hash**（未用 `--no-file-hash`）
+跑 `audit_data_release.py`，得 `comparison.changed = false`、`train.row_delta = 0`；
+`retrain_extended.py` 随即以「audit does not prove a changed training split」**明确拒绝**。
+⟹ 工具链与第一道闸门都验过，8/23 当天只需换 `--output` 日期。
+⚠️ handoff 给的命令用 `data_release_20260812.json` 作基线，**已过期**，正确基线是 08-18 那份。
+
+同时把 handoff §6 的判断写成 ROADMAP **P2-R 预注册臂**：P4 测的是往训练段**前端**加旧数据
+（volume 轴，+1.08%、2/5 折、CI 跨 0），8/23 给的是往**后端**加新标签（recency 轴），
+此前**根本没法测**（没有更近的标签），不是被否决。顺序钉死为
+审计 → 现跑基准 → recency → 才轮到②类网格。
+
+**B 线（多任务辅助监督）见下一条。**
+
+**门禁**：全量测试 `92 passed / 22 subtests`（本轮新增 8 个用例）。生产目录与模型身份未改动。
+
+### 2026-08-19 — `REJECTED`：多任务辅助监督 —— 机制**是**真的，增量**不存在**
+
+**问题**（外部 handoff 的 B 线）：把 responder 从「输入特征」改成「共享 trunk 的辅助损失」，
+能否补上生产 v3 的 target 残差？08-12 否掉的是前者（两阶段误差累积，且 runner 剥列 ⟹
+线上不成立）；后者推理端只留 target 头，**完全不需要 responder**。
+08-18 `horizon_auxiliary_cache_probe` 的重开条件（「不是换目标 / 线性叠加 / 对预测值做二层校准」）
+字面满足 ⟹ 允许一次预注册筛选。
+
+**立项依据**（`target_mlp_oracle_blend`，08-19，不训练）：从 `target_mlp_screen` 的逐折 A/B
+反解交叉项 `C = 2B_e − (B_b+B_m)/2`，闭式算出两分量最优配比 ⟹ **折均 +6.97%、5/5 折、
+去最好折 +4.86%**。⟹ 当年那个「等权集成 −54.49%」否掉的是**等权掺弱模型**
+（`A₂≈0` 时 `Peak=½Peak₁ ⟹ −50%`，实测 −54.49% 就是这个签名），不是「MLP 没有独立信息」。
+
+**设计**（`experiments/multitask_mlp.py`，跑前钉死）：λ=0.3 唯一超参；辅助目标是 08-18
+`responder_window_atlas` 量出来的窗口梯子 5 个（H=1/2/4/7/10，夹着 target 的 H=5）；
+用**多输出 `MLPRegressor` + 辅助列乘 √λ** 实现加权多任务（输出层线性 ⟹ 等价于该头损失权重 λ，
+无正则时严格；有单测）—— **不需要 torch，不需要自写反向传播**。
+基准是生产 3s480 OOF（modulo 5 / phase_balanced / train_window 78,960），按
+`(time_id<<8)|asset_id` 连接、296,059 行**全部连上**。**关键是 `target_only` 对照臂**：
+同架构、同种子、同迭代、共用同一个 market 头 ⟹ 两臂唯一差别就是 cross 头的损失。
+
+**结果（fold 0，oracle 配比＝上界口径）**：
+
+| 臂 | MLP 单独 peak / 基准 | 与基准 corr | oracle 给 MLP 的系数 | MLP 幅度占比 | blend 增益 |
+|---|---:|---:|---:|---:|---:|
+| `target_only` | 17.4% | 0.414 | −0.0036 | 1.7% | **+0.0248%** |
+| `multitask` | **20.3%** | 0.421 | +0.0038 | 1.8% | **+0.0256%** |
+
+⭐ **辅助损失确实起作用了**：MLP 自身 peak 从基准的 17.4% 提到 20.3%（**相对 +16.7%**），
+残差信号还从 −7.17e−05 翻成 +7.14e−05（optimal c2 因此由负转正）⟹ 机制成立，不是没跑起来。
+
+❌ **但它没有用**：即便在 oracle 上界口径下，blend 增益也只有 **+0.026%**，
+**比 3% 门槛低约 115 倍**；最优配比给 MLP 的幅度占比只有 1.8%。
+
+**为什么与立项时的 +6.97% 差 270 倍 —— 基准强度**：
+
+```text
+target_mlp_screen 的基准   fold0 peak 0.00069987   1 seed×160 轮 / modulo 10 / 窗 39,480 / 100 特征
+本实验的基准（生产 3s480） fold0 peak 0.00105595   ⟹ 强 1.51×
+MLP 相对强度               40.2% → 17.4~20.3%      与基准的 corr  0.24 → 0.41~0.42
+```
+
+⟹ **MLP 携带的那点信息，生产基准里已经有了。** 那 +6.97% 不是「MLP 的独立 alpha」，
+是「1s160 弱基准的缺口」。这正是 CLAUDE.md §8.6/§8.7 点名的形状：
+低相关的弱模型在弱基准上看着有增量，换成强基准就蒸发。
+⚠️ 两次 screen 的 fold 版图不同（train_window 不同 ⟹ `first_valid_idx` 不同），
+**不是配对比较**；上表只用于解释量级差异，不作为配对裁决。
+
+**⚠️ 预注册里有一道门槛是我写错的，先说清楚**：Stage 1 原本的第二道是仓库惯用的 `2ΔA>ΔB`。
+那条的前提是两个预测在**同一 scale 约定**下比较，而 oracle/frozen 配比会**重解系数**
+（`A→cA`、`B→c²B`），peak 不变但 ΔA/ΔB 只反映整体缩放 —— 实测就报出 −51.77% / −76.75%
+这种无意义的数。正确的机制分解是尺度不变的残差形式：
+
+```text
+Δpeak = (A_m − A_b·C/B_b)² / (B_m − C²/B_b)      分子=残差信号，分母=残差能量
+```
+
+已独立验算该恒等式（与直接相减相对差 **2.9e−13**）。⟹ 机制门槛与 `Δpeak>0` **等价**，
+原来三道里有一道既冗余又口径错。已把它换成**本就该有的 3% 幅度门槛**（**收紧，不是放松**），
+重跑后判定不变。**结论不依赖那道门**：+0.026% 对 3%，差两个数量级。
+
+**决策**：`REJECTED`，按预注册停止 —— **不跑 Stage 2、不调 λ、不调 hidden、不换激活、
+不换辅助目标集**。不动生产、不花公榜额度。
+⚠️ **限制**：只测了 fold 0（预注册就是这么定的：符号筛不过即停）。严格说否证的是
+「λ=0.3 + 梯子 5 个 + 这套 MLP 架构，在生产 3s480 基准上没有可部署增量」。
+**重新开放条件**：8/23 回补数据后基准本身变化，按**原规格**复验一次；或出现能让 MLP 自身
+peak 达到基准 70% 以上的模型族（当前只有 20.3%，差距不是靠辅助损失能补的量级）。
+
+**证据**：`outputs/experiments/multitask_mlp_stage1.{json,md}`、
+`target_mlp_oracle_blend.{json,md}`；单测 `tests/test_multitask_mlp.py`（8 个）。
+
+### 2026-08-19 — `INCIDENT`（未造成损失）：交付链路有「模型身份」门禁，却没有「包内容身份」门禁
+
+**背景**：仓库结构复查。ROADMAP 行动面板显示只剩 P0 动作 4 和等数据的 P1/P2，
+但沿着「8/23 拿到数据之后会依次跑哪些命令」把链路走了一遍，发现三个洞，**都不在面板上**，
+而且都属于同一类：**审计通过，但交出去/训出来的不是那个东西**（CLAUDE.md §8.2 的伤疤）。
+
+**洞 1 —— 重训计划复现的不是当前生产架构。** `scripts/retrain_extended.py` 的 v3_hybrid
+命令只传了轮数 / 种子数 / 特征数 / history：
+
+```text
+缺 --weighted-cross-section     ⟹ 截面块退回无权训练
+缺 --market-model               ⟹ **整块行级市场森林消失**（公榜 +21.99% 的来源）
+缺 --market-spec / --market-min-data-scale ⟹ 08-13 市场块容量收缩（+0.77%）丢失
+```
+
+两个都是 `store_true`，不传就是 `False` —— **不是「用默认值」，是另一个模型**。
+按 ledger 反推，跑出来的等于 08-11 那版架构（公榜 0.0032523499，比生产低 **21.99%**）。
+转正门禁确实会拦住它（`validate_meta` 有这几项），但那是在**几小时训练之后**，
+而 8/23→8/31 只有 8 天。
+
+**修法**：新增 `production_structure()`，从生产 `hybrid_meta.json` **派生**这些项
+（CLAUDE.md §7「不在多处手工维护同一个数字」），再用 `assert_matches_public_baseline()`
+与 `PUBLIC_BASELINE` 逐键对拍 ⟹ 生产 meta 与常量哪天分家，在**生成计划时**就红。
+⚠️ 一个细节：`market_lgbm_params.min_data_in_leaf` 在 meta 里是**解析后的绝对值** 75580，
+而 `train.py` 收的是倍数，且扩展数据后训练行数会变 ⟹ 只能传倍数。用生产数逐位核对：
+`(12000/3.5e6) × 2,645,530 = 9070`（= `lgbm_params.min_data_in_leaf`），
+`9070 × 8.333 = 75580` ⟹ `--market-min-data-scale 8.333` 正确。
+
+**洞 2 —— slow/fast 没有生产者。** `strategies/v3_hybrid/train.py` 的 CLI 里**根本没有**
+slow/fast 概念，`promote_v3_candidate` 也只**校验**不写入 ⟹ 任何重训候选的 meta 都必定缺这三键，
+而 `main.py:222` 是 `PredictionTrail(int(window)) if window else None`——缺键**静默降级**。
+RUNBOOK D1 的「坑 1」写着二选一，但当时两条路都得手改候选 JSON。
+**修法**：按 `--scale` / `--blend-weight` 完全相同的形状，给 `promote_v3_candidate` 加
+`--slow-fast-window/-slow-relative/-fast-relative`，默认取自 `PUBLIC_BASELINE`，
+由 `stage_candidate()` 写进 staged meta 和 manifest。于是
+(b) 沿用当前值 = 什么都不传；(a) 用新 OOF 重标定 = 显式传入（会因偏离基线要求 `--off-baseline`，
+这正是「偏离必须是按下去的」）。
+
+**洞 3 —— 提交包在装研究代码。** `make_submission.py` 是「除 `train.py` 外全收 `*.py`」，
+于是 `strategies/v3_hybrid/temporal.py`（V4-T 研究模块）也进了私榜包。
+用 AST 求 `main.py` 的本地 import 闭包实测是 `{main, features, lgbm_numpy, history}` ——
+`temporal` 够不到。而 `audit_submission_zip` 只查**缺**文件、不查**多**文件 ⟹
+08-19 对 `temporal.py` 的研究改动已经悄悄改变了提交包字节，没有任何门禁出声。
+风险有两层：包字节随研究漂移（「验过的那份」≠「交出去的那份」），
+以及包内 `.py` 在评测端就是 `sys.path` 上的顶层名字，哪天出现 `types.py` 会遮蔽标准库。
+
+⚠️ **不能退回硬编码清单** —— `make_submission.py` 的注释记着写死清单曾漏过 `lgbm_numpy.py`。
+**修法**：`SUBMISSION_MODULES` 声明入包集（包内容身份的唯一定义，与 `PUBLIC_BASELINE`
+的模型身份分工对称），再与 AST 闭包**双向**对拍；策略目录里每个 `.py` 都必须被分类 ——
+入包，或进 `EXCLUDED_MODULES` 并写明理由，未分类的一律硬失败。
+`audit_submission_zip` 派生同一份声明并新增 `no_unexpected_modules` 检查；
+`experiments/variant_submission.py` 里那份手抄的 `{"train.py"}` 副本也改成消费唯一定义。
+
+**对现存包的实测**：`outputs/v3_hybrid_submission_20260818.zip`
+
+```text
+8 个模型文件 + main/features/history/lgbm_numpy   与生产逐字节相同（sha256）
+4 个 slow_fast 键                                 齐全
+public_baseline_drift                             []          ← 模型身份是对的
+failed checks                                     ['no_unexpected_modules']
+unexpected_modules                                ['temporal.py']
+```
+
+⟹ 那个包**不是坏模型**，它只是多带了一个不会被 import 的研究模块，而且盘上没有任何审计记录
+（`audit_submission_zip.py` 默认只打印，不带 `--output` 就不落盘）。重打一次并落盘审计即可结案；
+**不需要重测耗时**，执行路径上的四个模块一字节未动。
+
+**门禁**：全量测试 `84 passed / 22 subtests`（原 73/18，新增 11 个用例）；
+双后端 train/inference 一致性 `max|Δ| = 8.101e-09`（`--n-time-ids 500`，门槛 1e-6，两后端同值）。
+生产目录与模型身份未改动。
 
 ### 2026-08-19 — `RESULT/INFRA`：本地 full-resolution 资源验证通过，但同真实时间跨度正式 OOF 不适合当前 30GB 机器
 
@@ -449,7 +742,7 @@ P0 动作 3 要的却是「接近私榜环境的 4 核」⟹ 那两个数不能�
 
 ### 2026-08-18 — `REJECTED`：`responder_00`/`responder_02` 的 Stage-C 空白格已填，仍不补 target 残差
 
-**这个格子为什么空着**（核对 `NEXT_STEPS_horizon_auxiliary_oof_validation.md` 时发现）：
+**这个格子为什么空着**（核对当时的本地工作笔记 `NEXT_STEPS_horizon_auxiliary_oof_validation.md` 时发现 —— 该文件未入库、现已不在盘上，本条的结论证据是 `outputs/experiments/horizon_auxiliary_cache_probe.{json,md}`）：
 2026-08-14 的 responder 重新审计只把 **8 个通过族**送进了 Stage C。查
 `responder_predictability_reaudit_phasebal_prodwindow.json` 的 cluster 明细：
 
@@ -1231,10 +1524,17 @@ LOFO 只作探针。6 条门槛：折均 >0、≥3/4 折为正、去最好折 >0
 
 ### 未解问题
 
-- 为什么多个拟合紧密度参数在本地与公榜量反；需要真实回补标签按时期分解。
-- 公榜期与私榜期的 regime 差异是否会削弱市场模型；本地 fold 3 曾接近哑弹。
-- 当前生产模型在最终目标硬件上的 LightGBM/NumPy wall-clock 和超时余量。
-- 市场森林独立截短能否在不损失市场 alpha 的前提下降低过拟合和耗时。
+- **（仍开着）** 为什么多个拟合紧密度参数在本地与公榜量反；需要真实回补标签按时期分解。
+  ⟹ 回答动作已就位：RUNBOOK D0.3，`experiments/public_replay.py` + 盘上 21 份历史公榜 CSV。
+- **（仍开着）** 公榜期与私榜期的 regime 差异是否会削弱市场模型；本地 fold 3 曾接近哑弹。
+  ⟹ 8/23 之后没有外部尺子，只能靠 D0.3 校准后的本地尺子给逐折权重。
+- ~~当前生产模型在最终目标硬件上的 LightGBM/NumPy wall-clock 和超时余量。~~
+  `RESOLVED`（2026-08-18，4 核实测）：5.26 / 10.94 分钟，0 超时 / 0 非有限值 / 0 触 clip；
+  兜底是单核绑定 ⟹ 4 核评测机不会比 32 核开发机更慢。
+  证据：`outputs/experiments/delivery_runtime_{lightgbm,numpy_fallback}_4t.{json,md}`。
+- ~~市场森林独立截短能否在不损失市场 alpha 的前提下降低过拟合和耗时。~~
+  `CLOSED_FAIL`：160~480 全部不过门槛，480 是这一族里最好的但只有 3/5 折、去最好折 +0.81%。
+  证据：`outputs/experiments/v3_market_round_scan_phasebal_prodwindow.md`。
 
 ## 7. 历史入口
 

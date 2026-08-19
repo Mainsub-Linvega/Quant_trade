@@ -31,6 +31,10 @@ OOF 上全局最优 scale 是 **0.7296**，而公榜标定的是 **1.16**（差 
     .venv/bin/python experiments/slow_fast_csv.py \\
         --input outputs/submission_mkt_shrunk.csv \\
         --output outputs/submission_mkt_shrunk_slowfast.csv
+    # 顶点标定的第三个点（t=2，见 experiments/slow_fast_vertex.py）
+    .venv/bin/python experiments/slow_fast_csv.py \\
+        --scale-slow -0.2608 --scale-fast 1.3460 \\
+        --output outputs/submission_slowfast_t2.csv
 """
 
 from __future__ import annotations
@@ -62,6 +66,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--test-glob", default=str(_REPO_ROOT / "data" / "test" / "*.parquet"))
     p.add_argument("--k-real-steps", type=int, default=K_REAL_STEPS)
     p.add_argument("--prediction-scale", type=float, default=PUBLIC_SCALE)
+    # ⚠️ 2026-08-19 补：两个 scale 此前只能由上面三个常量推导，没法取线上的其他点。
+    # slow/fast 顶点标定（experiments/slow_fast_vertex.py）需要沿
+    # c(t) = (1−t)·(1.16,1.16) + t·(0.4496,1.2530) 取第三个点 ⟹ 必须能直接给绝对值。
+    # 两个必须成对给；都不给则走原常量推导，输出与改动前**逐位相同**。
+    p.add_argument("--scale-slow", type=float, default=None,
+                   help="慢块的绝对 scale；与 --scale-fast 成对使用，覆盖常量推导")
+    p.add_argument("--scale-fast", type=float, default=None,
+                   help="快块的绝对 scale；与 --scale-slow 成对使用")
     p.add_argument("--prediction-clip", type=float, default=PREDICTION_CLIP)
     p.add_argument("--decimals", type=int, default=8)
     p.add_argument("--dry-run", action="store_true", help="只自检、不写文件")
@@ -101,10 +113,23 @@ def causal_trailing_mean(values: np.ndarray, time_id: np.ndarray, asset_id: np.n
 
 def main() -> None:
     args = parse_args()
-    scale_slow = args.prediction_scale * OOF_C_SLOW / OOF_GLOBAL_SCALE
-    scale_fast = args.prediction_scale * OOF_C_FAST / OOF_GLOBAL_SCALE
-    print(f"相对修正后的两个 scale：slow={scale_slow:.4f}，fast={scale_fast:.4f}"
-          f"（原单一 {args.prediction_scale}）；K_real={args.k_real_steps}", flush=True)
+    if (args.scale_slow is None) != (args.scale_fast is None):
+        raise SystemExit("--scale-slow 与 --scale-fast 必须成对给出（或都不给，走常量推导）")
+    if args.scale_slow is None:
+        scale_slow = args.prediction_scale * OOF_C_SLOW / OOF_GLOBAL_SCALE
+        scale_fast = args.prediction_scale * OOF_C_FAST / OOF_GLOBAL_SCALE
+        origin = "常量推导（OOF 相对模式 × 公榜标定）"
+    else:
+        scale_slow, scale_fast = float(args.scale_slow), float(args.scale_fast)
+        origin = "命令行显式指定"
+    print(f"两个 scale：slow={scale_slow:.4f}，fast={scale_fast:.4f}"
+          f"（原单一 {args.prediction_scale}）；K_real={args.k_real_steps}；来源：{origin}", flush=True)
+    if args.scale_slow is not None:
+        print("⚠️ 显式 scale 只用于**公榜探索**（例如顶点标定的第三个点）。"
+              "任何被采纳的系数要成为模型身份，必须走 scripts/promote_v3_candidate.py 的 "
+              "--slow-fast-slow-relative / --slow-fast-fast-relative 写进候选 meta —— "
+              f"对应的 relative = ({scale_slow / args.prediction_scale:.6f}, "
+              f"{scale_fast / args.prediction_scale:.6f})。CSV 本身不构成模型。", flush=True)
 
     submission = pd.read_csv(args.input)
     if list(submission.columns) != ["row_id", "target"]:

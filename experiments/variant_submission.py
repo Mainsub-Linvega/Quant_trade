@@ -41,7 +41,15 @@ for _path in (str(_REPO_ROOT), str(_REPO_ROOT / "timeseries_api")):
 from runner import run_strategy                       # 官方 runner，只读引用
 
 STRATEGY_DIR = _REPO_ROOT / "strategies" / "v3_hybrid"
-EXCLUDED_MODULES = {"train.py"}                       # 与 scripts/make_submission.py 同口径
+
+# ⚠️ 这里以前抄了一份 `{"train.py"}` 并注明「与 make_submission 同口径」——
+# 抄的那一刻就开始漂移了。08-19 make_submission 把 temporal.py 也划出包外，
+# 若还留着副本，本脚本产出的变体就和真提交包装的东西不一样。改成直接消费唯一定义。
+sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+try:
+    from make_submission import EXCLUDED_MODULES, SUBMISSION_MODULES
+finally:
+    sys.path.remove(str(_REPO_ROOT / "scripts"))
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,9 +78,8 @@ def stage(overrides: dict[str, float | int], destination: Path,
     """只读复制策略目录到 destination，并把 overrides 写进**拷贝**的 hybrid_meta.json。"""
     package = destination / "v3_hybrid"
     package.mkdir(parents=True)
-    for path in sorted(STRATEGY_DIR.glob("*.py")):
-        if path.name not in EXCLUDED_MODULES:
-            shutil.copy2(path, package / path.name)
+    for name in sorted(SUBMISSION_MODULES["v3_hybrid"]):
+        shutil.copy2(STRATEGY_DIR / name, package / name)
     shutil.copytree(model_dir or (STRATEGY_DIR / "model"), package / "model")
 
     meta_path = package / "model" / "hybrid_meta.json"
