@@ -407,6 +407,64 @@ def test_canonical_path_is_order_invariant_within_quantile_bin() -> None:
     assert left.support_key == right.support_key
 
 
+def _paired_quantile_candidate(
+    threshold: float, *, block_index: int
+) -> PathCandidate:
+    return PathCandidate(
+        conditions=(
+            PathCondition(Source("current", 1), "le", threshold, False),
+            PathCondition(Source("current", 2), "gt", 4.25, True),
+        ),
+        block_index=block_index,
+        tree_index=0,
+        leaf_index=0,
+    )
+
+
+def test_paired_quantile_bins_merge_adjacent_fine_regions() -> None:
+    grids = {
+        Source("current", 1): np.arange(33, dtype=np.float64),
+        Source("current", 2): np.arange(33, dtype=np.float64),
+    }
+
+    first = canonicalize_path(
+        _paired_quantile_candidate(0.25, block_index=0),
+        grids,
+        support_bin_width=2,
+    )
+    adjacent = canonicalize_path(
+        _paired_quantile_candidate(1.25, block_index=1),
+        grids,
+        support_bin_width=2,
+    )
+
+    assert first.support_key == adjacent.support_key
+    assert first.ordered_conditions[0]["quantile_bin"] == 0
+    assert first.ordered_conditions[0]["threshold"] == 2.0
+
+
+def test_paired_quantile_bins_keep_coarse_boundaries_distinct() -> None:
+    grids = {
+        Source("current", 1): np.arange(33, dtype=np.float64),
+        Source("current", 2): np.arange(33, dtype=np.float64),
+    }
+
+    left = canonicalize_path(
+        _paired_quantile_candidate(1.25, block_index=0),
+        grids,
+        support_bin_width=2,
+    )
+    right = canonicalize_path(
+        _paired_quantile_candidate(2.25, block_index=1),
+        grids,
+        support_bin_width=2,
+    )
+
+    assert left.support_key != right.support_key
+    assert right.ordered_conditions[0]["quantile_bin"] == 1
+    assert right.ordered_conditions[0]["threshold"] == 4.0
+
+
 @pytest.mark.parametrize(
     "family, index, message",
     [("unknown", 1, "unknown source family"), ("current", -1, "non-negative")],

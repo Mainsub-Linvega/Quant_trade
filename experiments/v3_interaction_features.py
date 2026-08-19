@@ -445,13 +445,23 @@ def training_quantile_grids(
 def _canonical_condition(
     condition: PathCondition,
     grid: np.ndarray,
+    *,
+    support_bin_width: int = 1,
 ) -> dict[str, object]:
     bin_count = len(grid) - 1
     if bin_count < 1:
         raise ValueError("quantile grid must contain at least two values")
-    quantile_bin = int(np.searchsorted(grid, condition.threshold, side="right") - 1)
-    quantile_bin = int(np.clip(quantile_bin, 0, bin_count - 1))
-    resolved_threshold = float(grid[quantile_bin + 1])
+    if (
+        isinstance(support_bin_width, bool)
+        or not isinstance(support_bin_width, (int, np.integer))
+        or support_bin_width <= 0
+        or bin_count % support_bin_width != 0
+    ):
+        raise ValueError("support_bin_width must positively divide quantile bins")
+    fine_bin = int(np.searchsorted(grid, condition.threshold, side="right") - 1)
+    fine_bin = int(np.clip(fine_bin, 0, bin_count - 1))
+    quantile_bin = fine_bin // int(support_bin_width)
+    resolved_threshold = float(grid[(quantile_bin + 1) * int(support_bin_width)])
     return {
         "source": condition.source.key,
         "direction": condition.direction,
@@ -472,6 +482,8 @@ def _condition_token(condition: Mapping[str, object]) -> str:
 def canonicalize_path(
     path: PathCandidate,
     quantile_grids: Mapping[Source, np.ndarray],
+    *,
+    support_bin_width: int = 1,
 ) -> CanonicalPath:
     """Map thresholds into training quantile bins without losing path order."""
     ordered: list[dict[str, object]] = []
@@ -479,7 +491,11 @@ def canonicalize_path(
         if condition.source not in quantile_grids:
             raise ValueError(f"missing quantile grid for {condition.source.key}")
         ordered.append(
-            _canonical_condition(condition, np.asarray(quantile_grids[condition.source]))
+            _canonical_condition(
+                condition,
+                np.asarray(quantile_grids[condition.source]),
+                support_bin_width=support_bin_width,
+            )
         )
     support_key = "|".join(sorted(_condition_token(item) for item in ordered))
     return CanonicalPath(
