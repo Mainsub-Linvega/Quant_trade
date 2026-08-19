@@ -19,6 +19,7 @@ from strategies.v3_hybrid.interactions import (
     CURRENT_SOURCE_FAMILIES,
     HISTORY_SOURCE_FAMILIES,
     SOURCE_FAMILIES,
+    interaction_source_keys,
     validate_interaction_definitions,
 )
 
@@ -192,6 +193,68 @@ def build_interaction_source_views(
         )
         for task in ("ridge", "xs", "market")
     }
+
+
+def interaction_source_arrays(
+    task: str,
+    definitions: list[dict[str, object]],
+    transformed: np.ndarray,
+    time_ids: np.ndarray,
+    history_indices: np.ndarray,
+    history_blocks: Sequence[np.ndarray],
+    *,
+    max_cells: int,
+) -> dict[str, np.ndarray]:
+    """Build only source columns referenced by one accepted task manifest."""
+    values, ids, indices, blocks = _validate_source_view_inputs(
+        transformed, time_ids, history_indices, history_blocks
+    )
+    keys = interaction_source_keys(definitions)
+    cells = len(values) * len(keys)
+    if cells > max_cells:
+        raise MemoryError(
+            f"{task} sparse source matrix {cells} cells exceeds max_cells={max_cells}"
+        )
+    allowed = {
+        "ridge": {"current"},
+        "xs": {"xs_deviation", *_HISTORY_FAMILIES},
+        "market": {"market_raw", "market_deviation", *_HISTORY_FAMILIES},
+    }
+    if task not in allowed:
+        raise ValueError(f"unknown interaction task: {task}")
+    parsed = [(key, key.split(":", 1)[0], int(key.split(":", 1)[1])) for key in keys]
+    invalid = [family for _, family, _ in parsed if family not in allowed[task]]
+    if invalid:
+        raise ValueError(f"{task} manifest contains invalid source families: {invalid}")
+
+    deviation_indices = list(dict.fromkeys(
+        index for _, family, index in parsed
+        if family in {"xs_deviation", "market_deviation"}
+    ))
+    deviations: dict[int, np.ndarray] = {}
+    if deviation_indices:
+        matrix = cross_sectional_deviation(values[:, deviation_indices].copy(), ids)
+        deviations = {
+            feature_index: matrix[:, position]
+            for position, feature_index in enumerate(deviation_indices)
+        }
+    history_positions = {int(feature): position for position, feature in enumerate(indices)}
+    history_by_family = dict(zip(_HISTORY_FAMILIES, blocks))
+    result: dict[str, np.ndarray] = {}
+    for key, family, feature_index in parsed:
+        if feature_index < 0 or feature_index >= values.shape[1]:
+            raise ValueError(f"interaction source index is out of range: {feature_index}")
+        if family in {"current", "market_raw"}:
+            result[key] = values[:, feature_index]
+        elif family in {"xs_deviation", "market_deviation"}:
+            result[key] = deviations[feature_index]
+        else:
+            if feature_index not in history_positions:
+                raise ValueError(
+                    f"history source feature_{feature_index:03d} is outside History40"
+                )
+            result[key] = history_by_family[family][:, history_positions[feature_index]]
+    return result
 
 
 def _tree_roots(model_dump: Any) -> list[tuple[int, Mapping[str, Any]]]:

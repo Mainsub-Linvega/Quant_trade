@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import sys
 
 import experiments.v3_interaction_features as interaction_features_module
 from experiments.v3_interaction_features import (
@@ -9,6 +10,7 @@ from experiments.v3_interaction_features import (
     Source,
     aggregate_repeated_paths,
     build_interaction_source_views,
+    interaction_source_arrays,
     canonicalize_path,
     extract_candidate_paths,
     mine_task_interactions,
@@ -20,7 +22,9 @@ from experiments.v3_production_oof import (
 )
 from experiments.v3_interaction_oof import (
     append_interactions_before_asset,
+    compose_hybrid_raw,
     interaction_gate,
+    parse_args as parse_interaction_oof_args,
     positive_fold_gate_impossible,
     run_paired_fold_sequence,
 )
@@ -578,6 +582,36 @@ def test_task_source_views_fail_instead_of_exceeding_cell_budget() -> None:
         )
 
 
+def test_sparse_source_arrays_build_only_manifest_references() -> None:
+    rows = 4
+    transformed = np.arange(rows * 323, dtype=np.float32).reshape(rows, 323)
+    time_ids = np.array([1, 1, 2, 2])
+    history_indices = np.arange(40, dtype=np.int64)
+    history_blocks = [
+        np.full((rows, 40), block, dtype=np.float32) for block in range(4)
+    ]
+    definitions = [{
+        "name": "xs_current_history_0000",
+        "operation": "current_history_gated",
+        "value_source": "history_previous:7",
+        "conditions": [_condition("xs_deviation:250")],
+    }]
+
+    sources = interaction_source_arrays(
+        "xs",
+        definitions,
+        transformed,
+        time_ids,
+        history_indices,
+        history_blocks,
+        max_cells=rows * 2,
+    )
+
+    assert list(sources) == ["xs_deviation:250", "history_previous:7"]
+    assert all(values.shape == (rows,) for values in sources.values())
+    assert np.shares_memory(sources["history_previous:7"], history_blocks[0])
+
+
 def test_added_interactions_preserve_direct_lgbm_prefix_and_asset_tail() -> None:
     rows = 4
     transformed = np.arange(rows * 323, dtype=np.float32).reshape(rows, 323)
@@ -739,3 +773,42 @@ def test_paired_fold_sequence_stops_when_four_positive_becomes_impossible() -> N
     assert result["stopped_early"] is True
     assert result["stop_reason"] == "four_of_five_positive_is_impossible"
     assert len(result["folds"]) == 2
+
+
+def test_compose_hybrid_raw_uses_frozen_07_117_weights() -> None:
+    time_ids = np.array([1, 1, 2, 2])
+    ridge = np.array([1.0, 3.0, 2.0, 6.0])
+    xs = np.array([-2.0, 4.0, -1.0, 3.0])
+    market = np.array([5.0, 7.0, 10.0, 14.0])
+
+    got = compose_hybrid_raw(
+        ridge,
+        xs,
+        market,
+        time_ids,
+        market_lambda=0.7,
+        blend_weight=1.17,
+    )
+
+    ridge_market = np.array([2.0, 2.0, 4.0, 4.0])
+    market_lgbm = np.array([6.0, 6.0, 12.0, 12.0])
+    e_ridge = ridge - ridge_market
+    e_lgbm = xs - np.array([1.0, 1.0, 1.0, 1.0])
+    expected = (
+        0.3 * ridge_market + 0.7 * market_lgbm
+        - 0.17 * e_ridge + 1.17 * e_lgbm
+    )
+    np.testing.assert_allclose(got, expected)
+
+
+def test_interaction_oof_cli_defaults_to_frozen_screen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["v3_interaction_oof.py"])
+
+    args = parse_interaction_oof_args()
+
+    assert (args.n_folds, args.train_window, args.embargo) == (5, 78_960, 6)
+    assert (args.sample_modulo, args.sampling) == (5, "phase_balanced")
+    assert (args.n_seeds, args.num_iteration) == (1, 160)
+    assert (args.market_lambda, args.blend_weight) == (0.7, 1.17)
