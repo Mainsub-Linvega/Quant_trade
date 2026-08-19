@@ -1,0 +1,33 @@
+  history-range train_partition_000.parquet: train=0, valid=0
+  history-range train_partition_001.parquet: train=0, valid=0
+  history-range train_partition_002.parquet: train=0, valid=0
+  history-range train_partition_003.parquet: train=1,182,292, valid=76,020
+  history-range train_partition_004.parquet: train=1,182,292, valid=300,000
+  history-range train_partition_005.parquet: train=1,182,292, valid=300,000
+  history-range train_partition_006.parquet: train=1,182,292, valid=300,000
+  history-range train_partition_007.parquet: train=1,182,292, valid=300,000
+  history-range train_partition_008.parquet: train=1,182,292, valid=300,000
+{
+  "status": "ok",
+  "oof_valid": false,
+  "rows": {
+    "train": 1182292,
+    "valid": 300000
+  },
+  "rounds": 160,
+  "train_range": [
+    315836,
+    394896
+  ],
+  "valid_range": [
+    394932,
+    414931
+  ],
+  "train_timeids": 78960,
+  "valid_timeids": 20000,
+  "xs_seconds": 43.83540086799985,
+  "market_seconds": 30.53513412800021,
+  "elapsed_seconds": 87.91071519300021,
+  "max_rss_kb": 11511520,
+  "note": "resource smoke only; fixed production stats/features; Ridge and OOF score skipped"
+}
