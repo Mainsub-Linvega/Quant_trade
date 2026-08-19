@@ -173,9 +173,34 @@ def parse_args() -> argparse.Namespace:
 
 # ---- 滞后缓存 -----------------------------------------------------------------
 
+def retained_lag_rows(
+    time_ids: np.ndarray,
+    sample_modulo: int,
+    sampling: str,
+    *,
+    minimum_time_id: int | None = None,
+    maximum_time_id: int | None = None,
+) -> np.ndarray:
+    """Combine the existing sampling mask with an optional inclusive time range."""
+    ids = np.asarray(time_ids, dtype=np.int64)
+    mask = time_sample_mask(ids, sample_modulo, sampling=sampling)
+    if minimum_time_id is not None:
+        mask &= ids >= int(minimum_time_id)
+    if maximum_time_id is not None:
+        mask &= ids <= int(maximum_time_id)
+    if (
+        minimum_time_id is not None
+        and maximum_time_id is not None
+        and minimum_time_id > maximum_time_id
+    ):
+        raise ValueError("minimum_time_id must not exceed maximum_time_id")
+    return mask
+
+
 def build_lag_cache(
     files: list[Path], history_columns: np.ndarray, sample_modulo: int, window: int,
     sampling: str = "periodic", batch_size: int = 120_000, verbose: bool = True,
+    minimum_time_id: int | None = None, maximum_time_id: int | None = None,
 ) -> dict[str, np.ndarray]:
     """流式扫全量，缓存被采样行的**原始**滞后值。
 
@@ -212,7 +237,13 @@ def build_lag_cache(
                         lags[idx[ok], j, :] = combined[src[ok]]
                 counts[idx] = np.minimum(pos, window)
                 buffers[int(asset)] = combined[-window:].astype(np.float32, copy=True)
-            mask = time_sample_mask(tid, sample_modulo, sampling=sampling)
+            mask = retained_lag_rows(
+                tid,
+                sample_modulo,
+                sampling,
+                minimum_time_id=minimum_time_id,
+                maximum_time_id=maximum_time_id,
+            )
             if mask.any():
                 lag_parts.append(lags[mask])
                 cnt_parts.append(counts[mask])

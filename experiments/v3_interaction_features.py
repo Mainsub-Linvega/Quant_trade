@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
+import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -255,6 +256,43 @@ def interaction_source_arrays(
                 )
             result[key] = history_by_family[family][:, history_positions[feature_index]]
     return result
+
+
+def resolve_quantile_thresholds(
+    definitions: list[dict[str, object]],
+    sources: Mapping[str, np.ndarray],
+    *,
+    bins: int = 32,
+) -> list[dict[str, object]]:
+    """Resolve canonical quantile bins to numeric thresholds on outer-train sources."""
+    if bins < 2:
+        raise ValueError("quantile bins must be at least two")
+    validate_interaction_definitions(definitions)
+    resolved = copy.deepcopy(definitions)
+    grids: dict[str, np.ndarray] = {}
+    for key in interaction_source_keys(definitions):
+        if key not in sources:
+            raise ValueError(f"threshold source is missing: {key}")
+        values = np.asarray(sources[key], dtype=np.float64)
+        finite = values[np.isfinite(values)]
+        if len(finite) == 0:
+            raise ValueError(f"threshold source has no finite values: {key}")
+        grids[key] = np.asarray(
+            np.quantile(finite, np.linspace(0.0, 1.0, bins + 1)),
+            dtype=np.float64,
+        )
+    for definition in resolved:
+        for condition in definition["conditions"]:
+            if "quantile_bin" not in condition:
+                raise ValueError("interaction condition is missing quantile_bin")
+            quantile_bin = int(condition["quantile_bin"])
+            if quantile_bin < 0 or quantile_bin >= bins:
+                raise ValueError("interaction quantile_bin is out of range")
+            condition["threshold"] = float(
+                grids[str(condition["source"])][quantile_bin + 1]
+            )
+    validate_interaction_definitions(resolved)
+    return resolved
 
 
 def _tree_roots(model_dump: Any) -> list[tuple[int, Mapping[str, Any]]]:

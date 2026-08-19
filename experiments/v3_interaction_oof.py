@@ -8,13 +8,20 @@ fall through to final training or submission generation.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
+import gc
+import json
+import sys
+import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 FROZEN_SCREEN = {
     "n_folds": 5,
     "train_window": 78_960,
@@ -26,6 +33,24 @@ FROZEN_SCREEN = {
     "market_lambda": 0.7,
     "blend_weight": 1.17,
 }
+FEATURE_COUNT = 200
+HISTORY_COUNT = 40
+RIDGE_ALPHA = 2_000_000.0
+REFERENCE_TRAIN_WINDOW = 78_960
+XS_SPEC = {
+    "num_leaves": 63,
+    "learning_rate": 0.03,
+    "feature_fraction": 0.7,
+    "lambda_l2": 1.0,
+}
+MARKET_SPEC = {
+    "num_leaves": 15,
+    "learning_rate": 0.02,
+    "feature_fraction": 0.4,
+    "lambda_l2": 30.0,
+}
+MIN_DATA_FRAC = 12000 / 3_500_000
+MARKET_MIN_DATA_SCALE = 25.0 / 3.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -228,3 +253,670 @@ def run_paired_fold_sequence(
         "total_folds": total_folds,
         "required_positive": required_positive,
     }
+
+
+def _metric_payload(
+    target: np.ndarray,
+    prediction: np.ndarray,
+    weight: np.ndarray,
+) -> dict[str, float]:
+    from src.metric import scale_invariant_score
+
+    metric = scale_invariant_score(target, prediction, weight)
+    return {name: float(metric[name]) for name in ("peak", "A", "B", "optimal_scale")}
+
+
+def _fit_predict_lgbm(
+    design_train: np.ndarray,
+    label: np.ndarray,
+    weight: np.ndarray | None,
+    design_valid: np.ndarray,
+    *,
+    spec: Mapping[str, float],
+    min_data_scale: float,
+    n_seeds: int,
+    seed: int,
+    num_iteration: int,
+    num_threads: int,
+) -> np.ndarray:
+    import lightgbm as lgb
+
+    if design_train.ndim != 2 or design_valid.ndim != 2:
+        raise ValueError("LightGBM designs must be two-dimensional")
+    if design_train.shape[1] != design_valid.shape[1] or design_train.shape[1] < 2:
+        raise ValueError("LightGBM train/valid widths must match and include asset_id")
+    min_data = max(
+        20,
+        int(round(MIN_DATA_FRAC * len(design_train) * min_data_scale)),
+    )
+    prediction = np.zeros(len(design_valid), dtype=np.float64)
+    categorical = design_train.shape[1] - 1
+    for seed_offset in range(n_seeds):
+        model_seed = seed + seed_offset
+        params: dict[str, object] = {
+            **spec,
+            "objective": "regression",
+            "metric": "l2",
+            "verbosity": -1,
+            "num_threads": num_threads,
+            "min_data_in_leaf": min_data,
+            "bagging_fraction": 0.7,
+            "bagging_freq": 1,
+            "deterministic": True,
+            "force_row_wise": True,
+            "feature_pre_filter": False,
+            "seed": model_seed,
+            "bagging_seed": model_seed + 1000,
+            "feature_fraction_seed": model_seed + 2000,
+        }
+        dataset = lgb.Dataset(
+            design_train,
+            label=label,
+            weight=weight,
+            params=params,
+            categorical_feature=[categorical],
+            free_raw_data=False,
+        )
+        booster = lgb.train(params, dataset, num_boost_round=num_iteration)
+        prediction += booster.predict(design_valid, num_iteration=num_iteration)
+        del booster, dataset
+    return prediction / n_seeds
+
+
+def _task_design(
+    task: str,
+    transformed: np.ndarray,
+    time_ids: np.ndarray,
+    asset_ids: np.ndarray,
+    selected: np.ndarray,
+    history_blocks: tuple[np.ndarray, ...],
+) -> np.ndarray:
+    from strategies.v3_hybrid.features import cross_sectional_deviation
+
+    raw = transformed[:, selected].copy()
+    deviation = cross_sectional_deviation(raw.copy(), time_ids)
+    asset = asset_ids.astype(np.float32)
+    if task == "xs":
+        return np.ascontiguousarray(
+            np.column_stack([deviation, *history_blocks, asset]),
+            dtype=np.float32,
+        )
+    if task == "market":
+        return np.ascontiguousarray(
+            np.column_stack([raw, deviation, *history_blocks, asset]),
+            dtype=np.float32,
+        )
+    raise ValueError(f"unknown tree task: {task}")
+
+
+def _write_partial_report(
+    json_path: Path,
+    markdown_path: Path,
+    payload: dict[str, object],
+) -> None:
+    json_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    lines = [
+        "# Additive interaction strict OOF screen",
+        "",
+        f"Status: **{payload['status']}**",
+        "",
+        "| Fold | Baseline Peak | Interaction Peak | Delta | Ridge | XS | Market |",
+        "|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for fold in payload.get("folds", []):
+        counts = fold["interaction_counts"]
+        lines.append(
+            f"| {fold['fold']} | {fold['baseline']['peak']:.8f} | "
+            f"{fold['interaction']['peak']:.8f} | {fold['peak_delta']:+.8f} | "
+            f"{counts['ridge']} | {counts['xs']} | {counts['market']} |"
+        )
+    if payload.get("gate") is not None:
+        lines.extend(["", "## Gate", "", "```json", json.dumps(
+            payload["gate"], ensure_ascii=False, indent=2), "```"])
+    markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _manifest_definitions(
+    manifest: Mapping[str, object], task: str
+) -> list[dict[str, object]]:
+    task_payload = manifest["tasks"][task]
+    return list(task_payload["definitions"])
+
+
+def main() -> None:
+    from experiments.history_peak import build_lag_cache, fit_ridge, history_blocks, ridge_designs
+    from experiments.lgbm_xs import load_rows
+    from experiments.v3_interaction_features import (
+        build_interaction_source_view,
+        interaction_source_arrays,
+        mine_task_interactions,
+        resolve_quantile_thresholds,
+    )
+    from src.io import FEATURE_COLUMNS, train_files
+    from src.validation import rolling_time_folds
+    from strategies.v1_ridge.train import robust_transform_fit, select_features
+    from strategies.v3_hybrid.features import (
+        apply_robust_transform,
+        cross_sectional_deviation,
+    )
+    from strategies.v3_hybrid.interactions import build_interaction_columns
+
+    args = parse_args()
+    validate_frozen_screen(args)
+    data_root = Path(args.data_root)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_dir = output_dir / f"{args.label}_manifests"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / f"{args.label}.json"
+    markdown_path = output_dir / f"{args.label}.md"
+    if not args.force and (json_path.exists() or markdown_path.exists()):
+        raise SystemExit(f"output exists: {json_path}; use --force to overwrite")
+
+    started = time.perf_counter()
+    print(
+        f"loading sampled rows: modulo {args.sample_modulo}/{args.sampling}",
+        flush=True,
+    )
+    data = load_rows(data_root, args.sample_modulo, args.sampling)
+    features = data["features"]
+    target = data["target"].astype(np.float64, copy=False)
+    weight = np.maximum(data["weight"].astype(np.float64, copy=False), 0.0)
+    time_ids = data["time_id"].astype(np.int64, copy=False)
+    asset_ids = data["asset_id"].astype(np.int64, copy=False)
+    del data
+    if np.any(np.diff(time_ids) < 0):
+        raise AssertionError("sampled rows must be sorted by time_id")
+    unique_time_ids = np.unique(time_ids)
+    folds = rolling_time_folds(
+        unique_time_ids, args.n_folds, args.train_window, args.embargo
+    )
+
+    completed: list[dict[str, Any]] = []
+    pooled_target: list[np.ndarray] = []
+    pooled_weight: list[np.ndarray] = []
+    pooled_baseline: list[np.ndarray] = []
+    pooled_interaction: list[np.ndarray] = []
+    payload: dict[str, object] = {
+        "experiment": "v3_additive_interaction_strict_oof",
+        "status": "running",
+        "config": {
+            **FROZEN_SCREEN,
+            "num_threads": args.num_threads,
+            "miner_row_cap": args.miner_row_cap,
+            "max_source_cells": args.max_source_cells,
+            "max_interaction_cells": args.max_interaction_cells,
+        },
+        "folds": completed,
+        "gate": None,
+        "candidate_generated": False,
+        "submission_generated": False,
+    }
+
+    def row_slice(ids: np.ndarray) -> slice:
+        left = int(np.searchsorted(time_ids, ids[0], side="left"))
+        right = int(np.searchsorted(time_ids, ids[-1], side="right"))
+        return slice(left, right)
+
+    def run_fold(fold_index: int) -> dict[str, float]:
+        fold_started = time.perf_counter()
+        train_ids, valid_ids = folds[fold_index]
+        tr = row_slice(train_ids)
+        va = row_slice(valid_ids)
+        raw_train = features[tr]
+        raw_valid = features[va]
+        y_train, y_valid = target[tr], target[va]
+        w_train, w_valid = weight[tr], weight[va]
+        tid_train, tid_valid = time_ids[tr], time_ids[va]
+        aid_train, aid_valid = asset_ids[tr], asset_ids[va]
+
+        transformed_train, outer_stats = robust_transform_fit(raw_train.copy())
+        transformed_valid = raw_valid.copy()
+        apply_robust_transform(
+            transformed_valid,
+            outer_stats["lower"], outer_stats["upper"],
+            outer_stats["center"], outer_stats["scale"],
+        )
+        train_market = _group_mean(y_train, tid_train)
+        e_train = y_train - train_market
+        ridge_selected = select_features(
+            transformed_train, y_train, w_train, FEATURE_COUNT
+        )
+        xs_selected = select_features(
+            transformed_train, e_train, np.ones_like(e_train), FEATURE_COUNT
+        )
+        xs_deviation = cross_sectional_deviation(
+            transformed_train[:, xs_selected].copy(), tid_train
+        )
+        history_positions = select_features(
+            xs_deviation, e_train, np.ones_like(e_train), HISTORY_COUNT
+        )
+        history_indices = xs_selected[np.sort(history_positions.astype(np.int64))]
+        del xs_deviation
+
+        range_start = tr.start
+        range_stop = va.stop
+        lag_cache = build_lag_cache(
+            train_files(data_root),
+            history_indices,
+            args.sample_modulo,
+            args.history_window,
+            sampling=args.sampling,
+            verbose=False,
+            minimum_time_id=int(tid_train[0]),
+            maximum_time_id=int(tid_valid[-1]),
+        )
+        expected_ids = time_ids[range_start:range_stop]
+        expected_assets = asset_ids[range_start:range_stop]
+        if not (
+            np.array_equal(lag_cache["time_id"], expected_ids)
+            and np.array_equal(lag_cache["asset_id"], expected_assets)
+        ):
+            raise AssertionError("fold lag cache is not aligned with sampled rows")
+
+        def fold_history(
+            global_rows: np.ndarray,
+            transformed_rows: np.ndarray,
+            stats: Mapping[str, np.ndarray],
+        ) -> tuple[np.ndarray, ...]:
+            local = global_rows - range_start
+            selected_stats = [
+                np.asarray(stats[name])[history_indices]
+                for name in ("lower", "upper", "center", "scale")
+            ]
+            return history_blocks(
+                lag_cache["lags"][local],
+                lag_cache["count"][local],
+                transformed_rows[:, history_indices],
+                *selected_stats,
+            )
+
+        outer_history_train = fold_history(
+            np.arange(tr.start, tr.stop), transformed_train, outer_stats
+        )
+        outer_history_valid = fold_history(
+            np.arange(va.start, va.stop), transformed_valid, outer_stats
+        )
+
+        split_cache: list[dict[str, object]] = []
+
+        def prepare_split(
+            local_train_rows: np.ndarray,
+            local_valid_rows: np.ndarray,
+        ) -> dict[str, object]:
+            for cached in split_cache:
+                if (
+                    np.array_equal(cached["train_rows"], local_train_rows)
+                    and np.array_equal(cached["valid_rows"], local_valid_rows)
+                ):
+                    return cached
+            inner_train, inner_stats = robust_transform_fit(
+                raw_train[local_train_rows].copy()
+            )
+            inner_valid = raw_train[local_valid_rows].copy()
+            apply_robust_transform(
+                inner_valid,
+                inner_stats["lower"], inner_stats["upper"],
+                inner_stats["center"], inner_stats["scale"],
+            )
+            history_train = fold_history(
+                tr.start + local_train_rows, inner_train, inner_stats
+            )
+            history_valid = fold_history(
+                tr.start + local_valid_rows, inner_valid, inner_stats
+            )
+            cached = {
+                "train_rows": local_train_rows.copy(),
+                "valid_rows": local_valid_rows.copy(),
+                "train": inner_train,
+                "valid": inner_valid,
+                "history_train": history_train,
+                "history_valid": history_valid,
+            }
+            split_cache.clear()
+            split_cache.append(cached)
+            return cached
+
+        task_labels = {"ridge": y_train, "xs": e_train, "market": y_train}
+        task_selections = {
+            "ridge": ridge_selected,
+            "xs": xs_selected,
+            "market": xs_selected,
+        }
+        task_results: dict[str, object] = {}
+        for task in ("ridge", "xs", "market"):
+            def baseline_predictor(
+                inner_train_rows: np.ndarray,
+                inner_valid_rows: np.ndarray,
+                *,
+                task_name: str = task,
+            ) -> np.ndarray:
+                prepared = prepare_split(inner_train_rows, inner_valid_rows)
+                if task_name == "ridge":
+                    d_train = ridge_designs(
+                        prepared["train"], tid_train[inner_train_rows],
+                        ridge_selected, None,
+                    )
+                    d_valid = ridge_designs(
+                        prepared["valid"], tid_train[inner_valid_rows],
+                        ridge_selected, None,
+                    )
+                    alpha = RIDGE_ALPHA * len(np.unique(tid_train[inner_train_rows])) / REFERENCE_TRAIN_WINDOW
+                    model = fit_ridge(
+                        d_train, y_train[inner_train_rows], w_train[inner_train_rows], alpha
+                    )
+                    prediction = model.predict(d_valid).astype(np.float64)
+                    del d_train, d_valid, model
+                    return prediction
+                d_train = _task_design(
+                    task_name,
+                    prepared["train"], tid_train[inner_train_rows], aid_train[inner_train_rows],
+                    xs_selected, prepared["history_train"],
+                )
+                d_valid = _task_design(
+                    task_name,
+                    prepared["valid"], tid_train[inner_valid_rows], aid_train[inner_valid_rows],
+                    xs_selected, prepared["history_valid"],
+                )
+                prediction = _fit_predict_lgbm(
+                    d_train,
+                    task_labels[task_name][inner_train_rows],
+                    (w_train[inner_train_rows] if task_name == "xs" else None),
+                    d_valid,
+                    spec=(XS_SPEC if task_name == "xs" else MARKET_SPEC),
+                    min_data_scale=(1.0 if task_name == "xs" else MARKET_MIN_DATA_SCALE),
+                    n_seeds=args.n_seeds,
+                    seed=2026,
+                    num_iteration=args.num_iteration,
+                    num_threads=args.num_threads,
+                )
+                del d_train, d_valid
+                return prediction
+
+            def source_builder(
+                inner_train_rows: np.ndarray,
+                inner_valid_rows: np.ndarray,
+                *,
+                task_name: str = task,
+            ) -> tuple[np.ndarray, np.ndarray, tuple[object, ...]]:
+                prepared = prepare_split(inner_train_rows, inner_valid_rows)
+                train_view = build_interaction_source_view(
+                    task_name,
+                    prepared["train"], tid_train[inner_train_rows],
+                    history_indices, prepared["history_train"],
+                    max_cells=args.max_source_cells,
+                )
+                valid_view = build_interaction_source_view(
+                    task_name,
+                    prepared["valid"], tid_train[inner_valid_rows],
+                    history_indices, prepared["history_valid"],
+                    max_cells=args.max_source_cells,
+                )
+                if train_view.catalog != valid_view.catalog:
+                    raise AssertionError("train/valid interaction catalogs differ")
+                return train_view.values, valid_view.values, train_view.catalog
+
+            task_results[task] = mine_task_interactions(
+                task=task,
+                source_values=None,
+                catalog=None,
+                source_builder=source_builder,
+                target=task_labels[task],
+                weight=(w_train if task != "market" else np.ones_like(w_train)),
+                time_ids=tid_train,
+                baseline_predictor=baseline_predictor,
+                n_blocks=4,
+                min_blocks=2,
+                row_cap=args.miner_row_cap,
+                num_threads=args.num_threads,
+            )
+            mined_definitions = list(task_results[task]["definitions"])
+            if mined_definitions:
+                outer_sources = interaction_source_arrays(
+                    task,
+                    mined_definitions,
+                    transformed_train,
+                    tid_train,
+                    history_indices,
+                    outer_history_train,
+                    max_cells=args.max_interaction_cells,
+                )
+                task_results[task]["definitions"] = resolve_quantile_thresholds(
+                    mined_definitions, outer_sources, bins=32
+                )
+                del outer_sources
+            gc.collect()
+
+        manifest: dict[str, object] = {
+            "schema_version": 1,
+            "outer_fold_training_only": True,
+            "fold": fold_index,
+            "training_window": {
+                "time_start": int(tid_train[0]),
+                "time_end": int(tid_train[-1]),
+                "time_ids": int(len(np.unique(tid_train))),
+                "rows": int(len(tid_train)),
+            },
+            "feature_sets": {
+                "ridge": [int(index) for index in ridge_selected],
+                "xs": [int(index) for index in xs_selected],
+                "market": [int(index) for index in xs_selected],
+                "history": [int(index) for index in history_indices],
+            },
+            "tasks": task_results,
+        }
+        manifest_path = manifest_dir / f"fold_{fold_index}.json"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        interactions_train: dict[str, np.ndarray] = {}
+        interactions_valid: dict[str, np.ndarray] = {}
+        for task in ("ridge", "xs", "market"):
+            definitions = _manifest_definitions(manifest, task)
+            if not definitions:
+                interactions_train[task] = np.empty((len(y_train), 0), dtype=np.float32)
+                interactions_valid[task] = np.empty((len(y_valid), 0), dtype=np.float32)
+                continue
+            sources_train = interaction_source_arrays(
+                task, definitions, transformed_train, tid_train,
+                history_indices, outer_history_train,
+                max_cells=args.max_interaction_cells,
+            )
+            sources_valid = interaction_source_arrays(
+                task, definitions, transformed_valid, tid_valid,
+                history_indices, outer_history_valid,
+                max_cells=args.max_interaction_cells,
+            )
+            interactions_train[task] = build_interaction_columns(
+                sources_train, definitions, max_cells=args.max_interaction_cells
+            )
+            interactions_valid[task] = build_interaction_columns(
+                sources_valid, definitions, max_cells=args.max_interaction_cells
+            )
+
+        fold_alpha = RIDGE_ALPHA * len(train_ids) / REFERENCE_TRAIN_WINDOW
+        ridge_train_base = ridge_designs(
+            transformed_train, tid_train, ridge_selected, None
+        )
+        ridge_valid_base = ridge_designs(
+            transformed_valid, tid_valid, ridge_selected, None
+        )
+        ridge_train_added = np.ascontiguousarray(
+            np.column_stack([ridge_train_base, interactions_train["ridge"]]),
+            dtype=np.float32,
+        )
+        ridge_valid_added = np.ascontiguousarray(
+            np.column_stack([ridge_valid_base, interactions_valid["ridge"]]),
+            dtype=np.float32,
+        )
+        ridge_base_model = fit_ridge(
+            ridge_train_base, y_train, w_train, fold_alpha
+        )
+        ridge_added_model = fit_ridge(
+            ridge_train_added, y_train, w_train, fold_alpha
+        )
+        ridge_base_prediction = ridge_base_model.predict(ridge_valid_base)
+        ridge_added_prediction = ridge_added_model.predict(ridge_valid_added)
+
+        base_design_train = {
+            task: _task_design(
+                task, transformed_train, tid_train, aid_train,
+                xs_selected, outer_history_train,
+            )
+            for task in ("xs", "market")
+        }
+        base_design_valid = {
+            task: _task_design(
+                task, transformed_valid, tid_valid, aid_valid,
+                xs_selected, outer_history_valid,
+            )
+            for task in ("xs", "market")
+        }
+        added_design_train = {
+            task: append_interactions_before_asset(
+                base_design_train[task], interactions_train[task]
+            )
+            for task in ("xs", "market")
+        }
+        added_design_valid = {
+            task: append_interactions_before_asset(
+                base_design_valid[task], interactions_valid[task]
+            )
+            for task in ("xs", "market")
+        }
+
+        tree_predictions: dict[str, dict[str, np.ndarray]] = {
+            "baseline": {}, "interaction": {}
+        }
+        for task in ("xs", "market"):
+            label = e_train if task == "xs" else y_train
+            sample_weight = w_train if task == "xs" else None
+            spec = XS_SPEC if task == "xs" else MARKET_SPEC
+            min_scale = 1.0 if task == "xs" else MARKET_MIN_DATA_SCALE
+            tree_predictions["baseline"][task] = _fit_predict_lgbm(
+                base_design_train[task], label, sample_weight,
+                base_design_valid[task], spec=spec, min_data_scale=min_scale,
+                n_seeds=args.n_seeds, seed=2026,
+                num_iteration=args.num_iteration, num_threads=args.num_threads,
+            )
+            tree_predictions["interaction"][task] = _fit_predict_lgbm(
+                added_design_train[task], label, sample_weight,
+                added_design_valid[task], spec=spec, min_data_scale=min_scale,
+                n_seeds=args.n_seeds, seed=2026,
+                num_iteration=args.num_iteration, num_threads=args.num_threads,
+            )
+
+        baseline_prediction = compose_hybrid_raw(
+            ridge_base_prediction,
+            tree_predictions["baseline"]["xs"],
+            tree_predictions["baseline"]["market"],
+            tid_valid,
+            market_lambda=args.market_lambda,
+            blend_weight=args.blend_weight,
+        )
+        interaction_prediction = compose_hybrid_raw(
+            ridge_added_prediction,
+            tree_predictions["interaction"]["xs"],
+            tree_predictions["interaction"]["market"],
+            tid_valid,
+            market_lambda=args.market_lambda,
+            blend_weight=args.blend_weight,
+        )
+        baseline_metric = _metric_payload(y_valid, baseline_prediction, w_valid)
+        interaction_metric = _metric_payload(y_valid, interaction_prediction, w_valid)
+        peak_delta = interaction_metric["peak"] - baseline_metric["peak"]
+        delta_a = interaction_metric["A"] / baseline_metric["A"] - 1.0
+        delta_b = interaction_metric["B"] / baseline_metric["B"] - 1.0
+        counts = {
+            task: len(_manifest_definitions(manifest, task))
+            for task in ("ridge", "xs", "market")
+        }
+        fold_payload: dict[str, Any] = {
+            "fold": fold_index,
+            "train_time_range": [int(tid_train[0]), int(tid_train[-1])],
+            "valid_time_range": [int(tid_valid[0]), int(tid_valid[-1])],
+            "train_rows": int(len(y_train)),
+            "valid_rows": int(len(y_valid)),
+            "baseline": baseline_metric,
+            "interaction": interaction_metric,
+            "peak_delta": float(peak_delta),
+            "delta_a": float(delta_a),
+            "delta_b": float(delta_b),
+            "interaction_counts": counts,
+            "manifest": str(manifest_path),
+            "elapsed_seconds": float(time.perf_counter() - fold_started),
+        }
+        completed.append(fold_payload)
+        pooled_target.append(y_valid.copy())
+        pooled_weight.append(w_valid.copy())
+        pooled_baseline.append(np.asarray(baseline_prediction, dtype=np.float64))
+        pooled_interaction.append(np.asarray(interaction_prediction, dtype=np.float64))
+        payload["folds"] = completed
+        _write_partial_report(json_path, markdown_path, payload)
+        print(
+            f"fold {fold_index}: baseline={baseline_metric['peak']:.8f}, "
+            f"interaction={interaction_metric['peak']:.8f}, delta={peak_delta:+.8f}, "
+            f"counts={counts}, elapsed={fold_payload['elapsed_seconds']:.0f}s",
+            flush=True,
+        )
+        del (
+            transformed_train, transformed_valid, lag_cache,
+            outer_history_train, outer_history_valid, split_cache,
+            interactions_train, interactions_valid, ridge_train_base,
+            ridge_valid_base, ridge_train_added, ridge_valid_added,
+            base_design_train, base_design_valid, added_design_train,
+            added_design_valid, tree_predictions,
+        )
+        gc.collect()
+        return {
+            "peak_delta": float(peak_delta),
+            "delta_a": float(delta_a),
+            "delta_b": float(delta_b),
+        }
+
+    sequence = run_paired_fold_sequence(
+        len(folds), run_fold, required_positive=4
+    )
+    if sequence["stopped_early"]:
+        gate: dict[str, object] = {
+            "passed": False,
+            "checks": {"four_of_five_positive": False},
+            "reason": sequence["stop_reason"],
+        }
+        status = "failed_early"
+    else:
+        pooled_y = np.concatenate(pooled_target)
+        pooled_w = np.concatenate(pooled_weight)
+        pooled_base = np.concatenate(pooled_baseline)
+        pooled_added = np.concatenate(pooled_interaction)
+        baseline_pooled_metric = _metric_payload(pooled_y, pooled_base, pooled_w)
+        interaction_pooled_metric = _metric_payload(pooled_y, pooled_added, pooled_w)
+        pooled_delta_a = (
+            interaction_pooled_metric["A"] / baseline_pooled_metric["A"] - 1.0
+        )
+        pooled_delta_b = (
+            interaction_pooled_metric["B"] / baseline_pooled_metric["B"] - 1.0
+        )
+        gate = interaction_gate(
+            np.asarray([fold["peak_delta"] for fold in completed]),
+            pooled_delta_a,
+            pooled_delta_b,
+        )
+        gate["pooled_baseline"] = baseline_pooled_metric
+        gate["pooled_interaction"] = interaction_pooled_metric
+        status = "passed" if gate["passed"] else "failed"
+    payload["status"] = status
+    payload["gate"] = gate
+    payload["sequence"] = sequence
+    payload["elapsed_seconds"] = float(time.perf_counter() - started)
+    _write_partial_report(json_path, markdown_path, payload)
+    print(f"wrote {json_path}\nwrote {markdown_path}\nstatus={status}", flush=True)
+
+
+if __name__ == "__main__":
+    main()

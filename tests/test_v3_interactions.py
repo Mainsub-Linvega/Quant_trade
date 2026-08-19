@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import subprocess
 import sys
+from pathlib import Path
 
 import experiments.v3_interaction_features as interaction_features_module
+from experiments.history_peak import retained_lag_rows
 from experiments.v3_interaction_features import (
     PathCandidate,
     Source,
@@ -14,6 +17,7 @@ from experiments.v3_interaction_features import (
     canonicalize_path,
     extract_candidate_paths,
     mine_task_interactions,
+    resolve_quantile_thresholds,
     training_quantile_grids,
 )
 from experiments.v3_production_oof import (
@@ -612,6 +616,28 @@ def test_sparse_source_arrays_build_only_manifest_references() -> None:
     assert np.shares_memory(sources["history_previous:7"], history_blocks[0])
 
 
+def test_fold_definitions_resolve_bins_on_outer_training_sources() -> None:
+    definitions = [{
+        "name": "ridge_region_0000",
+        "operation": "region",
+        "conditions": [
+            {**_condition("current:30", -999.0), "quantile_bin": 1},
+            {**_condition("current:250", 999.0), "quantile_bin": 2},
+        ],
+    }]
+    sources = {
+        "current:30": np.arange(9, dtype=np.float32),
+        "current:250": np.arange(0, 18, 2, dtype=np.float32),
+    }
+
+    resolved = resolve_quantile_thresholds(definitions, sources, bins=4)
+
+    assert resolved is not definitions
+    assert resolved[0]["conditions"][0]["threshold"] == pytest.approx(4.0)
+    assert resolved[0]["conditions"][1]["threshold"] == pytest.approx(12.0)
+    assert definitions[0]["conditions"][0]["threshold"] == -999.0
+
+
 def test_added_interactions_preserve_direct_lgbm_prefix_and_asset_tail() -> None:
     rows = 4
     transformed = np.arange(rows * 323, dtype=np.float32).reshape(rows, 323)
@@ -812,3 +838,31 @@ def test_interaction_oof_cli_defaults_to_frozen_screen(
     assert (args.sample_modulo, args.sampling) == (5, "phase_balanced")
     assert (args.n_seeds, args.num_iteration) == (1, 160)
     assert (args.market_lambda, args.blend_weight) == (0.7, 1.17)
+
+
+def test_interaction_oof_script_help_runs_from_repo_root() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, "experiments/v3_interaction_oof.py", "--help"],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--market-lambda" in result.stdout
+
+
+def test_lag_cache_retains_sampled_rows_only_inside_requested_time_range() -> None:
+    time_ids = np.arange(20, dtype=np.int64)
+
+    mask = retained_lag_rows(
+        time_ids,
+        sample_modulo=2,
+        sampling="periodic",
+        minimum_time_id=5,
+        maximum_time_id=12,
+    )
+
+    np.testing.assert_array_equal(np.flatnonzero(mask), np.array([6, 8, 10, 12]))
