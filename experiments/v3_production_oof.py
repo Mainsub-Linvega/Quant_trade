@@ -20,6 +20,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
@@ -187,6 +188,8 @@ def build_task_lgbm_designs(
     xs_indices: np.ndarray,
     market_indices: np.ndarray,
     history_blocks: list[np.ndarray],
+    xs_interactions: np.ndarray | None = None,
+    market_interactions: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Build separate XS and market matrices with asset_id in the final column."""
     values = np.asarray(transformed, dtype=np.float32)
@@ -198,6 +201,14 @@ def build_task_lgbm_designs(
         raise ValueError("task design inputs must have matching rows")
     if any(len(block) != len(values) for block in history_blocks):
         raise ValueError("history blocks must align with transformed rows")
+    if xs_interactions is not None:
+        xs_interactions = np.asarray(xs_interactions, dtype=np.float32)
+        if xs_interactions.ndim != 2 or len(xs_interactions) != len(values):
+            raise ValueError("XS interactions must be row-aligned 2D")
+    if market_interactions is not None:
+        market_interactions = np.asarray(market_interactions, dtype=np.float32)
+        if market_interactions.ndim != 2 or len(market_interactions) != len(values):
+            raise ValueError("market interactions must be row-aligned 2D")
     xs_raw = values[:, xs]
     market_raw = values[:, market]
     xs_deviation = cross_sectional_deviation(xs_raw.copy(), ids)
@@ -205,13 +216,115 @@ def build_task_lgbm_designs(
     asset_column = assets.astype(np.float32)
     return {
         "xs": np.ascontiguousarray(
-            np.column_stack([xs_deviation, *history_blocks, asset_column])
+            np.column_stack([
+                xs_deviation,
+                *history_blocks,
+                *([] if xs_interactions is None else [xs_interactions]),
+                asset_column,
+            ])
         ),
         "market": np.ascontiguousarray(
             np.column_stack(
-                [market_raw, market_deviation, *history_blocks, asset_column]
+                [
+                    market_raw,
+                    market_deviation,
+                    *history_blocks,
+                    *([] if market_interactions is None else [market_interactions]),
+                    asset_column,
+                ]
             )
         ),
+    }
+
+
+def build_interaction_fold_manifest(
+    *,
+    transformed: np.ndarray,
+    target: np.ndarray,
+    weight: np.ndarray,
+    time_ids: np.ndarray,
+    history_indices: np.ndarray,
+    history_blocks: list[np.ndarray],
+    baseline_predictors: Mapping[
+        str, Callable[[np.ndarray, np.ndarray], np.ndarray]
+    ],
+    max_source_cells: int,
+    miner_kwargs: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Mine all three task interactions inside one outer training window."""
+    from experiments import v3_interaction_features as interaction_features
+
+    values = np.asarray(transformed, dtype=np.float32)
+    y = np.asarray(target, dtype=np.float64)
+    w = np.asarray(weight, dtype=np.float64)
+    ids = np.asarray(time_ids, dtype=np.int64)
+    history = np.asarray(history_indices, dtype=np.int64)
+    if values.ndim != 2 or values.shape[1] != len(FEATURE_COLUMNS):
+        raise ValueError("fold interaction discovery requires all 323 features")
+    if not (len(values) == len(y) == len(w) == len(ids)):
+        raise ValueError("fold interaction inputs must have equal rows")
+    if len(ids) == 0 or np.any(np.diff(ids) < 0):
+        raise ValueError("fold interaction time_ids must be nonempty and sorted")
+    missing_predictors = [
+        task for task in ("ridge", "xs", "market")
+        if task not in baseline_predictors
+    ]
+    if missing_predictors:
+        raise ValueError(f"missing baseline predictors: {missing_predictors}")
+    options = dict(miner_kwargs or {})
+    reserved = {
+        "task", "source_values", "catalog", "target", "weight", "time_ids",
+        "baseline_predictor",
+    }
+    conflict = sorted(reserved.intersection(options))
+    if conflict:
+        raise ValueError(f"miner_kwargs cannot override fold inputs: {conflict}")
+
+    starts = np.r_[0, np.flatnonzero(ids[1:] != ids[:-1]) + 1]
+    counts = np.diff(np.r_[starts, len(ids)]).astype(np.float64)
+    xs_target = y - group_mean(y, starts, counts)
+    task_targets = {"ridge": y, "xs": xs_target, "market": y}
+    task_weights = {"ridge": w, "xs": w, "market": np.ones_like(w)}
+    task_payloads: dict[str, object] = {}
+    for task in ("ridge", "xs", "market"):
+        source_view = interaction_features.build_interaction_source_view(
+            task,
+            values,
+            ids,
+            history,
+            history_blocks,
+            max_cells=max_source_cells,
+        )
+        result = interaction_features.mine_task_interactions(
+            task=task,
+            source_values=source_view.values,
+            catalog=source_view.catalog,
+            target=task_targets[task],
+            weight=task_weights[task],
+            time_ids=ids,
+            baseline_predictor=baseline_predictors[task],
+            **options,
+        )
+        task_payloads[task] = {
+            **result,
+            "source_count": len(source_view.catalog),
+            "source_families": sorted({source.family for source in source_view.catalog}),
+        }
+        del source_view
+        gc.collect()
+
+    return {
+        "schema_version": 1,
+        "outer_fold_training_only": True,
+        "training_window": {
+            "time_start": int(ids[0]),
+            "time_end": int(ids[-1]),
+            "time_ids": int(len(np.unique(ids))),
+            "rows": int(len(ids)),
+        },
+        "history_indices": [int(index) for index in history],
+        "history_width": int(4 * len(history)),
+        "tasks": task_payloads,
     }
 
 

@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from experiments.v3_adaptive_selection_manifest import chronological_inner_splits
+from strategies.v3_hybrid.features import cross_sectional_deviation
 from strategies.v3_hybrid.interactions import (
     CURRENT_SOURCE_FAMILIES,
     HISTORY_SOURCE_FAMILIES,
@@ -66,6 +67,131 @@ class CanonicalPath:
     block_index: int
     tree_index: int
     leaf_index: int
+
+
+@dataclass(frozen=True)
+class TaskSourceView:
+    values: np.ndarray
+    catalog: tuple[Source, ...]
+
+
+_HISTORY_FAMILIES = (
+    "history_previous",
+    "history_difference",
+    "history_rolling_mean",
+    "history_rolling_deviation",
+)
+
+
+def _validate_source_view_inputs(
+    transformed: np.ndarray,
+    time_ids: np.ndarray,
+    history_indices: np.ndarray,
+    history_blocks: Sequence[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, ...]]:
+    values = np.asarray(transformed, dtype=np.float32)
+    ids = np.asarray(time_ids, dtype=np.int64)
+    indices = np.asarray(history_indices, dtype=np.int64)
+    blocks = tuple(np.asarray(block, dtype=np.float32) for block in history_blocks)
+    if values.ndim != 2 or values.shape[1] != 323:
+        raise ValueError("interaction discovery requires exactly 323 current features")
+    if ids.shape != (len(values),) or np.any(np.diff(ids) < 0):
+        raise ValueError("time_ids must be row-aligned and nondecreasing")
+    if indices.shape != (40,) or len(np.unique(indices)) != 40:
+        raise ValueError("interaction history must contain exactly 40 unique bases")
+    if np.any(indices < 0) or np.any(indices >= values.shape[1]):
+        raise ValueError("history feature index is outside the current feature matrix")
+    if len(blocks) != 4 or any(block.shape != (len(values), 40) for block in blocks):
+        raise ValueError("history must contain four row-aligned 40-column blocks")
+    return values, ids, indices, blocks
+
+
+def _source_width(task: str) -> int:
+    widths = {"ridge": 323, "xs": 323 + 4 * 40, "market": 2 * 323 + 4 * 40}
+    if task not in widths:
+        raise ValueError(f"unknown interaction task: {task}")
+    return widths[task]
+
+
+def build_interaction_source_view(
+    task: str,
+    transformed: np.ndarray,
+    time_ids: np.ndarray,
+    history_indices: np.ndarray,
+    history_blocks: Sequence[np.ndarray],
+    *,
+    max_cells: int,
+) -> TaskSourceView:
+    """Materialize one task source universe after an explicit cell-budget check."""
+    values, ids, indices, blocks = _validate_source_view_inputs(
+        transformed, time_ids, history_indices, history_blocks
+    )
+    width = _source_width(task)
+    cells = len(values) * width
+    if cells > max_cells:
+        raise MemoryError(
+            f"{task} source matrix {cells} cells exceeds max_cells={max_cells}"
+        )
+    current_indices = range(values.shape[1])
+    history_catalog = tuple(
+        Source(family, int(feature_index))
+        for family in _HISTORY_FAMILIES
+        for feature_index in indices
+    )
+    if task == "ridge":
+        matrix = np.ascontiguousarray(values, dtype=np.float32)
+        catalog = tuple(Source("current", index) for index in current_indices)
+    else:
+        deviation = cross_sectional_deviation(values.copy(), ids)
+        if task == "xs":
+            matrix = np.ascontiguousarray(
+                np.column_stack([deviation, *blocks]), dtype=np.float32
+            )
+            catalog = (
+                tuple(Source("xs_deviation", index) for index in current_indices)
+                + history_catalog
+            )
+        else:
+            matrix = np.ascontiguousarray(
+                np.column_stack([values, deviation, *blocks]), dtype=np.float32
+            )
+            catalog = (
+                tuple(Source("market_raw", index) for index in current_indices)
+                + tuple(Source("market_deviation", index) for index in current_indices)
+                + history_catalog
+            )
+    if matrix.shape != (len(values), width) or len(catalog) != width:
+        raise AssertionError("interaction source matrix and catalog width disagree")
+    return TaskSourceView(matrix, catalog)
+
+
+def build_interaction_source_views(
+    transformed: np.ndarray,
+    time_ids: np.ndarray,
+    history_indices: np.ndarray,
+    history_blocks: Sequence[np.ndarray],
+    *,
+    max_cells: int,
+) -> dict[str, TaskSourceView]:
+    """Small-data convenience wrapper; production should build one task at a time."""
+    rows = len(np.asarray(transformed))
+    for task in ("ridge", "xs", "market"):
+        cells = rows * _source_width(task)
+        if cells > max_cells:
+            raise MemoryError(
+                f"{task} source matrix {cells} cells exceeds max_cells={max_cells}"
+            )
+    return {
+        task: build_interaction_source_view(
+            task,
+            transformed,
+            time_ids,
+            history_indices,
+            history_blocks,
+            max_cells=max_cells,
+        )
+        for task in ("ridge", "xs", "market")
+    }
 
 
 def _tree_roots(model_dump: Any) -> list[tuple[int, Mapping[str, Any]]]:

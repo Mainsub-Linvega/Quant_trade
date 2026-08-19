@@ -8,10 +8,15 @@ from experiments.v3_interaction_features import (
     PathCandidate,
     Source,
     aggregate_repeated_paths,
+    build_interaction_source_views,
     canonicalize_path,
     extract_candidate_paths,
     mine_task_interactions,
     training_quantile_grids,
+)
+from experiments.v3_production_oof import (
+    build_interaction_fold_manifest,
+    build_task_lgbm_designs,
 )
 from strategies.v3_hybrid.interactions import (
     build_interaction_columns,
@@ -469,3 +474,145 @@ def test_real_miner_finds_range_effect_but_not_constant_residual() -> None:
 
     assert any(item["operation"] == "gated_value" for item in signal["definitions"])
     assert null["definitions"] == []
+
+
+def test_task_source_views_cover_all_current_but_only_history40() -> None:
+    transformed = np.arange(4 * 323, dtype=np.float32).reshape(4, 323)
+    time_ids = np.array([1, 1, 2, 2])
+    history_indices = np.arange(40, dtype=np.int64)
+    history_blocks = [
+        np.full((4, 40), fill_value=index, dtype=np.float32)
+        for index in range(4)
+    ]
+
+    views = build_interaction_source_views(
+        transformed,
+        time_ids,
+        history_indices,
+        history_blocks,
+        max_cells=4 * 806,
+    )
+
+    assert views["ridge"].values.shape == (4, 323)
+    assert views["xs"].values.shape == (4, 323 + 4 * 40)
+    assert views["market"].values.shape == (4, 2 * 323 + 4 * 40)
+    assert views["ridge"].catalog[250] == Source("current", 250)
+    assert views["xs"].catalog[250] == Source("xs_deviation", 250)
+    assert views["market"].catalog[250] == Source("market_raw", 250)
+    assert views["market"].catalog[323 + 250] == Source("market_deviation", 250)
+    history_sources = [
+        source for source in views["market"].catalog
+        if source.family.startswith("history_")
+    ]
+    assert len(history_sources) == 160
+    assert {source.feature_index for source in history_sources} == set(range(40))
+
+
+def test_task_source_views_fail_instead_of_exceeding_cell_budget() -> None:
+    with pytest.raises(MemoryError, match="market source matrix"):
+        build_interaction_source_views(
+            np.zeros((4, 323), dtype=np.float32),
+            np.array([1, 1, 2, 2]),
+            np.arange(40),
+            [np.zeros((4, 40), dtype=np.float32) for _ in range(4)],
+            max_cells=4 * 806 - 1,
+        )
+
+
+def test_added_interactions_preserve_direct_lgbm_prefix_and_asset_tail() -> None:
+    rows = 4
+    transformed = np.arange(rows * 323, dtype=np.float32).reshape(rows, 323)
+    time_ids = np.array([1, 1, 2, 2])
+    asset_ids = np.array([0, 1, 0, 1])
+    history = [np.zeros((rows, 40), dtype=np.float32) for _ in range(4)]
+    baseline = build_task_lgbm_designs(
+        transformed,
+        time_ids,
+        asset_ids,
+        xs_indices=np.arange(200),
+        market_indices=np.arange(200),
+        history_blocks=history,
+    )
+    augmented = build_task_lgbm_designs(
+        transformed,
+        time_ids,
+        asset_ids,
+        xs_indices=np.arange(200),
+        market_indices=np.arange(200),
+        history_blocks=history,
+        xs_interactions=np.ones((rows, 2), dtype=np.float32),
+        market_interactions=np.ones((rows, 3), dtype=np.float32),
+    )
+
+    assert baseline["xs"].shape == (rows, 360 + 1)
+    assert baseline["market"].shape == (rows, 560 + 1)
+    np.testing.assert_array_equal(
+        augmented["xs"][:, :360], baseline["xs"][:, :360]
+    )
+    np.testing.assert_array_equal(
+        augmented["market"][:, :560], baseline["market"][:, :560]
+    )
+    np.testing.assert_array_equal(augmented["xs"][:, -1], asset_ids)
+    np.testing.assert_array_equal(augmented["market"][:, -1], asset_ids)
+    assert augmented["xs"].shape == (rows, 360 + 2 + 1)
+    assert augmented["market"].shape == (rows, 560 + 3 + 1)
+
+
+def test_fold_manifest_mines_three_tasks_with_history40(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, int, int]] = []
+
+    def fake_mine(**kwargs: object) -> dict[str, object]:
+        task = str(kwargs["task"])
+        source_values = np.asarray(kwargs["source_values"])
+        catalog = list(kwargs["catalog"])
+        calls.append((task, source_values.shape[1], len(catalog)))
+        return {
+            "task": task,
+            "definitions": [],
+            "accepted_paths": [],
+            "protocol": {"strict_oos_residuals": True},
+        }
+
+    monkeypatch.setattr(
+        interaction_features_module, "mine_task_interactions", fake_mine
+    )
+    rows = 16
+    transformed = np.arange(rows * 323, dtype=np.float32).reshape(rows, 323)
+    time_ids = np.repeat(np.arange(8), 2)
+    history_indices = np.arange(40, dtype=np.int64)
+    history_blocks = [
+        np.zeros((rows, 40), dtype=np.float32) for _ in range(4)
+    ]
+    predictors = {
+        task: (lambda train, valid: np.zeros(len(valid), dtype=np.float64))
+        for task in ("ridge", "xs", "market")
+    }
+
+    manifest = build_interaction_fold_manifest(
+        transformed=transformed,
+        target=np.linspace(-1.0, 1.0, rows),
+        weight=np.ones(rows),
+        time_ids=time_ids,
+        history_indices=history_indices,
+        history_blocks=history_blocks,
+        baseline_predictors=predictors,
+        max_source_cells=rows * 806,
+        miner_kwargs={"n_blocks": 4, "row_cap": 100, "num_threads": 1},
+    )
+
+    assert calls == [
+        ("ridge", 323, 323),
+        ("xs", 483, 483),
+        ("market", 806, 806),
+    ]
+    assert manifest["schema_version"] == 1
+    assert manifest["history_indices"] == list(range(40))
+    assert manifest["training_window"] == {
+        "time_start": 0,
+        "time_end": 7,
+        "time_ids": 8,
+        "rows": 16,
+    }
+    assert set(manifest["tasks"]) == {"ridge", "xs", "market"}
