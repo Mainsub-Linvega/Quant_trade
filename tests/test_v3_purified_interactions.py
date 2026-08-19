@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import copy
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+from experiments.v3_purified_interaction_diagnostic import (
+    _synthetic_arrays,
+    deterministic_pairs,
+    parse_args as parse_diagnostic_args,
+    run_diagnostic,
+    validate_diagnostic_arrays,
+    write_diagnostic_report,
+)
 from experiments.v3_purified_interactions import (
     PurifiedPairSurface,
     assign_quantile_bins,
@@ -345,3 +356,105 @@ def test_stability_gate_requires_null_coverage_and_drop_best_gain() -> None:
     )
     assert tail_only["passed"] is False
     assert tail_only["checks"]["tail_concentration"] is False
+
+
+def test_diagnostic_cli_defaults_are_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys, "argv", ["v3_purified_interaction_diagnostic.py"]
+    )
+
+    args = parse_diagnostic_args()
+
+    assert args.task == "ridge"
+    assert args.max_pairs == 256
+    assert args.synthetic_smoke is False
+    assert args.write_candidate is False
+
+
+def test_deterministic_pairs_are_lexical_and_exclude_self_pairs() -> None:
+    got = deterministic_pairs(4, max_pairs=5)
+
+    assert got == [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3)]
+    assert all(left < right for left, right in got)
+
+
+def test_diagnostic_arrays_require_exactly_323_features() -> None:
+    arrays = {
+        "features": np.zeros((8, 323), dtype=np.float32),
+        "residual": np.zeros(8),
+        "weight": np.ones(8),
+        "time_id": np.arange(8),
+    }
+
+    validated = validate_diagnostic_arrays(arrays)
+
+    assert validated["features"].shape == (8, 323)
+    with pytest.raises(ValueError, match="323"):
+        validate_diagnostic_arrays({
+            **arrays,
+            "features": np.zeros((8, 322), dtype=np.float32),
+        })
+    with pytest.raises(ValueError, match="nondecreasing"):
+        validate_diagnostic_arrays({
+            **arrays,
+            "time_id": np.arange(8)[::-1],
+        })
+
+
+def test_diagnostic_report_never_generates_candidate(tmp_path: Path) -> None:
+    paths = write_diagnostic_report(
+        tmp_path,
+        "smoke",
+        payload={
+            "experiment": "v3_purified_interaction_p0",
+            "status": "passed_p0",
+            "task": "ridge",
+            "pairs": [],
+        },
+    )
+
+    assert set(paths) == {"json", "markdown"}
+    assert all(path.exists() for path in paths.values())
+    assert not list(tmp_path.glob("*candidate*"))
+    assert not list(tmp_path.glob("*.csv"))
+    with pytest.raises(FileExistsError, match="force"):
+        write_diagnostic_report(
+            tmp_path,
+            "smoke",
+            payload={"status": "again", "pairs": []},
+        )
+
+
+def test_purified_diagnostic_script_help_runs_from_repo_root() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "experiments/v3_purified_interaction_diagnostic.py",
+            "--help",
+        ],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--synthetic-smoke" in result.stdout
+    assert "--max-pairs" in result.stdout
+
+
+def test_synthetic_smoke_accepts_the_planted_pair() -> None:
+    result = run_diagnostic(
+        _synthetic_arrays(),
+        task="ridge",
+        protocol=default_purified_protocol(),
+        max_pairs=1,
+    )
+
+    assert result["status"] == "passed_p0"
+    assert result["accepted_pairs"] == 1
+    assert result["pairs"][0]["pair"] == [0, 1]
+    assert result["pairs"][0]["gate"]["passed"] is True

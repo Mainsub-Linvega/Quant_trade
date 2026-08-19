@@ -1,0 +1,51 @@
+{
+  "budgets": {
+    "max_output_candidates": 256,
+    "max_pairs": 52003,
+    "max_surface_cells": 1000000
+  },
+  "fusion": {
+    "blend_weight": 1.17,
+    "market_lambda": 0.7,
+    "prediction_scale": 1.16
+  },
+  "history_enabled": false,
+  "inner_blocks": 4,
+  "null": {
+    "minimum_time_shift": 7,
+    "quantile": 0.95,
+    "seeds": [
+      2026,
+      2027,
+      2028,
+      2029
+    ]
+  },
+  "outer": {
+    "embargo": 6,
+    "n_folds": 5,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "train_window": 78960
+  },
+  "schema_version": 1,
+  "stability": {
+    "maximum_single_cell_gain_share": 0.5,
+    "minimum_coverage": 0.8,
+    "minimum_positive_blocks": 2
+  },
+  "tasks": {
+    "market": {
+      "bins": 4,
+      "min_cell_weight": 16.0
+    },
+    "ridge": {
+      "bins": 8,
+      "min_cell_weight": 64.0
+    },
+    "xs": {
+      "bins": 8,
+      "min_cell_weight": 64.0
+    }
+  }
+}
