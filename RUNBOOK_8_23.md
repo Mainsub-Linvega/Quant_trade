@@ -130,10 +130,19 @@ git diff --stat docs/ examples/ timeseries_api/     # 必须为空或已知变�
 
 ## D2：用**校准后的尺子**比较重训 vs 当前生产
 
-⚠️ **不要拿 `outputs/cache/v3_production_oof_phasebal_prodwindow_exact.npz` 当配对基准。**
-它的时间戳是 2026-08-14 11:12，而 `experiments/v3_production_oof.py` 的**首次提交**是
-08-15 11:18 ⟹ 它出自**已不存在的代码版本**，与当前脚本输出差
-`max|Δ(market_ridge)| = 3.37e-05`（约折均 peak 的 2.4%）。基准必须用当前代码现跑。
+⚠️ **配对基准必须用当前代码现跑。** `experiments/v3_production_oof.py` 的**首次提交**是
+2026-08-15 11:18，**早于它的 OOF 缓存都出自已不存在的代码版本**：
+
+| 缓存 | 产出 | 状态 |
+|---|---|---|
+| `..._phasebal_prodwindow_exact.npz` | 08-14 11:12 | **隔离**（实测差 `max\|Δ(market_ridge)\| = 3.37e-05`，约折均 peak 的 2.4%，与被测效应同量级）|
+| `..._phasebal_prodwindow.npz` | 08-14 10:56 | **隔离**（08-20 复查新增：13 数组、无 checkpoint，与上一行**签名完全一致**，08-18 那次漏点名了）|
+| `..._confirm_3s480_phasebal_prodwindow.npz` | 08-14 12:52 | 未隔离但**未经现跑复验**：19 数组含 checkpoint，结构与已入库脚本一致 |
+| `..._1s160_prodwindow_20260818.npz` | 08-18 15:21 | ✅ **唯一确认由当前代码产出** |
+
+隔离由 `src/oof_cache.assert_reproducible_cache` 强制执行（`load_oof_bundle` 里也调了），
+指到隔离名单上的文件会**当场报错并给出现跑命令**——不是靠记性。
+⚠️ 改名封存后的 `.STALE-DO-NOT-USE` 路径同样在名单里：**别把名字改回去绕过它**。
 
 ```bash
 # 现跑基准（约 11 分钟 @ 8 线程）
@@ -214,8 +223,11 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 研究模块 `temporal.py` 判 FAIL —— 那是**当时的打包口径**造成的，模型身份本身零漂移
 （`public_baseline_drift == []`），重打一次即可。
 
-⚠️ **现存 `outputs/v3_hybrid_submission_20260813.zip` 是 slow/fast 转正前的旧模型** ——
-旧审计八项全 PASS，加 `--expect-public-baseline` 才被拦下。**不要拿它提交。**
+⚠️ slow/fast 转正**前**的旧模型包已于 08-19 改名封存为
+`outputs/v3_hybrid_submission_20260813.PRE-SLOWFAST.zip`（旧审计八项全 PASS，
+加 `--expect-public-baseline` 才被拦下）。**改名就是防呆措施本身——不要改回去、不要提交它。**
+当前唯一通过全部门禁的包是 `outputs/v3_hybrid_submission_20260819.zip`
+（审计记录 `outputs/experiments/submission_audit_v3_hybrid_20260819.json`）。
 
 ## D6+：缓冲与收尾顺序
 

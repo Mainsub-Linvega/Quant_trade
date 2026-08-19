@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -18,12 +19,19 @@ import numpy as np
 from v3_residual_adapters import fit_asset_slopes
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from src.oof_cache import assert_reproducible_cache
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--oof", default=str(_REPO_ROOT / "outputs" / "cache" /
-                                         "v3_production_oof_phasebal_prodwindow_exact.npz"))
+    # ⚠️ 原默认值是 `v3_production_oof_phasebal_prodwindow_exact.npz`，已按 08-18
+    # INCIDENT 判定为「出自从未入库的脚本版本」并改名封存 ⟹ 这里不再给默认值，
+    # 必须显式指定，避免把毒缓存当配对基准（src.oof_cache.assert_reproducible_cache 会挡）。
+    p.add_argument("--oof", default=None, required=True,
+                   help="生产等效 OOF 缓存路径；必须用当前代码现跑的那份")
     p.add_argument("--source", default=str(_REPO_ROOT / "strategies" / "v3_hybrid" / "model"))
     p.add_argument("--destination", default=str(_REPO_ROOT / "outputs" / "candidates" /
                                                  "v3_asset_cross_shrink500"))
@@ -42,6 +50,7 @@ def main() -> None:
     if not meta_path.is_file() or not baseline_path.is_file():
         raise SystemExit(f"incomplete source model: {source}")
 
+    assert_reproducible_cache(args.oof)
     with np.load(args.oof, allow_pickle=False) as d:
         valid = d["fold"] >= 0
         slopes = fit_asset_slopes(

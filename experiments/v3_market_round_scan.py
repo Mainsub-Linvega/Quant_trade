@@ -23,6 +23,8 @@ for _path in (str(_REPO_ROOT), str(_REPO_ROOT / "strategies" / "v1_ridge"),
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
+from src.oof_cache import assert_reproducible_cache
+
 from features import apply_robust_transform, cross_sectional_deviation
 from lgbm_xs import load_rows
 from mt_predictability import group_starts
@@ -40,8 +42,11 @@ CHECKPOINTS = (160, 240, 320, 400, 480)
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
-    p.add_argument("--base-oof", default=str(_REPO_ROOT / "outputs" / "cache" /
-                                              "v3_production_oof_phasebal_prodwindow_exact.npz"))
+    # ⚠️ 原默认值是 `v3_production_oof_phasebal_prodwindow_exact.npz`，已按 08-18
+    # INCIDENT 判定为「出自从未入库的脚本版本」并改名封存 ⟹ 这里不再给默认值，
+    # 必须显式指定，避免把毒缓存当配对基准（src.oof_cache.assert_reproducible_cache 会挡）。
+    p.add_argument("--base-oof", default=None, required=True,
+                   help="生产等效 OOF 缓存路径；必须用当前代码现跑的那份")
     p.add_argument("--output-dir", default=str(_REPO_ROOT / "outputs" / "experiments"))
     p.add_argument("--label", default="v3_market_round_scan_phasebal_prodwindow")
     p.add_argument("--checkpoints", type=int, nargs="+", default=list(CHECKPOINTS))
@@ -107,6 +112,7 @@ def main() -> None:
     unique_time_ids = np.unique(time_ids)
     folds = rolling_time_folds(unique_time_ids, args.n_folds, args.train_window, args.embargo)
 
+    assert_reproducible_cache(args.base_oof)
     with np.load(args.base_oof, allow_pickle=False) as base:
         for name, reference in (("target", target), ("weight", weight), ("time_id", time_ids),
                                 ("asset_id", asset_ids)):

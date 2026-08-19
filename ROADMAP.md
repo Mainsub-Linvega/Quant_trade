@@ -175,9 +175,10 @@
      —— 市场森林是架构的一半（公榜 +21.99% 的来源）。已补。
   3. 审计不核 `main.py` 无条件 import 的 `features/lgbm_numpy/history` 三个模块。已补进 `REQUIRED`。
   - 4 个新回归用例钉住上述门禁；`--off-baseline` 是有意偏离的出口（留给 8/23 回补数据后重训）。
-- **⚠️ 现存 `outputs/v3_hybrid_submission_20260813.zip` 是 slow/fast 转正前的旧模型**：
-  旧审计八项全 PASS，加 `--expect-public-baseline` 才被拦下（三个 slow/fast 键 drift）。
-  **8/31 不要拿它提交。**
+- **⚠️ slow/fast 转正前的旧模型包已于 08-19 改名封存**为
+  `outputs/v3_hybrid_submission_20260813.PRE-SLOWFAST.zip`（旧审计八项全 PASS，
+  加 `--expect-public-baseline` 才被拦下：三个 slow/fast 键 drift）。
+  改名就是防呆措施本身——**不要改回去**。8/31 交的是 `..._20260819.zip`。
 - **验收条件**：生产 meta 与公榜模型一致；两后端对拍通过；全量行数正确；0 非有限值；耗时在
   主办方限制内；包内无训练代码和多余产物。
 - **证据**：`outputs/experiments/delivery_runtime_lightgbm_4t.{json,md}`、
@@ -215,9 +216,12 @@
 - **动作**（顺序不可颠倒）：
   1. 使用 `scripts/retrain_extended.py` 先 dry-run；只写候选目录，不写生产目录。
      ⚠️ dry-run 输出里现在有一段 `production_structure`，**先核它再 `--execute`**。
-  2. **用当前代码现跑配对基准**。⚠️ 不得复用 `outputs/cache/v3_production_oof_phasebal_prodwindow_exact.npz`
-     —— 它出自已不存在的代码版本（08-18 `INCIDENT`），与当前输出差 3.37e-05，
-     **与被测效应同量级**。
+  2. **用当前代码现跑配对基准**。⚠️ 早于 `v3_production_oof.py` 首次提交（08-15 11:18）的
+     缓存都出自已不存在的代码版本。**两份已隔离**：`..._phasebal_prodwindow_exact.npz`
+     （08-18 `INCIDENT`，差 3.37e-05，与被测效应同量级）与 `..._phasebal_prodwindow.npz`
+     （08-20 复查新增，签名完全一致但当时漏点名）。隔离由
+     `src/oof_cache.assert_reproducible_cache` 强制，指过去会当场报错。
+     唯一确认由当前代码产出的是 `..._1s160_prodwindow_20260818.npz`。
   3. **recency 阶梯**（⭐ 2026-08-19 新增预注册臂，见下）。
   4. 固定当前结构重训，作为“只增加数据”的基线。
   5. 执行 `outputs/experiments/joint_recalibration_plan.json` 中冻结的 Ridge 12 格和 LGBM 9 格。
@@ -479,3 +483,4 @@ P4 已测（CLOSED）  滑动窗 78,960 → 扩展窗，往训练段**前端**�
 | 2026-08-19 | 补三道交付/重训缺口（本轮由仓库结构复查发现，均**不在**原行动面板上）：① `retrain_extended.py` 的「固定结构重训」计划缺 `--weighted-cross-section`/`--market-model`/`--market-spec`/`--market-min-data-scale`，跑出来的是 08-11 架构（比生产低 21.99%），现改为从生产 `hybrid_meta.json` 派生并与 `PUBLIC_BASELINE` 对拍；② `train.py` 没有 slow/fast 概念 ⟹ 重训候选必缺三键且会被 `main.py` 静默降级，现由 `promote_v3_candidate` 在 staging 写入（`--slow-fast-*`，默认即公榜值）；③ 提交包此前「除 train.py 外全收 `*.py`」，把研究模块 `temporal.py` 也装了进去，审计只查缺文件不查多文件 —— 现由 `make_submission.SUBMISSION_MODULES` 唯一声明 + `main.py` 的 AST import 闭包双向对拍。全量测试 **84 passed / 22 subtests**。 |
 | 2026-08-19 | 按外部 `HANDOFF.md` 推进 A/B/C 三线，并核出它三处与仓库不符（P0 的 wall-clock 复测 08-18 已完成；私榜是「**最新提交版本生效**」不是 best-of-10 —— 此前 ROADMAP/RUNBOOK 都漏了这半句；t=2 的 max|pred| 数对但仓库无证据）。**P0 结案**（用户 20260819 包审计 `passed:true`、零漂移、无多余模块）。**P7 预注册落盘**：slow/fast 顶点闭式解 + 限幅几何实测（clip 边界 t≈2.6968）+ 锚点交叉验证（max|Δ|=5.0e-09）；增益闭式 `(S1−S0)(t*−1)²/(2t*−1)`，诚实期望只有 +0.0%~+0.9%。**P8 `CLOSED_FAIL`**：辅助损失机制成立（MLP 自身 peak +16.7%）但对生产基准增量仅 +0.026%；顺带订正一道写错的机制门槛（收紧）。**P2-R** recency 预注册臂立项（P4 测的是 volume 轴，不覆盖）。**P1 端到端演练通过**（全 hash 审计 + 闸门正确拒绝）。全量测试 **92 passed / 22 subtests**。 |
 | 2026-08-19 | **P7 结案**：slow/fast 顶点第三点已交（`S2 = 0.0039374211`）。完整性检查 `a = −1.474e−04 < 0` 通过；`t* = 0.897692`、`Score(t*) = 0.0041165516` ⟹ **当前生产点已处在这条线峰值的 99.9625%**，slow/fast 捕获了线上总可得增益的 **98.70%**；半步收缩后增益 1.157e−06 < 预注册 1e−05 线 ⟹ **不改交付、生产不动**。⟹ 该轴从「没测」变成「顶点已测出」。顺带确认了 08-17「只搬 OOF 相对模式、保留公榜标定绝对水平」这个做法 —— 它落在最优点的 0.04% 以内。 |
+| 2026-08-20 | **P6 清理后的收尾审计**，查出两件事：① 08-18 判毒的 OOF 缓存**不止一份** —— `..._phasebal_prodwindow.npz`（08-14 10:56、13 数组、无 checkpoint）与被判毒那份**签名完全一致**，当时漏点名，已一并隔离；② **改名挡不住** —— 四个实验脚本把毒缓存写死成 `--oof` 默认值，改名后只报裸 `FileNotFoundError`，而旁边就是 `.STALE-DO-NOT-USE` 文件，赶工时最省事的「修法」就是指回去。⟹ 隔离改成代码强制：`src/oof_cache.assert_reproducible_cache`（含改名后路径，`load_oof_bundle` 内也调用），四个脚本改 `required=True` 并接上守卫，3 个回归用例钉住。逐条核过对已有结论无影响（多任务 Stage 1 用的是未隔离的 `confirm_3s480`，且 ±2.4% 基准误差下增益仍在 +0.025%~+0.026%）。顺带修掉 P6 清理造成的文档漂移（旧 zip 名 ×3、`lgbm_mt` docstring）。全量测试 **95 passed / 22 subtests**。 |

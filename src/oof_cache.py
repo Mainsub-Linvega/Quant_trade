@@ -36,6 +36,44 @@ class OOFBundle:
         return {name: self.arrays[name][mask] for name in selected}
 
 
+# ---- 出处隔离（2026-08-18 INCIDENT；2026-08-20 复查扩大范围）----
+# `experiments/v3_production_oof.py` 的**首次提交**是 2026-08-15 11:18。早于它的 OOF 缓存
+# 出自**从未入库的脚本版本** ⟹ 无法复现，不得当配对基准。
+# 08-18 那次只点了 `_exact` 一份（实测与当前代码差 max|Δ(market_ridge)| = 3.37e-05，
+# 约折均 peak 的 2.4%，与被测效应同量级）。08-20 复查按同一判据扫了整个目录，发现
+# `v3_production_oof_phasebal_prodwindow.npz` **签名完全一致**——13 个数组、无 checkpoint、
+# mtime 08-14 10:56 比被判毒那份还早 ⟹ 一并隔离。
+#
+# ⚠️ `v3_production_oof_confirm_3s480_phasebal_prodwindow.npz`（08-14 12:52）也早于首次提交，
+# 但它有完整的 19 数组含 checkpoint ⟹ 结构上与已入库脚本一致，**未列入隔离**；
+# 它仍属「未经现跑复验」，做**配对裁决**时应按 RUNBOOK D2 现跑基准。
+UNREPRODUCIBLE_CACHES = frozenset({
+    "v3_production_oof_phasebal_prodwindow_exact.npz",
+    "v3_production_oof_phasebal_prodwindow_exact.STALE-DO-NOT-USE.npz",
+    "v3_production_oof_phasebal_prodwindow.npz",
+})
+VERIFIED_CURRENT_CODE_CACHE = "v3_production_oof_1s160_prodwindow_20260818.npz"
+
+
+def assert_reproducible_cache(path: str | Path) -> Path:
+    """隔离出自不存在代码版本的 OOF 缓存。缺文件/被隔离都给出可执行的下一步。"""
+    cache_path = Path(path)
+    if cache_path.name in UNREPRODUCIBLE_CACHES:
+        raise SystemExit(
+            f"{cache_path.name} 出自从未入库的脚本版本（2026-08-18 INCIDENT），无法复现，"
+            "不得当配对基准。\n"
+            f"  用当前代码现跑：.venv/bin/python experiments/v3_production_oof.py "
+            "--label <新标签> --num-threads 8\n"
+            f"  或用已验证的当前代码产物：outputs/cache/{VERIFIED_CURRENT_CODE_CACHE}")
+    if not cache_path.exists():
+        raise SystemExit(
+            f"OOF 缓存不存在：{cache_path}\n"
+            "  ⚠️ 若你原本指望的是 `..._phasebal_prodwindow_exact.npz`，它已按 08-18 INCIDENT "
+            "改名封存（`.STALE-DO-NOT-USE`）——**不要**把它改回来用。\n"
+            f"  现跑基准，或用 outputs/cache/{VERIFIED_CURRENT_CODE_CACHE}")
+    return cache_path
+
+
 def file_sha256(path: Path, chunk_size: int = 8 << 20) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -103,9 +141,7 @@ def load_oof_bundle(
     report_dir: str | Path | None = None,
     require_components: bool = True,
 ) -> OOFBundle:
-    cache_path = Path(path).resolve()
-    if not cache_path.exists():
-        raise FileNotFoundError(cache_path)
+    cache_path = assert_reproducible_cache(path).resolve()
     with np.load(cache_path, allow_pickle=False) as handle:
         arrays = {name: handle[name] for name in handle.files}
     validate_oof_arrays(arrays, require_components=require_components)

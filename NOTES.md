@@ -169,6 +169,63 @@ IC    = sqrt(peak)
 > 引用原样保留以说明当时的推理来源；可核验的证据一律在 `outputs/experiments/` 与
 > `experiments/ledger.csv`。
 
+### 2026-08-20 — `INCIDENT`（扩大范围，未造成损失）：被判毒的 OOF 缓存不止一份，而且「改名」不等于「封住」
+
+**起因**：P6 磁盘清理执行完之后做收尾审计，顺手核了一遍「清理有没有留下悬挂引用」。
+
+**发现 1 —— 08-18 那次 INCIDENT 漏点名了一份。** 当时的判据是「cache 时间戳早于
+`experiments/v3_production_oof.py` 的首次提交（08-15 11:18）⟹ 出自从未入库的脚本版本」。
+按同一判据扫整个 `outputs/cache/`：
+
+| 缓存 | 产出时间 | 数组数 | checkpoint | 判定 |
+|---|---|---:|:---:|---|
+| `..._phasebal_prodwindow.npz` | **08-14 10:56** | 13 | 否 | ⬅ **签名与被判毒那份完全一致，当时没点名** |
+| `..._phasebal_prodwindow_exact.npz` | 08-14 11:12 | 13 | 否 | 08-18 已判毒（实测差 3.37e-05）|
+| `..._confirm_3s480_phasebal_prodwindow.npz` | 08-14 12:52 | 19 | 是 | 早于首次提交，但结构与已入库脚本一致 |
+| `..._1s160_prodwindow_20260818.npz` | 08-18 15:21 | 19 | 是 | ✅ 唯一确认由当前代码产出 |
+
+「13 数组、无 checkpoint」正是 08-18 用来佐证的那条旁证（「它早于 checkpoint 功能」）——
+plain 那份**完全同签名且更早**，当时只是没被扫到。已一并隔离。
+
+**发现 2 —— 光改名挡不住。** P6 把 `_exact` 改成 `.STALE-DO-NOT-USE.npz`，看起来是防呆，
+但**四个实验脚本把它写死成 `--oof` / `--base-oof` 的默认值**：
+
+```text
+experiments/v3_residual_atlas.py:28        experiments/v3_market_round_scan.py:44
+experiments/v3_asset_adapter_candidate.py:26   experiments/v3_residual_adapters.py:36
+```
+
+改名之后它们变成裸 `FileNotFoundError`，**不解释原因**。而旁边就躺着一个
+`.STALE-DO-NOT-USE.npz` —— 8/23 赶工时最省事的「修复」就是把 `--baseline` 指过去，
+毒缓存原地复活。⚠️ `v3_market_round_scan` 正好写在 P3 的重开条件里
+（「市场块结构本身改变，或回补数据后原规格复验」），这不是假想路径。
+
+**修复**：隔离改成**代码强制**而不是靠文件名和记性 ——
+`src/oof_cache.py` 新增 `UNREPRODUCIBLE_CACHES` / `VERIFIED_CURRENT_CODE_CACHE` /
+`assert_reproducible_cache()`：
+
+- 三个路径都在名单里（含改名后的 `.STALE-DO-NOT-USE`）⟹ **把名字改回去也绕不过**；
+- 报错直接给出现跑命令和已验证缓存的名字 ⟹ 不会引导人去找最省事的错解法；
+- `load_oof_bundle()` 里也调了 ⟹ 走带校验入口的脚本自动受保护；
+- 四个脚本的默认值改成 `required=True`（不再给默认）+ 调用守卫。
+
+**防复发**：3 个回归用例（`tests/test_oof_cache.py`）钉住——名单覆盖、
+文件存在也要拒绝、缺文件时的报错必须指向已验证的那份。全量测试 **95 passed / 22 subtests**。
+
+**⚠️ 对已有结论的影响 —— 逐条核过，都不翻案**：
+
+- 08-19 的多任务 Stage 1 用的基准是 `confirm_3s480`（**未隔离**，19 数组含 checkpoint）。
+  即便按 `_exact` 那次量到的 ±2.4% 给基准整体加误差，实测增益 +0.0256% 也只在
+  **+0.0250% ~ +0.0262%** 之间浮动 ⟹ 离 3% 门槛仍差两个数量级，**结论不动**。
+- P4 扩展窗那一臂当年确实是拿 `_exact` 配对的，08-18 已记「重开训练窗轴前必须现跑基准重测」，
+  本次不改变那条待办。
+
+**顺带修掉的文档漂移**（P6 清理的副作用）：ROADMAP / RUNBOOK 里三处仍按旧文件名警告
+「不要提交 `v3_hybrid_submission_20260813.zip`」，而它已改名为 `.PRE-SLOWFAST.zip`——
+已改写成「改名就是防呆措施本身，不要改回去」。`experiments/lgbm_mt.py` 的 docstring 说
+「数据已经缓存好，不用重扫 17G parquet」，而 `mt_aggregates.npz` 已被清理——
+已注明 `load_or_build` 会自动重建，只是首次要多花一次全扫。
+
 ### 2026-08-19 — `RESULT`：slow/fast 顶点测出来了 —— 当前生产点已在这条线峰值的 99.96%
 
 **接上条的预注册。** 第三点（t=2）已交，公榜 **S2 = 0.0039374211**。

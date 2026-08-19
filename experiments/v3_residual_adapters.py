@@ -24,6 +24,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from src.oof_cache import assert_reproducible_cache
+
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Ridge
 
@@ -32,8 +34,11 @@ from src.metric import scale_invariant_score, weighted_zero_mean_r2
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--oof", default=str(_REPO_ROOT / "outputs" / "cache" /
-                                         "v3_production_oof_phasebal_prodwindow_exact.npz"))
+    # ⚠️ 原默认值是 `v3_production_oof_phasebal_prodwindow_exact.npz`，已按 08-18
+    # INCIDENT 判定为「出自从未入库的脚本版本」并改名封存 ⟹ 这里不再给默认值，
+    # 必须显式指定，避免把毒缓存当配对基准（src.oof_cache.assert_reproducible_cache 会挡）。
+    p.add_argument("--oof", default=None, required=True,
+                   help="生产等效 OOF 缓存路径；必须用当前代码现跑的那份")
     p.add_argument("--output-dir", default=str(_REPO_ROOT / "outputs" / "experiments"))
     p.add_argument("--label", default="v3_residual_adapters")
     p.add_argument("--meta-fold", type=int, default=0)
@@ -139,6 +144,7 @@ def main() -> None:
     if not args.force and (json_path.exists() or md_path.exists()):
         raise SystemExit(f"output exists: {json_path}; use --force to overwrite")
 
+    assert_reproducible_cache(args.oof)
     with np.load(args.oof, allow_pickle=False) as d:
         fold = d["fold"].astype(np.int16)
         valid = fold >= 0
