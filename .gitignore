@@ -86,3 +86,8 @@ strategies/**/model/*.bin
 /outputs/experiments/lgbm_market_row_trial.md
 /outputs/experiments/peer_leadlag_trial.json
 /outputs/experiments/peer_leadlag_trial.md
+
+# Local research smoke outputs and long-running experiment logs
+outputs/logs/
+outputs/experiments/*_smoke.json
+outputs/experiments/*_smoke.md
