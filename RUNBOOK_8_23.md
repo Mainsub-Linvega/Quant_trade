@@ -43,7 +43,7 @@ git diff --stat docs/ examples/ timeseries_api/     # 必须为空或已知变�
 
 ```bash
 .venv/bin/python scripts/audit_data_release.py \
-    --baseline outputs/data_audits/data_release_20260812.json \
+    --baseline outputs/data_audits/data_release_20260818.json \
     --output   outputs/data_audits/data_release_20260823.json
 ```
 
@@ -130,6 +130,20 @@ git diff --stat docs/ examples/ timeseries_api/     # 必须为空或已知变�
 ⚠️ 1% 那档没有牙 —— 1s160/5 折的检出下限实测是基准 peak 的 **6.1%**，
 3s480 是 **8.7%**（`v3_recency_expanding_ladder_1s160.md`）。
 
+## D2.5：full-resolution 只作条件复验
+
+2026-08-19 本地结果已钉死：固定生产 200 特征、短真实窗的 1,182,292-row 双森林 160 轮
+resource smoke 可以在约 11.5GB RSS 完成，但它使用全局生产 stats/features、跳过 Ridge，且明确
+`oof_valid=false`。保持生产真实训练跨度时需要约 5.92m train rows，当前 30GB/无 swap 机器会 OOM。
+
+因此 8/23 后：
+
+- 默认**不在本地**运行正式 full-resolution 多折 OOF；
+- 只有完成 chunked design writer，或准备好 64GB+ CPU 服务器，才运行 `sample_modulo=1`；
+- full-resolution 与 sampled 必须共用相同真实 train/valid 边界；
+- fixed-production smoke 不能进入 D2 候选比较；正式 OOF 必须 fold-local 拟合 stats/选列/history；
+- 若资源条件不满足，跳过本项，不影响扩展数据固定结构重训。
+
 ## D3：V4-R 压缩 market regime 原规格复验
 
 唯一保留「扩展数据复验资格」的 V4 结构项（08-12：+1.34%、4/5 折，机制干净但未过 +3%）。
@@ -138,7 +152,7 @@ git diff --stat docs/ examples/ timeseries_api/     # 必须为空或已知变�
 ## D4：转正门禁全链
 
 ```bash
-.venv/bin/python -m pytest -q                     # 基线 64 passed / 18 subtests
+.venv/bin/python -m pytest -q                     # 基线 73 passed / 18 subtests
 .venv/bin/python scripts/check_consistency.py --strategy v3_hybrid --backend lightgbm
 .venv/bin/python scripts/check_consistency.py --strategy v3_hybrid --backend numpy
 .venv/bin/python scripts/promote_v3_candidate.py --candidate outputs/candidates/<候选>

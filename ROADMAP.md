@@ -1,6 +1,6 @@
 # ROADMAP.md — 当前状态与行动面板
 
-> **状态日期：2026-08-13。** 本文件只描述当前有效状态和未来动作。完整探索过程见
+> **状态日期：2026-08-19。** 本文件只描述当前有效状态和未来动作。完整探索过程见
 > [`NOTES.md`](NOTES.md) 与 [`research_history/`](research_history/README.md)。生产真值以模型产物、
 > promotion manifest 和 [`experiments/ledger.csv`](experiments/ledger.csv) 为准。
 
@@ -8,8 +8,8 @@
 
 - **8/23**：公榜停止更新并等待主办方标签/数据回补；收到更新包后先审计，不先训练。
 - **8/31**：私榜策略文件提交截止；私榜共 10 次机会，至少保留 3 次余量。
-- **当前主目标**：守住已转正的 `v3_hybrid_mkt_shrunk`，完成交付风险闭环；若数据更新真实存在，
-  再按预注册矩阵重训和重标定。
+- **当前主目标**：守住已转正的 `v3_hybrid_slowfast`，完成交付与数据版本验证；8/23 若数据更新
+  真实存在，再按预注册矩阵重训和重标定。
 - **研究原则**：当前结构轴已经带来主要收益，普通容量和轮数旋钮接近耗尽；不再用无边界网格搜索
   追逐小波动。
 
@@ -102,9 +102,20 @@
     慢/快两块后，两块需要差 2.8 倍的 scale（slow 0.2828 / fast 0.7881，对照单一 scale 0.7296）。
     严格 OOF 扩展窗口 **+5.77%**、3/4 折、6/6 预注册门槛全过，第二份 cache 同 K 复现 +5.87%；
     全分辨率口径核对（fold 2/3/4 各 20,000 连续真实 time_id、系数冻结）合并后 **+5.93%**，
-    与 OOF 吻合 ⟹ 采样格口径没有骗人。**未建候选、未改生产**，是否推进由用户决定。
-    机制是 `2ΔA > ΔB`（ΔA +8.07% / ΔB +11.21%），不是纯减方差。
+    与 OOF 吻合 ⟹ 采样格口径没有骗人。该状态已经 `SUPERSEDED`：08-17 公榜 +2.93%，
+    08-18 官方推理路径同分确认并转正，现为生产结构。机制是 `2ΔA > ΔB`
+    （ΔA +8.07% / ΔB +11.21%），不是纯减方差。
     证据：`v3_slow_variance_3s480.md`、`v3_fullres_slow_probe_summary.md`。
+13. **当前数据上的新静态/时序表示没有找到榜首级信号。** 一层 rank/tail、change-rank、lag3/10、
+    multi-horizon change、volatility、trend、market set summary 和 asset panel 均未过门禁；唯一均值略正
+    的 `lag3+lag10` 只有 +0.38%、3/5 折且 drop-best 为负，不升级。
+14. **`phase_id` 只有弱筛选信号，不是候选。** 1s×160 pooled Peak 约 +1.1%，逐折仅 3/5 正；
+    未达到 +3%/4-of-5/drop-best 门槛，不跑 3s×480。`periodic` 与 `phase_balanced` 的现有结果因
+    validation 行组成不同，不能作严格配对裁决；生产继续保持 `phase_balanced`。
+15. **full-resolution 本地资源路径已打通，但正式同跨度 OOF 尚不可运行。** 固定生产 200 特征、
+    1,182,292 train rows、300,000 valid rows 的 160 轮双森林顺序 smoke 完成，max RSS≈11.5GB；
+    它明确标记 `oof_valid=false`。保持生产真实跨度需约 5.92m train rows，现有 30GB/无 swap 机器
+    连续触发 24.8–26.1GB cgroup OOM；正式实验需 chunked design writer 或 64GB+ CPU 服务器。
 
 ## 4. 行动面板
 
@@ -113,7 +124,7 @@
 - **状态**：`AWAITING_USER`（2026-08-18：动作 1–3 全部完成并落盘；只剩动作 4，只能由用户执行）
 - **目标**：确认生产目录可被完整、可审计、在时限内打包和运行。
 - **动作**：
-  1. ✅ 完整 unittest（**64 passed / 18 subtests**）、双后端一致性、全量 runner 都已重跑。
+  1. ✅ 完整 unittest（**73 passed / 18 subtests**）、双后端一致性、全量 runner 都已重跑。
   2. ✅ 记录当前 **`slowfast`**（原文写的 `mkt_shrunk` 已过期）的 model init / predict total /
      wall clock / 最大单步 / 非有限值 —— 见下表，已落盘 JSON。
   3. ✅ **4 核下两条路径都实测完**（此前 ROADMAP 记的 5.15 / 10.44 分钟没有落盘产物、
@@ -165,7 +176,7 @@
 - **目标**：先确认数据和主办方原文是否真的变化，再决定是否重训。
 - **动作顺序**：
   1. 对 `docs/`、`examples/`、`timeseries_api/` 做 Git diff，只读核验主办方变化。
-  2. 用 `scripts/audit_data_release.py` 对比 `outputs/data_audits/data_release_20260812.json`。
+  2. 用 `scripts/audit_data_release.py` 对比 `outputs/data_audits/data_release_20260818.json`。
   3. 若 train split 未变化，停止固定结构重训；不要为了日期变化重跑模型。
   4. 若 train split 变化，先在回补标签上复算历史提交和真实指标，修正本地尺子。
 - **验收条件**：审计 JSON 明确 added/removed/modified；数据 hash 可追溯；任何训练动作都有审计结果
@@ -207,6 +218,22 @@
 - **证据**：`v3_recency_ladder_3s480.md`。⚠️ `w60000_frozen` 臂被中止未产出，
   但 40,000 档两臂一致、60,000 与 40,000 同向，缺它不影响结论。
 
+### P5 — 当前数据验证与 full-resolution 路线
+
+- **状态**：`RESOURCE_SMOKE_PASS / FORMAL_OOF_DEFERRED`（2026-08-19）。
+- **当前数据验证顺序**：
+  1. 完整 unittest（当前基线 **73 passed / 18 subtests**）；
+  2. 用 2026-08-18 audit 做 metadata 对比；8/23 到包后再做完整 hash；
+  3. 重跑 v3 LightGBM/NumPy train-inference consistency；
+  4. 必要时重跑 4 核官方 runner，不因实验代码变化自动替换生产。
+- **full-resolution 已验证**：`v3_fullres_resource_smoke_160.json`，固定生产 200 特征/statistics，
+  跳过 Ridge 和 OOF score，XS/market 顺序训练，160 轮成功、max RSS≈11.5GB。
+- **边界**：该 smoke 的真实训练窗只有 78,960 time_ids，不能用于判断 full-resolution 是否提分；
+  同生产跨度约 394,800 real time_ids / 5.92m rows，本地正式 OOF 暂停。
+- **重新启动条件**：完成真正的 chunked design writer，或把正式 1s×160 OOF 放到 64GB+ CPU
+  服务器；任何 fixed-production smoke 报告必须保留 `oof_valid=false`，不得进入候选排名。
+- **生产决策**：`v3_hybrid_slowfast` 原样保持，不根据 phase/periodic/fullres smoke 改 meta。
+
 ## 5. 已结案项目
 
 | 日期 | 项目 | 结论 | 证据入口 |
@@ -242,6 +269,8 @@
 | 8/8–10 | 验证框架、严格求解器、A/B 分解 | 已形成当前研究判定规则 | `research_history/validation-and-calibration.md` |
 
 完整失败路径和结论翻转见 [`research_history/`](research_history/README.md)，不要从本表反推实验细节。
+
+| 2026-08-19 | **当前数据剩余结构搜索与 full-resolution 资源验证收官**：rank/change/lag/volatility/trend、market set/panel 全未过门禁；phase_id 仅弱 +1.1%、3/5，不升级；periodic 比较因 validation 组成不同不作裁决。修复 disk-backed loader、fixed history 映射和后台 systemd 监控；短跨度 fixed-200 双森林 160 轮 smoke 成功（max RSS≈11.5GB，`oof_valid=false`），同跨度正式 OOF 因 5.92m rows 暂缓。全量测试 73 passed / 18 subtests。 |
 
 ## 6. 更新规则
 

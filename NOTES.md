@@ -180,6 +180,17 @@ market 160 rounds：约30.5s
 **证据**：`outputs/experiments/v3_fullres_resource_smoke_160.json`；systemd journal
 `quant-fullres-resource-smoke-local-160.service`；全量测试 `73 passed / 18 subtests`。
 
+**2026-08-19 当前数据验证顺序（冻结）**：
+
+1. `pytest -q`，必须维持 73 passed / 18 subtests；
+2. 用 `data_release_20260818.json` 做快速 metadata audit，8/23 新包再做完整 hash；
+3. 生产 v3 分别重跑 LightGBM/NumPy consistency，门槛 `max|Δ| < 1e-6`；
+4. 仅在生产/推理代码或模型身份发生变化时重跑全量 4 核 runner；实验脚本变化不触发生产替换；
+5. phase_id 只保留为弱筛选结果（pooled 约 +1.1%、3/5），不做 3s×480；
+6. periodic 与 phase-balanced 当前 validation 行组成不同，禁止用 pooled 分数排序；
+7. 本地不再硬跑 5.92m-row 同跨度 full-resolution OOF。正式复验需 chunked writer 或 64GB+ CPU
+   服务器；任何 fixed-production 资源报告必须写 `oof_valid=false`。
+
 ### 2026-08-19 — `REJECTED`：剩余一层时序变化、截面秩和保留资产身份的 market panel
 
 **问题**：二层修正失败后，把这些表示直接放进与 baseline history 共同训练的一层 XS 森林，或让
