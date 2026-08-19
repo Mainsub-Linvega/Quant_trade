@@ -14,14 +14,22 @@ from __future__ import annotations
 
 import numpy as np
 
+try:
+    from strategies.v3_hybrid.interactions import resolve_interaction_contract
+except ImportError:  # Submission package imports this module by its short name.
+    from interactions import resolve_interaction_contract
+
 
 _ROBUST_STAT_NAMES = ("lower", "upper", "center", "scale")
 
 
-def resolve_feature_contract(meta: dict[str, object]) -> dict[str, list[object]]:
+def resolve_feature_contract(
+    meta: dict[str, object],
+    ridge_features: list[str] | None = None,
+) -> dict[str, object]:
     """Resolve separate XS/market feature metadata with an old-model fallback."""
     xs_features = list(meta["lgbm_features"])
-    contract: dict[str, list[object]] = {"xs_features": xs_features}
+    contract: dict[str, object] = {"xs_features": xs_features}
     for name in _ROBUST_STAT_NAMES:
         values = list(meta[name])
         if len(values) != len(xs_features):
@@ -43,6 +51,18 @@ def resolve_feature_contract(meta: dict[str, object]) -> dict[str, list[object]]
         if len(values) != len(market_features):
             raise ValueError(f"market_{name} length does not match market_features")
         contract[f"market_{name}"] = values
+    interaction_contract = resolve_interaction_contract(
+        meta,
+        direct_features={
+            "ridge": list(ridge_features or meta.get("ridge_features", [])),
+            "xs": list(contract["xs_features"]),
+            "market": list(contract["market_features"]),
+        },
+    )
+    contract["interaction_schema_version"] = interaction_contract["schema_version"]
+    contract["interactions"] = interaction_contract["definitions"]
+    contract["interaction_source_columns"] = interaction_contract["source_columns"]
+    contract["interaction_source_stats"] = interaction_contract["source_stats"]
     return contract
 
 
