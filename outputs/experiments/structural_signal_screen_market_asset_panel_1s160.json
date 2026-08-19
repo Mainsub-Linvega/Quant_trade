@@ -1,0 +1,266 @@
+{
+  "experiment": "structural_signal_screen",
+  "question": "Do set-level market state, cross-sectional order statistics, or residual-directed selection add a new production-orthogonal signal?",
+  "cache": {
+    "path": "/home/mainsub/Documents/Quant_trade/outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+    "sha256": "310272cccc7f74285e0246a5191d5c90982e5feb19c92a3958f85b47a60f4e7d"
+  },
+  "config": {
+    "arms": [
+      "market_asset_panel"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "iterations": 160,
+    "seed": 2026,
+    "market_top_k": 20,
+    "xs_top_k": 32,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced"
+  },
+  "screening_rule": "1 seed / 160 rounds; mean positive, >=4/5 positive, drop-best positive, >=2%, 2dA>dB. Passing arms require 3x480 confirmation and paired bootstrap before promotion.",
+  "summaries": {
+    "market_asset_panel": {
+      "mean_delta": -0.00011610750526948878,
+      "relative": -0.07236648568864001,
+      "positive_folds": 2,
+      "n_folds": 5,
+      "drop_best_delta": -0.0002160357338739412,
+      "relative_delta_A": 0.16877368546986626,
+      "relative_delta_B": 0.49438310952219994,
+      "per_fold_delta": [
+        -0.000254384926569151,
+        0.00028360540914832083,
+        0.00014840781457060447,
+        -0.00021645029005923377,
+        -0.0005417155334379844
+      ],
+      "checks": {
+        "mean_delta_positive": false,
+        "at_least_4_of_5_positive": false,
+        "drop_best_positive": false,
+        "relative_gain_at_least_2pct": false,
+        "two_delta_A_exceeds_delta_B": false
+      },
+      "pass_screen": false
+    }
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "baseline": {
+        "A": 0.0018879248756720239,
+        "B": 0.0033753904369107886,
+        "peak": 0.001055954978483406,
+        "optimal_scale": 0.5593204433558456
+      },
+      "arms": {
+        "market_asset_panel": {
+          "metric": {
+            "A": 0.001955115041116443,
+            "B": 0.004768734578931905,
+            "peak": 0.000801570051914255,
+            "optimal_scale": 0.4099861312797885
+          },
+          "selected_features": [
+            "feature_286",
+            "feature_284",
+            "feature_050",
+            "feature_151",
+            "feature_042",
+            "feature_144",
+            "feature_047",
+            "feature_287",
+            "feature_148",
+            "feature_045",
+            "feature_127",
+            "feature_157",
+            "feature_228",
+            "feature_015",
+            "feature_135",
+            "feature_311",
+            "feature_205",
+            "feature_039",
+            "feature_305",
+            "feature_308"
+          ],
+          "elapsed_seconds": 5.9266367410000385
+        }
+      }
+    },
+    {
+      "fold": 1,
+      "baseline": {
+        "A": 0.002387792000850556,
+        "B": 0.0028403212085253,
+        "peak": 0.0020073612175315046,
+        "optimal_scale": 0.8406767494055019
+      },
+      "arms": {
+        "market_asset_panel": {
+          "metric": {
+            "A": 0.0031232852132431414,
+            "B": 0.004257988924701414,
+            "peak": 0.0022909666266798254,
+            "optimal_scale": 0.7335118217720957
+          },
+          "selected_features": [
+            "feature_286",
+            "feature_284",
+            "feature_151",
+            "feature_050",
+            "feature_148",
+            "feature_157",
+            "feature_144",
+            "feature_042",
+            "feature_127",
+            "feature_205",
+            "feature_228",
+            "feature_039",
+            "feature_287",
+            "feature_090",
+            "feature_135",
+            "feature_311",
+            "feature_096",
+            "feature_129",
+            "feature_045",
+            "feature_014"
+          ],
+          "elapsed_seconds": 6.171376483000131
+        }
+      }
+    },
+    {
+      "fold": 2,
+      "baseline": {
+        "A": 0.0021507770373572085,
+        "B": 0.0028544186481272516,
+        "peak": 0.0016205898414579122,
+        "optimal_scale": 0.7534903959404505
+      },
+      "arms": {
+        "market_asset_panel": {
+          "metric": {
+            "A": 0.0028420968362536277,
+            "B": 0.004566153267142977,
+            "peak": 0.0017689976560285167,
+            "optimal_scale": 0.6224269467047294
+          },
+          "selected_features": [
+            "feature_286",
+            "feature_284",
+            "feature_148",
+            "feature_157",
+            "feature_151",
+            "feature_205",
+            "feature_050",
+            "feature_206",
+            "feature_127",
+            "feature_144",
+            "feature_042",
+            "feature_095",
+            "feature_228",
+            "feature_039",
+            "feature_098",
+            "feature_090",
+            "feature_268",
+            "feature_005",
+            "feature_318",
+            "feature_213"
+          ],
+          "elapsed_seconds": 6.0812743490000685
+        }
+      }
+    },
+    {
+      "fold": 3,
+      "baseline": {
+        "A": 0.002062807725218357,
+        "B": 0.002729198285326607,
+        "peak": 0.0015591302889563811,
+        "optimal_scale": 0.7558291884869398
+      },
+      "arms": {
+        "market_asset_panel": {
+          "metric": {
+            "A": 0.0023790210339432625,
+            "B": 0.004215256862836474,
+            "peak": 0.0013426799988971473,
+            "optimal_scale": 0.5643834080237767
+          },
+          "selected_features": [
+            "feature_286",
+            "feature_284",
+            "feature_148",
+            "feature_157",
+            "feature_151",
+            "feature_050",
+            "feature_039",
+            "feature_098",
+            "feature_127",
+            "feature_228",
+            "feature_205",
+            "feature_042",
+            "feature_250",
+            "feature_144",
+            "feature_311",
+            "feature_096",
+            "feature_187",
+            "feature_129",
+            "feature_005",
+            "feature_135"
+          ],
+          "elapsed_seconds": 6.125159550999797
+        }
+      }
+    },
+    {
+      "fold": 4,
+      "baseline": {
+        "A": 0.002200894559023579,
+        "B": 0.002722610971371125,
+        "peak": 0.001779151303977944,
+        "optimal_scale": 0.8083764379731394
+      },
+      "arms": {
+        "market_asset_panel": {
+          "metric": {
+            "A": 0.002194901884318207,
+            "B": 0.0038932075477997874,
+            "peak": 0.0012374357705399596,
+            "optimal_scale": 0.5637772601048812
+          },
+          "selected_features": [
+            "feature_286",
+            "feature_284",
+            "feature_148",
+            "feature_157",
+            "feature_050",
+            "feature_151",
+            "feature_039",
+            "feature_228",
+            "feature_206",
+            "feature_098",
+            "feature_205",
+            "feature_127",
+            "feature_042",
+            "feature_311",
+            "feature_144",
+            "feature_135",
+            "feature_250",
+            "feature_318",
+            "feature_005",
+            "feature_268"
+          ],
+          "elapsed_seconds": 6.185522069999934
+        }
+      }
+    }
+  ],
+  "elapsed_seconds": 41.305335471000035
+}

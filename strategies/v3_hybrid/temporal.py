@@ -13,13 +13,20 @@ BASELINE_KEYS = ("lag1", "difference", "mean5", "deviation5")
 T1_EXTRA_KEYS = ("lag2", "lag5")
 T2_EXTRA_KEYS = ("ema3", "ema10", "std5", "std20", "slope5", "slope20")
 T3_EXTRA_KEYS = (*T1_EXTRA_KEYS, *T2_EXTRA_KEYS, "observation_gap")
+# Family-isolated arms: unlike t2/t3, each asks one mechanism question.
+F_LAG_KEYS = ("lag3", "lag10")
+F_CHANGE_KEYS = ("delta3", "delta5", "delta10", "acceleration1")
+F_VOLATILITY_KEYS = ("std5", "std20")
+F_TREND_KEYS = ("slope5", "slope20")
 # T5：`deviation5` 的**波动归一化**版本。baseline 已有未归一化的 deviation5，
 # t2_state 已有裸 std5 —— 但两者的比值从没被测过，而 residual atlas 显示
 # market_vol_quartile 桶间 model-vs-market delta 相差 4 倍。
 T5_EXTRA_KEYS = ("zscore5",)
 REGIME_KEYS = ("regime_current", "regime_lag1", "regime_difference")
-ARMS = ("baseline", "t1_lags", "t2_state", "t3_full", "t4_regime", "t5_zscore")
-ALL_ASSET_KEYS = (*BASELINE_KEYS, *T1_EXTRA_KEYS, *T2_EXTRA_KEYS, *T5_EXTRA_KEYS)
+ARMS = ("baseline", "t1_lags", "t2_state", "t3_full", "t4_regime", "t5_zscore",
+        "f_lags", "f_changes", "f_volatility", "f_trend")
+ALL_ASSET_KEYS = tuple(dict.fromkeys((*BASELINE_KEYS, *T1_EXTRA_KEYS, *T2_EXTRA_KEYS,
+                                     *T5_EXTRA_KEYS, *F_LAG_KEYS, *F_CHANGE_KEYS)))
 
 # std5 的下限。特征已过 robust transform（尺度约为 1），1e-3 只挡住真正恒定的历史，
 # 避免除以接近 0 的标准差把 z-score 炸开。
@@ -96,9 +103,17 @@ class MultiScaleAssetHistory:
                 out["lag1"][row] = history[-1]
             if count >= 2:
                 out["lag2"][row] = history[-2]
+            if count >= 3:
+                out["lag3"][row] = history[-3]
             if count >= 5:
                 out["lag5"][row] = history[-5]
+            if count >= 10:
+                out["lag10"][row] = history[-10]
             out["difference"][row] = value - out["lag1"][row]
+            out["delta3"][row] = value - out["lag3"][row]
+            out["delta5"][row] = value - out["lag5"][row]
+            out["delta10"][row] = value - out["lag10"][row]
+            out["acceleration1"][row] = value - 2.0 * out["lag1"][row] + out["lag2"][row]
 
             mean5, std5, slope5 = self._mean_std_slope(history, 5, width)
             _, std20, slope20 = self._mean_std_slope(history, 20, width)
@@ -172,10 +187,14 @@ def temporal_atoms_from_lags(current: np.ndarray, lags: np.ndarray, counts: np.n
     if window < 20 or current.shape != (n, width):
         raise ValueError("lags 至少需要 20 期且 current/lag 形状必须一致")
     atoms = {key: np.zeros((n, width), dtype=np.float32) for key in ALL_ASSET_KEYS}
-    for key, index in (("lag1", 0), ("lag2", 1), ("lag5", 4)):
+    for key, index in (("lag1", 0), ("lag2", 1), ("lag3", 2), ("lag5", 4), ("lag10", 9)):
         valid = counts > index
         atoms[key][valid] = lags[valid, index]
     atoms["difference"] = current - atoms["lag1"]
+    atoms["delta3"] = current - atoms["lag3"]
+    atoms["delta5"] = current - atoms["lag5"]
+    atoms["delta10"] = current - atoms["lag10"]
+    atoms["acceleration1"] = current - 2.0 * atoms["lag1"] + atoms["lag2"]
 
     def statistics(max_count: int):
         means = np.zeros((n, width), dtype=np.float32)
@@ -235,6 +254,14 @@ def temporal_arm_blocks(atoms: dict[str, np.ndarray], arm: str) -> tuple[np.ndar
         keys.extend(REGIME_KEYS)
     elif arm == "t5_zscore":
         keys.extend(T5_EXTRA_KEYS)
+    elif arm == "f_lags":
+        keys.extend(F_LAG_KEYS)
+    elif arm == "f_changes":
+        keys.extend(F_CHANGE_KEYS)
+    elif arm == "f_volatility":
+        keys.extend(F_VOLATILITY_KEYS)
+    elif arm == "f_trend":
+        keys.extend(F_TREND_KEYS)
     return tuple(atoms[key] for key in keys)
 
 

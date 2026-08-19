@@ -1,0 +1,60 @@
+{
+  "source": "outputs/experiments/v3_production_oof_confirm_3s480_phasebal_prodwindow.json",
+  "folds": [
+    {
+      "fold": 0,
+      "train_time_range": [
+        0,
+        394896
+      ],
+      "valid_time_range": [
+        394932,
+        493655
+      ]
+    },
+    {
+      "fold": 1,
+      "train_time_range": [
+        98696,
+        493628
+      ],
+      "valid_time_range": [
+        493664,
+        592350
+      ]
+    },
+    {
+      "fold": 2,
+      "train_time_range": [
+        197391,
+        592323
+      ],
+      "valid_time_range": [
+        592355,
+        691046
+      ]
+    },
+    {
+      "fold": 3,
+      "train_time_range": [
+        296087,
+        691019
+      ],
+      "valid_time_range": [
+        691050,
+        789773
+      ]
+    },
+    {
+      "fold": 4,
+      "train_time_range": [
+        394882,
+        789741
+      ],
+      "valid_time_range": [
+        789778,
+        888478
+      ]
+    }
+  ]
+}

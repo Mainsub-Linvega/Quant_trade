@@ -145,6 +145,178 @@ def load_rows(data_root: Path, sample_modulo: int, sampling: str) -> dict[str, n
     return {k: np.concatenate(v) for k, v in parts.items()}
 
 
+class DiskFeatureSubset:
+    """Lazy column subset over a full-schema memmap; avoids a 10GB eager copy."""
+
+    def __init__(self, base: np.memmap, columns: np.ndarray):
+        self.base = base
+        self.columns = np.asarray(columns, dtype=np.int64)
+        self.shape = (base.shape[0], len(self.columns))
+        self.dtype = np.dtype(np.float32)
+
+    def __len__(self) -> int:
+        return self.shape[0]
+
+    def __getitem__(self, key):
+        if isinstance(key, tuple):
+            rows, cols = key
+            if cols != slice(None):
+                raise IndexError("DiskFeatureSubset only supports all logical columns")
+        else:
+            rows = key
+        if isinstance(rows, slice):
+            return np.asarray(self.base[rows][:, self.columns], dtype=np.float32)
+        if np.isscalar(rows):
+            return np.asarray(self.base[int(rows), self.columns], dtype=np.float32)
+        row_index = np.asarray(rows)
+        if row_index.dtype == bool:
+            row_index = np.flatnonzero(row_index)
+        row_index = row_index.astype(np.int64, copy=False).reshape(-1)
+        # Avoid NumPy's paired advanced-index semantics and bound temporary size.
+        out = np.empty((len(row_index), len(self.columns)), dtype=np.float32)
+        chunk = 50_000
+        for start in range(0, len(row_index), chunk):
+            stop = min(start + chunk, len(row_index))
+            out[start:stop] = self.base[row_index[start:stop]][:, self.columns]
+        return out
+
+
+def load_rows_disk_backed(data_root: Path, sample_modulo: int, sampling: str,
+                          cache_dir: Path, *, force: bool = False,
+                          feature_indices: np.ndarray | None = None) -> dict[str, np.ndarray]:
+    """Load sampled rows into disk-backed memmaps instead of Python list/concatenate.
+
+    Full-resolution v3 training has ~13.2m rows × 323 float32 features.  The old
+    list-of-batches loader temporarily held the Python parts, the concatenated array,
+    pandas batch objects and fold copies at once, which can exceed a 30GB machine.
+    This loader performs a cheap row-count pass, allocates fixed memmaps, then fills
+    them in one streaming pass.  The returned arrays have the same keys/order as
+    ``load_rows`` and are safe to slice normally.
+    """
+    import json
+
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = cache_dir / "meta.json"
+    names = ("features", "target", "weight", "time_id", "asset_id")
+    selected = (np.arange(len(FEATURE_COLUMNS), dtype=np.int64) if feature_indices is None
+               else np.asarray(feature_indices, dtype=np.int64))
+    if selected.ndim != 1 or len(selected) == 0 or np.any(selected < 0) or np.any(selected >= len(FEATURE_COLUMNS)):
+        raise ValueError("feature_indices must be a non-empty in-range 1D array")
+    if len(np.unique(selected)) != len(selected):
+        raise ValueError("feature_indices must be unique")
+    feature_names = [FEATURE_COLUMNS[int(i)] for i in selected]
+    meta = {"data_root": str(Path(data_root).resolve()), "sample_modulo": int(sample_modulo),
+            "sampling": str(sampling), "feature_count": len(feature_names),
+            "feature_indices": selected.tolist()}
+    paths = train_files(data_root)
+    if not paths:
+        raise SystemExit("no train parquet files")
+
+    reuse_full_schema = False
+    if meta_path.exists() and not force:
+        existing = json.loads(meta_path.read_text(encoding="utf-8"))
+        compatible = all(existing.get(k) == v for k, v in meta.items())
+        existing_count = int(existing.get("feature_count", len(FEATURE_COLUMNS)))
+        reuse_full_schema = (existing_count == len(FEATURE_COLUMNS)
+                             and len(selected) < existing_count
+                             and existing.get("data_root") == meta["data_root"]
+                             and int(existing.get("sample_modulo", -1)) == int(sample_modulo)
+                             and existing.get("sampling") == sampling)
+        if compatible or reuse_full_schema:
+            rows = int(existing["rows"])
+        else:
+            raise SystemExit(f"disk cache metadata mismatch: {meta_path}; pass --force to rebuild")
+    else:
+        rows = 0
+        for path in paths:
+            count = 0
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=250_000, columns=["time_id"]):
+                tid = batch.column(0).to_numpy(zero_copy_only=False)
+                count += int(time_sample_mask(tid, sample_modulo, sampling=sampling).sum())
+            rows += count
+            print(f"  count {path.name}: {count:,} rows", flush=True)
+        if rows <= 0:
+            raise SystemExit("disk-backed sample is empty")
+
+    paths_map = {
+        "features": cache_dir / "features.f32",
+        "target": cache_dir / "target.f64",
+        "weight": cache_dir / "weight.f64",
+        "time_id": cache_dir / "time_id.i64",
+        "asset_id": cache_dir / "asset_id.i64",
+    }
+    # Reuse a previously built full-schema cache for a fixed production subset.
+    # The old cache predates feature_indices metadata, so feature_count is the
+    # compatibility signal. The subset is gathered per fold/slice, never eagerly.
+    if reuse_full_schema:
+        existing = json.loads(meta_path.read_text(encoding="utf-8"))
+        existing_count = int(existing.get("feature_count", len(FEATURE_COLUMNS)))
+        if existing_count == len(FEATURE_COLUMNS) and len(selected) < existing_count:
+            rows = int(existing["rows"])
+            full = np.memmap(paths_map["features"], dtype=np.float32, mode="r",
+                             shape=(rows, existing_count))
+            arrays = {"features": DiskFeatureSubset(full, selected),
+                      "target": np.memmap(paths_map["target"], dtype=np.float64, mode="r", shape=(rows,)),
+                      "weight": np.memmap(paths_map["weight"], dtype=np.float64, mode="r", shape=(rows,)),
+                      "time_id": np.memmap(paths_map["time_id"], dtype=np.int64, mode="r", shape=(rows,)),
+                      "asset_id": np.memmap(paths_map["asset_id"], dtype=np.int64, mode="r", shape=(rows,))}
+            return arrays
+    mode = "w+" if force or not meta_path.exists() else "r+"
+    shapes = {"features": (rows, len(feature_names)), "target": (rows,), "weight": (rows,),
+              "time_id": (rows,), "asset_id": (rows,)}
+    dtypes = {"features": np.float32, "target": np.float64, "weight": np.float64,
+              "time_id": np.int64, "asset_id": np.int64}
+    arrays = {name: np.memmap(path, dtype=dtypes[name], mode=mode, shape=shapes[name])
+              for name, path in paths_map.items()}
+    if mode == "w+" or not meta_path.exists():
+        cursor = 0
+        columns = ["time_id", "asset_id", "weight", *feature_names, "target"]
+        for path in paths:
+            kept, started = 0, time.perf_counter()
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=120_000, columns=columns):
+                frame = batch.to_pandas()
+                mask = time_sample_mask(frame["time_id"].to_numpy(copy=False),
+                                        sample_modulo, sampling=sampling)
+                if not mask.any():
+                    continue
+                stop = cursor + int(mask.sum())
+                arrays["features"][cursor:stop] = frame.loc[mask, feature_names].to_numpy(
+                    dtype=np.float32, copy=True)
+                arrays["target"][cursor:stop] = frame.loc[mask, "target"].to_numpy(
+                    dtype=np.float64, copy=True)
+                arrays["weight"][cursor:stop] = frame.loc[mask, "weight"].to_numpy(
+                    dtype=np.float64, copy=True)
+                arrays["time_id"][cursor:stop] = frame.loc[mask, "time_id"].to_numpy(
+                    dtype=np.int64, copy=True)
+                arrays["asset_id"][cursor:stop] = frame.loc[mask, "asset_id"].to_numpy(
+                    dtype=np.int64, copy=True)
+                cursor = stop; kept += int(mask.sum())
+            print(f"  fill {path.name}: {kept:,} rows ({time.perf_counter()-started:.0f}s)", flush=True)
+        if cursor != rows:
+            raise RuntimeError(f"disk cache fill {cursor:,} != counted {rows:,}")
+        for value in arrays.values():
+            value.flush()
+            # Do not keep the entire freshly-filled 17GB feature file resident in
+            # the cgroup page cache before fold training starts. It will be faulted
+            # back in only for the current fold slices.
+            try:
+                import mmap
+                value._mmap.madvise(mmap.MADV_DONTNEED)
+            except (AttributeError, OSError):
+                pass
+        meta.update({"rows": rows, "files": {k: str(v) for k, v in paths_map.items()}})
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    else:
+        for value in arrays.values():
+            try:
+                import mmap
+                value._mmap.madvise(mmap.MADV_DONTNEED)
+            except (AttributeError, OSError):
+                pass
+    return arrays
+
+
 def cross_sectional_target(target: np.ndarray, weight: np.ndarray,
                            time_id: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """e_it = y_it − m_t，m_t = Σᵢwᵢyᵢ/Σᵢwᵢ。返回 (e, 每个 time_id 的行数)。"""

@@ -146,6 +146,123 @@ IC    = sqrt(peak)
 
 ## 5. 近期研究日志
 
+### 2026-08-19 — `RESULT/INFRA`：本地 full-resolution 资源验证通过，但同真实时间跨度正式 OOF 不适合当前 30GB 机器
+
+**问题**：继续测试 full-resolution training 是否可在本地安全执行；此前三次任务分别在约 26.1GB、
+25.1GB、24.8GB 峰值被 OOM killer 终止。
+
+**根因**：同一 fold 同时存在 full-resolution 特征/page cache、train/valid copies、Ridge/XS/market
+设计矩阵、history blocks、LightGBM Dataset 和全量 OOF arrays；而保持生产真实训练跨度时，
+modulo-1 fold 训练区间约 **394,800 real time_ids / 5.92m rows**，不是 sampled 版本的 1.18m rows。
+
+**修复**：
+- fixed production 200-feature 模式修复 history position 到原始 feature name 的映射；
+- `DiskFeatureSubset` 支持 slice/int-array/bool mask，避免 NumPy 配对高级索引；
+- 新增 `experiments/v3_fullres_resource_smoke.py`：固定生产 200 特征/statistics，跳过 Ridge、
+  OOF arrays、checkpoint，只顺序训练 XS 和 market；
+- full-resolution cache 使用 disk-backed memmap；LightGBM smoke 使用 col-wise、有限线程和 systemd 内存上限；
+- 长任务全部移出当前会话，由 systemd service + journal/log 监控。
+
+**本地结果**：短跨度 resource smoke（保持 78,960 real train time_ids，20,000 valid time_ids）
+在 **1,182,292 train rows / 300,000 valid rows** 上完成：
+
+```text
+20 rounds：status=ok，max RSS≈11.5GB
+160 rounds：status=ok，max RSS≈11.5GB
+XS 160 rounds：约43.8s
+market 160 rounds：约30.5s
+```
+
+该结果证明固定 200 特征的顺序训练路径安全，但**不是 full-resolution 同真实时间跨度的 OOF 分数**；
+同真实跨度需要约 5.92m train rows，当前实现仍需进一步改成 chunked design writer，或转到 64GB+
+云服务器。生产模型未修改。
+
+**证据**：`outputs/experiments/v3_fullres_resource_smoke_160.json`；systemd journal
+`quant-fullres-resource-smoke-local-160.service`；全量测试 `73 passed / 18 subtests`。
+
+### 2026-08-19 — `REJECTED`：剩余一层时序变化、截面秩和保留资产身份的 market panel
+
+**问题**：二层修正失败后，把这些表示直接放进与 baseline history 共同训练的一层 XS 森林，或让
+market 模型直接看到固定 `asset × feature` 面板，能否找到榜首级的新信号？
+
+**实现与因果口径**：扩展 `strategies/v3_hybrid/temporal.py` 与
+`experiments/temporal_multiscale.py`。原始 lag cache 仍逐行读取**全分辨率真实时间流**后才抽
+modulo-5 行；每折使用自己的 robust transform。新增隔离臂：
+
+- `x1_rank`：当前 history40 的 percentile rank / median-MAD z / tail；
+- `f_lags`：lag3 + lag10；
+- `f_changes`：delta3/5/10 + 一阶 acceleration；
+- `f_volatility`：std5 + std20；
+- `f_trend`：slope5 + slope20；
+- `x2_change_rank`：`current-lag1` 的截面 rank / robust z / tail；
+- `market_asset_panel`：按匿名 asset_id 固定展开的当前 panel、lag1 panel、delta panel和 presence，
+  直接预测 market target，允许树学习跨资产交互。
+
+**固定设计**：`modulo5 / phase_balanced / train_window=78,960 / embargo=6 / 5 folds /
+1 seed × 160 rounds`。所有 XS 臂保留完整生产 baseline history；market panel 只替换 market，XS 固定。
+
+**结果**：
+
+| arm | Peak 相对 | 正折 | 去最好折 | 判定 |
+|---|---:|---:|---:|:---:|
+| `x1_rank` | −2.53% | 1/5 | 负 | ❌ |
+| `f_lags` | **+0.38%** | 3/5 | 负 | ❌ |
+| `f_changes` | −0.34% | 3/5 | 负 | ❌ |
+| `f_volatility` | −0.56% | 2/5 | 负 | ❌ |
+| `f_trend` | −1.64% | 2/5 | 负 | ❌ |
+| `x2_change_rank` | −1.55% | 2/5 | 负 | ❌ |
+| `market_asset_panel` | −7.24% | 2/5 | 负 | ❌ |
+
+`market_asset_panel` 的 ΔA +16.88%，但 ΔB +49.44%，与手工 set summary 同样是预测方差膨胀。
+`f_lags` 是唯一均值略正的臂，但效应只有 +0.38%、3/5，同号和 drop-best 都失败，远低于 3%
+门槛和本实验检出能力；不得升级 3×480 或围绕 lag 长度做网格。
+
+**Responder 决策**：没有重新启动。仓库已经存在比计划中的“强模型终审”更完整的证据：
+`responder_nonlinear_reaudit_phasebal_prodwindow` 用 323 特征严格 OOF + 冻结非线性二层为
+−11.70%/−17.03%；`responder_vs_v3_nonlinear_audit` 对强 v3 控制后的 responder 增量为
+−7.76% 或 −6.77%；`horizon_auxiliary_cache_probe` 的 responder_00/02 也无通过臂。重复训练不会
+回答新问题。
+
+**决策**：当前数据上关闭这些规格。重新开放条件只有 8/23 回补数据按原规格复验，或出现真正
+不同的模型族；不允许继续调 top-k、lag 长度、树轮数或容量。
+
+**证据**：`temporal_change_families_1s160.{json,md}`、`temporal_change_rank_1s160.{json,md}`、
+`structural_signal_screen_market_asset_panel_1s160.{json,md}`。
+
+### 2026-08-18 — `RESULT/REJECTED`：集合级 market 分布摘要未打赢生产 market
+
+**问题**：榜首差距是否来自当前逐行市场森林看不到的完整截面分布；直接用每个 `time_id` 的
+mean/std/分位数/正值比例及其 lag、delta、|delta| 预测市场 target，能否替换生产 market 块？
+
+**基础设施**：新增 `src/oof_cache.py`，统一验证 OOF schema、逐 `time_id` fold 完整性、
+validation 有限值、报告/cache 身份和 sha256。新增 `experiments/structural_signal_screen.py`，固定复用
+当前 3 seeds × 480 rounds 生产等效 OOF，支持 `market_set`、`xs_rank`、
+`xs_residual_select` 三个严格折内筛选臂；不生成 CSV、不修改生产。
+
+**设计**：`modulo5 / phase_balanced / train_window=78,960 / embargo=6 / 5 folds`；每折只在训练段
+按 feature 截面均值与 market target 的相关性选 top-20，构造集合摘要并训练 1 seed × 160 rounds
+强正则 LightGBM。验证时只替换现有 `market`，XS 与其他生产组件固定。
+
+**结果**：折均 Peak 相对生产基准 **−16.02%**，**0/5** 折为正，去最好折仍为负；
+ΔA +10.15%，但 ΔB +44.61%，明显违反 `2ΔA>ΔB`。
+
+**解释**：集合摘要确实提高了与 target 的协方差，但预测方差膨胀更快；当前手工分布摘要丢失了
+逐资产结构，不能替代现有 row-level market 森林。这不是轮数不足的边界失败，而是五折一致的结构失败。
+
+**决策**：`market_set` 当前规格 `REJECTED`，不跑 3×480、不做参数网格。重新开放条件仅限：
+使用保留资产身份的 permutation-invariant/set 模型，或 8/23 回补数据后按完全相同规格复验；
+不得只调整 leaves、轮数或 top-k。
+
+同一套 harness 随后完成两个严格增量 XS 臂：只用每折训练窗内**更早的严格 OOF 行**拟合
+生产残差修正，fold 0 因没有更早 OOF 明确置为 no-op。`xs_rank`（percentile rank / robust z / tail）
+为 **−4.64%、1/5** 正折；`xs_residual_select`（按生产残差重新选 top-32 raw deviation）为
+**−3.74%、0/5** 正折；两者都是 ΔA 小涨但 ΔB 涨得更多。⟹ 这两种低容量二层修正当前规格也
+`REJECTED`，不升级 3×480。重新开放仅限把 rank/tail 直接并入一层生产森林、由完整训练行共同学习；
+不得调整二层轮数或 top-k 网格。
+
+**证据**：`outputs/experiments/structural_signal_screen_market_set_1s160.{json,md}`、
+`structural_signal_screen_xs_1s160.{json,md}`；全量测试 `71 passed / 18 subtests`。
+
 ### 2026-08-18 — `REJECTED`：拆掉树前面的线性选列筛子 —— 截面块变差、市场块测不出
 
 **问题**：生产在 **LightGBM 前面**叠了线性单变量筛子（`strategies/v3_hybrid/train.py:329/346`）：

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
+from experiments.temporal_multiscale import cross_sectional_rank_block
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "strategies" / "v3_hybrid"))
 
@@ -36,7 +38,9 @@ class TemporalHistoryTest(unittest.TestCase):
         got = history.transform(current, np.array([0, 0, 0]), np.array([10, 12, 17]))
         np.testing.assert_array_equal(got["lag1"][:, 0], [0.0, 1.0, 3.0])
         np.testing.assert_array_equal(got["lag2"][:, 0], [0.0, 0.0, 1.0])
+        np.testing.assert_array_equal(got["lag3"][:, 0], [0.0, 0.0, 0.0])
         np.testing.assert_array_equal(got["difference"][:, 0], [1.0, 2.0, 5.0])
+        np.testing.assert_array_equal(got["acceleration1"][:, 0], [1.0, 1.0, 3.0])
         np.testing.assert_array_equal(got["observation_gap"][:, 0], [0.0, 2.0, 5.0])
         self.assertEqual(float(got["ema3"][0, 0]), 0.0)
         self.assertEqual(float(got["ema3"][1, 0]), 1.0)
@@ -52,10 +56,12 @@ class TemporalHistoryTest(unittest.TestCase):
 
     def test_arm_widths_and_prefix(self) -> None:
         expected = {"baseline": 16, "t1_lags": 24, "t2_state": 40, "t3_full": 49,
-                    "t4_regime": 76, "t5_zscore": 20}
+                    "t4_regime": 76, "t5_zscore": 20, "f_lags": 24,
+                    "f_changes": 32, "f_volatility": 24, "f_trend": 24}
         atoms = {key: np.zeros((2, (1 if key == "observation_gap" else
                                       20 if key.startswith("regime_") else 4)), np.float32)
-                 for key in ("lag1", "difference", "mean5", "deviation5", "lag2", "lag5",
+                 for key in ("lag1", "difference", "mean5", "deviation5", "lag2", "lag3",
+                             "lag5", "lag10", "delta3", "delta5", "delta10", "acceleration1",
                              "ema3", "ema10", "std5", "std20", "slope5", "slope20",
                              "zscore5", "observation_gap", "regime_current", "regime_lag1",
                              "regime_difference")}
@@ -95,6 +101,19 @@ class TemporalHistoryTest(unittest.TestCase):
         for key in parts:
             np.testing.assert_array_equal(offline[key], np.concatenate(parts[key]))
         self.assertEqual(offline["regime_current"].shape[1], 20)
+
+
+    def test_change_rank_block_is_shift_invariant_and_prefix_causal(self) -> None:
+        time_ids = np.repeat(np.arange(3), 3)
+        values = np.array([[1., 5.], [3., 2.], [2., 4.],
+                           [8., 1.], [7., 3.], [9., 2.],
+                           [0., 9.], [2., 7.], [1., 8.]], dtype=np.float32)
+        prefix = cross_sectional_rank_block(values[:6], time_ids[:6])
+        full = cross_sectional_rank_block(values, time_ids)
+        shifted = cross_sectional_rank_block(values + np.array([[100., -20.]], np.float32), time_ids)
+        np.testing.assert_array_equal(prefix, full[:6])
+        np.testing.assert_allclose(full, shifted)
+        np.testing.assert_allclose(full[:3, :2].mean(axis=0), 0.0)
 
     def test_non_increasing_asset_time_rejected(self) -> None:
         history = MultiScaleAssetHistory(1)

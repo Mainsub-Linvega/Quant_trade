@@ -1,0 +1,504 @@
+{
+  "experiment": "structural_signal_screen",
+  "question": "Do set-level market state, cross-sectional order statistics, or residual-directed selection add a new production-orthogonal signal?",
+  "cache": {
+    "path": "/home/mainsub/Documents/Quant_trade/outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+    "sha256": "310272cccc7f74285e0246a5191d5c90982e5feb19c92a3958f85b47a60f4e7d"
+  },
+  "config": {
+    "arms": [
+      "xs_rank",
+      "xs_residual_select"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "iterations": 160,
+    "seed": 2026,
+    "market_top_k": 20,
+    "xs_top_k": 32,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced"
+  },
+  "screening_rule": "1 seed / 160 rounds; mean positive, >=4/5 positive, drop-best positive, >=2%, 2dA>dB. Passing arms require 3x480 confirmation and paired bootstrap before promotion.",
+  "summaries": {
+    "xs_rank": {
+      "mean_delta": -7.449759394959854e-05,
+      "relative": -0.04643221860532423,
+      "positive_folds": 1,
+      "n_folds": 5,
+      "drop_best_delta": -0.00010801455014805474,
+      "relative_delta_A": 0.019611570875655807,
+      "relative_delta_B": 0.08204511039818771,
+      "per_fold_delta": [
+        0.0,
+        -0.00018152281744754622,
+        5.957023084422622e-05,
+        -4.461799525457347e-05,
+        -0.00020591738789009929
+      ],
+      "checks": {
+        "mean_delta_positive": false,
+        "at_least_4_of_5_positive": false,
+        "drop_best_positive": false,
+        "relative_gain_at_least_2pct": false,
+        "two_delta_A_exceeds_delta_B": false
+      },
+      "pass_screen": false
+    },
+    "xs_residual_select": {
+      "mean_delta": -6.004381322411291e-05,
+      "relative": -0.03742359066529682,
+      "positive_folds": 0,
+      "n_folds": 5,
+      "drop_best_delta": -7.505476653014114e-05,
+      "relative_delta_A": 0.042472246073327585,
+      "relative_delta_B": 0.12075309839267957,
+      "per_fold_delta": [
+        0.0,
+        -4.5519981619835705e-05,
+        -3.5902914507624124e-05,
+        -1.1488478195175768e-07,
+        -0.00021868128521115296
+      ],
+      "checks": {
+        "mean_delta_positive": false,
+        "at_least_4_of_5_positive": false,
+        "drop_best_positive": false,
+        "relative_gain_at_least_2pct": false,
+        "two_delta_A_exceeds_delta_B": false
+      },
+      "pass_screen": false
+    }
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "baseline": {
+        "A": 0.0018879248756720239,
+        "B": 0.0033753904369107886,
+        "peak": 0.001055954978483406,
+        "optimal_scale": 0.5593204433558456
+      },
+      "arms": {
+        "xs_rank": {
+          "metric": {
+            "A": 0.0018879248756720239,
+            "B": 0.0033753904369107886,
+            "peak": 0.001055954978483406,
+            "optimal_scale": 0.5593204433558456
+          },
+          "selected_features": [],
+          "elapsed_seconds": 0.0011235580313950777
+        },
+        "xs_residual_select": {
+          "metric": {
+            "A": 0.0018879248756720239,
+            "B": 0.0033753904369107886,
+            "peak": 0.001055954978483406,
+            "optimal_scale": 0.5593204433558456
+          },
+          "selected_features": [],
+          "elapsed_seconds": 0.0009693460306152701
+        }
+      },
+      "notes": {
+        "xs_rank": "no earlier OOF rows; strict no-op",
+        "xs_residual_select": "no earlier OOF rows; strict no-op"
+      }
+    },
+    {
+      "fold": 1,
+      "baseline": {
+        "A": 0.002387792000850556,
+        "B": 0.0028403212085253,
+        "peak": 0.0020073612175315046,
+        "optimal_scale": 0.8406767494055019
+      },
+      "arms": {
+        "xs_rank": {
+          "metric": {
+            "A": 0.002354955907187789,
+            "B": 0.003037408636242751,
+            "peak": 0.0018258384000839584,
+            "optimal_scale": 0.7753174462889688
+          },
+          "selected_features": [
+            "feature_121",
+            "feature_091",
+            "feature_012",
+            "feature_011",
+            "feature_201",
+            "feature_245",
+            "feature_199",
+            "feature_061",
+            "feature_048",
+            "feature_209",
+            "feature_046",
+            "feature_116",
+            "feature_149",
+            "feature_319",
+            "feature_006",
+            "feature_113",
+            "feature_269",
+            "feature_147",
+            "feature_200",
+            "feature_186",
+            "feature_128",
+            "feature_069",
+            "feature_194",
+            "feature_189",
+            "feature_190",
+            "feature_192",
+            "feature_195",
+            "feature_193",
+            "feature_191",
+            "feature_115",
+            "feature_274",
+            "feature_202"
+          ],
+          "elapsed_seconds": 3.9341597789898515
+        },
+        "xs_residual_select": {
+          "metric": {
+            "A": 0.0024814845313547176,
+            "B": 0.0031387685030951165,
+            "peak": 0.001961841235911669,
+            "optimal_scale": 0.7905917651804343
+          },
+          "selected_features": [
+            "feature_121",
+            "feature_091",
+            "feature_012",
+            "feature_011",
+            "feature_201",
+            "feature_245",
+            "feature_199",
+            "feature_061",
+            "feature_048",
+            "feature_209",
+            "feature_046",
+            "feature_116",
+            "feature_149",
+            "feature_319",
+            "feature_006",
+            "feature_113",
+            "feature_269",
+            "feature_147",
+            "feature_200",
+            "feature_186",
+            "feature_128",
+            "feature_069",
+            "feature_194",
+            "feature_189",
+            "feature_190",
+            "feature_192",
+            "feature_195",
+            "feature_193",
+            "feature_191",
+            "feature_115",
+            "feature_274",
+            "feature_202"
+          ],
+          "elapsed_seconds": 1.9752046570065431
+        }
+      }
+    },
+    {
+      "fold": 2,
+      "baseline": {
+        "A": 0.0021507770373572085,
+        "B": 0.0028544186481272516,
+        "peak": 0.0016205898414579122,
+        "optimal_scale": 0.7534903959404505
+      },
+      "arms": {
+        "xs_rank": {
+          "metric": {
+            "A": 0.002310119714995377,
+            "B": 0.003176276585538718,
+            "peak": 0.0016801600723021384,
+            "optimal_scale": 0.7273043303322922
+          },
+          "selected_features": [
+            "feature_091",
+            "feature_245",
+            "feature_284",
+            "feature_286",
+            "feature_012",
+            "feature_209",
+            "feature_290",
+            "feature_068",
+            "feature_098",
+            "feature_116",
+            "feature_292",
+            "feature_157",
+            "feature_199",
+            "feature_011",
+            "feature_201",
+            "feature_095",
+            "feature_039",
+            "feature_121",
+            "feature_032",
+            "feature_090",
+            "feature_113",
+            "feature_037",
+            "feature_260",
+            "feature_093",
+            "feature_148",
+            "feature_319",
+            "feature_006",
+            "feature_051",
+            "feature_190",
+            "feature_192",
+            "feature_195",
+            "feature_193"
+          ],
+          "elapsed_seconds": 8.253162309993058
+        },
+        "xs_residual_select": {
+          "metric": {
+            "A": 0.002309879179247446,
+            "B": 0.003366937489027592,
+            "peak": 0.001584686926950288,
+            "optimal_scale": 0.6860475392771738
+          },
+          "selected_features": [
+            "feature_091",
+            "feature_245",
+            "feature_284",
+            "feature_286",
+            "feature_012",
+            "feature_209",
+            "feature_290",
+            "feature_068",
+            "feature_098",
+            "feature_116",
+            "feature_292",
+            "feature_157",
+            "feature_199",
+            "feature_011",
+            "feature_201",
+            "feature_095",
+            "feature_039",
+            "feature_121",
+            "feature_032",
+            "feature_090",
+            "feature_113",
+            "feature_037",
+            "feature_260",
+            "feature_093",
+            "feature_148",
+            "feature_319",
+            "feature_006",
+            "feature_051",
+            "feature_190",
+            "feature_192",
+            "feature_195",
+            "feature_193"
+          ],
+          "elapsed_seconds": 4.3143173980060965
+        }
+      }
+    },
+    {
+      "fold": 3,
+      "baseline": {
+        "A": 0.002062807725218357,
+        "B": 0.002729198285326607,
+        "peak": 0.0015591302889563811,
+        "optimal_scale": 0.7558291884869398
+      },
+      "arms": {
+        "xs_rank": {
+          "metric": {
+            "A": 0.0021938424092914684,
+            "B": 0.003177884086395812,
+            "peak": 0.0015145122937018076,
+            "optimal_scale": 0.6903468942379231
+          },
+          "selected_features": [
+            "feature_091",
+            "feature_098",
+            "feature_245",
+            "feature_286",
+            "feature_284",
+            "feature_209",
+            "feature_216",
+            "feature_025",
+            "feature_250",
+            "feature_068",
+            "feature_157",
+            "feature_096",
+            "feature_039",
+            "feature_012",
+            "feature_090",
+            "feature_290",
+            "feature_199",
+            "feature_118",
+            "feature_238",
+            "feature_292",
+            "feature_095",
+            "feature_017",
+            "feature_148",
+            "feature_221",
+            "feature_014",
+            "feature_296",
+            "feature_030",
+            "feature_018",
+            "feature_192",
+            "feature_195",
+            "feature_190",
+            "feature_193"
+          ],
+          "elapsed_seconds": 10.752421533979941
+        },
+        "xs_residual_select": {
+          "metric": {
+            "A": 0.002285163807955925,
+            "B": 0.003349533054778827,
+            "peak": 0.0015590154041744294,
+            "optimal_scale": 0.6822335443728937
+          },
+          "selected_features": [
+            "feature_091",
+            "feature_098",
+            "feature_245",
+            "feature_286",
+            "feature_284",
+            "feature_209",
+            "feature_216",
+            "feature_025",
+            "feature_250",
+            "feature_068",
+            "feature_157",
+            "feature_096",
+            "feature_039",
+            "feature_012",
+            "feature_090",
+            "feature_290",
+            "feature_199",
+            "feature_118",
+            "feature_238",
+            "feature_292",
+            "feature_095",
+            "feature_017",
+            "feature_148",
+            "feature_221",
+            "feature_014",
+            "feature_296",
+            "feature_030",
+            "feature_018",
+            "feature_192",
+            "feature_195",
+            "feature_190",
+            "feature_193"
+          ],
+          "elapsed_seconds": 5.587545367015991
+        }
+      }
+    },
+    {
+      "fold": 4,
+      "baseline": {
+        "A": 0.002200894559023579,
+        "B": 0.002722610971371125,
+        "peak": 0.001779151303977944,
+        "optimal_scale": 0.8083764379731394
+      },
+      "arms": {
+        "xs_rank": {
+          "metric": {
+            "A": 0.0021530048313891984,
+            "B": 0.0029464339387699815,
+            "peak": 0.0015732339160878447,
+            "optimal_scale": 0.7307154601565552
+          },
+          "selected_features": [
+            "feature_098",
+            "feature_012",
+            "feature_146",
+            "feature_044",
+            "feature_199",
+            "feature_225",
+            "feature_286",
+            "feature_002",
+            "feature_265",
+            "feature_011",
+            "feature_201",
+            "feature_104",
+            "feature_200",
+            "feature_315",
+            "feature_125",
+            "feature_191",
+            "feature_193",
+            "feature_192",
+            "feature_195",
+            "feature_190",
+            "feature_189",
+            "feature_194",
+            "feature_039",
+            "feature_202",
+            "feature_284",
+            "feature_238",
+            "feature_157",
+            "feature_096",
+            "feature_232",
+            "feature_250",
+            "feature_091",
+            "feature_262"
+          ],
+          "elapsed_seconds": 14.189878128003329
+        },
+        "xs_residual_select": {
+          "metric": {
+            "A": 0.0021797804473903917,
+            "B": 0.0030448792618139684,
+            "peak": 0.001560470018766791,
+            "optimal_scale": 0.7158840334745492
+          },
+          "selected_features": [
+            "feature_098",
+            "feature_012",
+            "feature_146",
+            "feature_044",
+            "feature_199",
+            "feature_225",
+            "feature_286",
+            "feature_002",
+            "feature_265",
+            "feature_011",
+            "feature_201",
+            "feature_104",
+            "feature_200",
+            "feature_315",
+            "feature_125",
+            "feature_191",
+            "feature_193",
+            "feature_192",
+            "feature_195",
+            "feature_190",
+            "feature_189",
+            "feature_194",
+            "feature_039",
+            "feature_202",
+            "feature_284",
+            "feature_238",
+            "feature_157",
+            "feature_096",
+            "feature_232",
+            "feature_250",
+            "feature_091",
+            "feature_262"
+          ],
+          "elapsed_seconds": 7.060511118965223
+        }
+      }
+    }
+  ],
+  "elapsed_seconds": 78.19432701799087
+}

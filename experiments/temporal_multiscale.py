@@ -40,6 +40,8 @@ from lgbm_xs import load_rows
 from mt_predictability import group_starts
 from temporal import (ARMS, MarketRegimeHistory, MultiScaleAssetHistory, temporal_arm_blocks,
                       temporal_atoms_from_lags)
+
+EXPERIMENT_ARMS = (*ARMS, "x1_rank", "x2_change_rank")
 from train import robust_transform_fit, select_features
 from walk_forward_rolling import PROD_SAMPLED_WINDOW
 
@@ -52,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", default=str(ROOT / "data"))
     parser.add_argument("--output-dir", default=str(ROOT / "outputs" / "experiments"))
     parser.add_argument("--label", default="temporal_multiscale_screen")
-    parser.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ARMS))
+    parser.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(EXPERIMENT_ARMS))
     parser.add_argument("--n-folds", type=int, default=5)
     parser.add_argument("--train-window", type=int, default=TRAIN_WINDOW)
     parser.add_argument("--embargo", type=int, default=6)
@@ -161,6 +163,36 @@ def transformed_atoms(cache: dict[str, np.ndarray], indices: np.ndarray,
         del raw_lags, atoms
     return output
 
+
+
+def cross_sectional_rank_block(current: np.ndarray, time_ids: np.ndarray) -> np.ndarray:
+    """Current-time percentile rank + robust z + tail distance for one-layer XS training."""
+    current = np.asarray(current, dtype=np.float32)
+    starts = np.r_[0, np.flatnonzero(time_ids[1:] != time_ids[:-1]) + 1]
+    stops = np.r_[starts[1:], len(time_ids)]
+    out = np.empty((len(current), current.shape[1] * 3), dtype=np.float32)
+    for start, stop in zip(starts, stops):
+        block = current[start:stop]
+        finite = np.isfinite(block)
+        median = np.nanmedian(np.where(finite, block, np.nan), axis=0)
+        mad = np.nanmedian(np.abs(np.where(finite, block, np.nan) - median), axis=0)
+        mad = np.where(np.isfinite(mad) & (mad > 1e-6), mad, 1.0)
+        robust = np.clip((block - median) / mad, -12.0, 12.0)
+        order = np.argsort(np.where(finite, block, np.inf), axis=0, kind="stable")
+        rank = np.argsort(order, axis=0, kind="stable").astype(np.float32)
+        rank = rank / np.float32(max(stop - start - 1, 1)) - np.float32(0.5)
+        tail = np.maximum(np.abs(rank) - np.float32(0.3), 0.0)
+        out[start:stop] = np.nan_to_num(np.column_stack([rank, robust, tail]))
+    return out
+
+
+def experiment_blocks(atoms: dict[str, np.ndarray], arm: str, rank: np.ndarray,
+                      change_rank: np.ndarray) -> tuple[np.ndarray, ...]:
+    if arm == "x1_rank":
+        return (*temporal_arm_blocks(atoms, "baseline"), rank)
+    if arm == "x2_change_rank":
+        return (*temporal_arm_blocks(atoms, "baseline"), change_rank)
+    return temporal_arm_blocks(atoms, arm)
 
 def paired_summary(rows: list[dict[str, Any]], arm: str) -> dict[str, Any]:
     base = np.array([row["arms"]["baseline"]["peak"] for row in rows], dtype=np.float64)
@@ -275,14 +307,20 @@ def main() -> None:
                 atoms_train[key] = values[tr]
                 atoms_valid[key] = values[va]
             del all_regime_features, regime_all
+        rank_train = cross_sectional_rank_block(t_train[:, history_columns], tid_train)
+        rank_valid = cross_sectional_rank_block(t_valid[:, history_columns], tid_valid)
+        change_rank_train = cross_sectional_rank_block(atoms_train["difference"], tid_train)
+        change_rank_valid = cross_sectional_rank_block(atoms_valid["difference"], tid_valid)
         row: dict[str, Any] = {"fold": fold_index, "train_rows": int(tr.sum()),
                                "valid_rows": int(va.sum()), "arms": {}}
         min_data = max(20, int(round(LGBM_MIN_DATA_FRAC * int(tr.sum()))))
         for arm in args.arms:
             design_train = np.ascontiguousarray(np.column_stack(
-                [xs_train, *temporal_arm_blocks(atoms_train, arm), aid_train.astype(np.float32)]))
+                [xs_train, *experiment_blocks(atoms_train, arm, rank_train, change_rank_train),
+                 aid_train.astype(np.float32)]))
             design_valid = np.ascontiguousarray(np.column_stack(
-                [xs_valid, *temporal_arm_blocks(atoms_valid, arm), aid_valid.astype(np.float32)]))
+                [xs_valid, *experiment_blocks(atoms_valid, arm, rank_valid, change_rank_valid),
+                 aid_valid.astype(np.float32)]))
             cat = design_train.shape[1] - 1
             e_hat = np.zeros(len(design_valid), dtype=np.float64)
             for seed_offset in range(args.lgbm_seeds):
@@ -316,7 +354,8 @@ def main() -> None:
         cache_asset_ids.append(aid_valid.astype(np.int16))
         row["elapsed_seconds"] = time.perf_counter() - fold_start
         fold_rows.append(row)
-        del t_train, t_valid, atoms_train, atoms_valid, xs_train, xs_valid
+        del (t_train, t_valid, atoms_train, atoms_valid, xs_train, xs_valid, rank_train,
+             rank_valid, change_rank_train, change_rank_valid)
         gc.collect()
         print(f"fold {fold_index} done in {row['elapsed_seconds']:.1f}s", flush=True)
 
@@ -345,6 +384,13 @@ def main() -> None:
             "t2_state": "baseline+EWM3/EWM10/std5/std20/slope5/slope20",
             "t3_full": "T1+T2+observation_gap",
             "t4_regime": "baseline+20D current compressed regime+lag1+difference",
+            "t5_zscore": "baseline+deviation5/std5",
+            "f_lags": "baseline+lag3+lag10",
+            "f_changes": "baseline+delta3+delta5+delta10+acceleration1",
+            "f_volatility": "baseline+std5+std20",
+            "f_trend": "baseline+slope5+slope20",
+            "x1_rank": "baseline+current percentile rank+robust z+tail distance",
+            "x2_change_rank": "baseline+rank/robust-z/tail of current-lag1 change",
         },
         "folds": fold_rows, "comparisons": comparisons,
         "verdict": {"passed_arms": passed, "enter_confirmation": bool(passed),

@@ -231,6 +231,52 @@ def stream_history_blocks(data_root: Path, sample_modulo: int, sampling: str,
     return [np.concatenate(slot) for slot in parts]
 
 
+def stream_history_range_blocks(data_root: Path, history_names: list[str],
+                                history_stats: tuple[np.ndarray, ...], window: int,
+                                train_range: tuple[int, int],
+                                valid_range: tuple[int, int]):
+    """Advance history on every real row but retain only one fold's train/valid ranges.
+
+    Full-resolution runs cannot materialise four history blocks for all 13.2m rows
+    (~8.5GB) and then slice them. This variant preserves identical causal state while
+    retaining only the rows used by the current fold.
+    """
+    import pyarrow.parquet as pq
+    from src.io import train_files
+    from history import AssetHistory
+
+    lower, upper, center, scale = history_stats
+    history = AssetHistory(feature_count=len(history_names), window_size=window)
+    train_parts: list[list[np.ndarray]] = [[], [], [], []]
+    valid_parts: list[list[np.ndarray]] = [[], [], [], []]
+    train_low, train_high = map(int, train_range)
+    valid_low, valid_high = map(int, valid_range)
+    train_rows = valid_rows = 0
+    for path in train_files(data_root):
+        for batch in pq.ParquetFile(path).iter_batches(
+                batch_size=120_000, columns=["time_id", "asset_id", *history_names]):
+            frame = batch.to_pandas()
+            tid = frame["time_id"].to_numpy(dtype=np.int64, copy=False)
+            aid = frame["asset_id"].to_numpy(dtype=np.int64, copy=False)
+            current = frame.loc[:, history_names].to_numpy(dtype=np.float32, copy=True)
+            apply_robust_transform(current, lower, upper, center, scale)
+            blocks = history.transform(current, aid)
+            train_mask = (tid >= train_low) & (tid <= train_high)
+            valid_mask = (tid >= valid_low) & (tid <= valid_high)
+            if train_mask.any():
+                for slot, block in zip(train_parts, blocks):
+                    slot.append(block[train_mask])
+                train_rows += int(train_mask.sum())
+            if valid_mask.any():
+                for slot, block in zip(valid_parts, blocks):
+                    slot.append(block[valid_mask])
+                valid_rows += int(valid_mask.sum())
+        print(f"  history-range {path.name}: train={train_rows:,}, valid={valid_rows:,}",
+              flush=True)
+    return ([np.concatenate(slot) for slot in train_parts],
+            [np.concatenate(slot) for slot in valid_parts])
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train the LightGBM cross-sectional part of v3_hybrid.")
     p.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
