@@ -62,7 +62,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cache-dir", default=str(_REPO_ROOT / "outputs" / "cache")
     )
-    parser.add_argument("--label", default="v3_interactions_screen_1s160_07_117")
+    parser.add_argument(
+        "--label", default="v3_interactions_subpaths16_screen_1s160_07_117"
+    )
     parser.add_argument("--n-folds", type=int, default=FROZEN_SCREEN["n_folds"])
     parser.add_argument("--train-window", type=int, default=FROZEN_SCREEN["train_window"])
     parser.add_argument("--embargo", type=int, default=FROZEN_SCREEN["embargo"])
@@ -443,6 +445,34 @@ def _manifest_definitions(
     return list(task_payload["definitions"])
 
 
+def manifest_support_quantile_bins(manifest: Mapping[str, object]) -> int:
+    """Return the shared positive support-bin count declared by all tasks."""
+    tasks = manifest.get("tasks")
+    if not isinstance(tasks, Mapping) or any(
+        task not in tasks for task in ("ridge", "xs", "market")
+    ):
+        raise ValueError("manifest must contain all three interaction tasks")
+    values: list[int] = []
+    for task in ("ridge", "xs", "market"):
+        task_payload = tasks[task]
+        if not isinstance(task_payload, Mapping):
+            raise ValueError(f"{task} interaction task payload is invalid")
+        protocol = task_payload.get("protocol")
+        if not isinstance(protocol, Mapping):
+            raise ValueError(f"{task} interaction protocol is missing")
+        value = protocol.get("support_quantile_bins")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, np.integer))
+            or value <= 0
+        ):
+            raise ValueError(f"{task} support_quantile_bins must be positive")
+        values.append(int(value))
+    if len(set(values)) != 1:
+        raise ValueError(f"interaction support_quantile_bins disagree: {values}")
+    return values[0]
+
+
 def main() -> None:
     from experiments.history_peak import build_lag_cache, fit_ridge, history_blocks, ridge_designs
     from experiments.lgbm_xs import load_rows
@@ -734,6 +764,11 @@ def main() -> None:
                 row_cap=args.miner_row_cap,
                 num_threads=args.num_threads,
             )
+
+        support_quantile_bins = manifest_support_quantile_bins(
+            {"tasks": task_results}
+        )
+        for task in ("ridge", "xs", "market"):
             mined_definitions = list(task_results[task]["definitions"])
             if mined_definitions:
                 outer_sources = interaction_source_arrays(
@@ -746,7 +781,9 @@ def main() -> None:
                     max_cells=args.max_interaction_cells,
                 )
                 task_results[task]["definitions"] = resolve_quantile_thresholds(
-                    mined_definitions, outer_sources, bins=32
+                    mined_definitions,
+                    outer_sources,
+                    bins=support_quantile_bins,
                 )
                 del outer_sources
             gc.collect()

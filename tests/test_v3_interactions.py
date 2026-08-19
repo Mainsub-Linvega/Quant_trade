@@ -30,6 +30,7 @@ from experiments.v3_interaction_oof import (
     append_interactions_before_asset,
     compose_hybrid_raw,
     interaction_gate,
+    manifest_support_quantile_bins,
     parse_args as parse_interaction_oof_args,
     paired_component_predictions,
     positive_fold_gate_impossible,
@@ -870,6 +871,27 @@ def test_interaction_gate_requires_all_four_conditions() -> None:
     )
     assert energy_only["passed"] is False
     assert energy_only["checks"]["target_alignment"] is False
+
+
+def _manifest_with_support_bins(*values: int) -> dict[str, object]:
+    return {
+        "tasks": {
+            task: {"protocol": {"support_quantile_bins": value}}
+            for task, value in zip(("ridge", "xs", "market"), values)
+        }
+    }
+
+
+def test_manifest_support_quantile_bins_requires_one_shared_value() -> None:
+    assert manifest_support_quantile_bins(
+        _manifest_with_support_bins(16, 16, 16)
+    ) == 16
+
+    with pytest.raises(ValueError, match="support_quantile_bins"):
+        manifest_support_quantile_bins(_manifest_with_support_bins(16, 8, 16))
+
+    with pytest.raises(ValueError, match="three interaction tasks"):
+        manifest_support_quantile_bins(_manifest_with_support_bins(16, 16))
 
 
 def test_positive_fold_gate_stops_after_two_nonpositive_folds() -> None:
