@@ -31,6 +31,8 @@ from experiments.v3_purified_interactions import (
     make_task_null,
     purify_pair_surface,
     score_pair_split,
+    prebin_feature_split,
+    score_prebinned_pair_split,
     transform_purified_surface,
     validate_purified_protocol,
 )
@@ -615,3 +617,67 @@ def test_diagnostic_rejects_aggregated_xs_input() -> None:
             protocol=default_purified_protocol(),
             max_pairs=1,
         )
+
+
+def test_prebinned_pair_score_matches_existing_pair_score() -> None:
+    rng = np.random.default_rng(2026)
+    train = rng.normal(size=(500, 4)).astype(np.float32)
+    valid = rng.normal(size=(200, 4)).astype(np.float32)
+    train[3, 1] = np.nan
+    valid[7, 2] = np.nan
+    train_residual = (
+        (train[:, 1] > 0) ^ (train[:, 2] > 0)
+    ).astype(np.float64)
+    valid_residual = (
+        (valid[:, 1] > 0) ^ (valid[:, 2] > 0)
+    ).astype(np.float64)
+    train_weight = rng.uniform(0.5, 2.0, len(train))
+    valid_weight = rng.uniform(0.5, 2.0, len(valid))
+
+    reference = score_pair_split(
+        train,
+        valid,
+        train_residual,
+        valid_residual,
+        train_weight,
+        valid_weight,
+        pair=(1, 2),
+        bins=4,
+        min_cell_weight=5.0,
+        max_surface_cells=16,
+    )
+    prebinned = prebin_feature_split(train, valid, bins=4)
+    got = score_prebinned_pair_split(
+        prebinned,
+        train_residual,
+        valid_residual,
+        train_weight,
+        valid_weight,
+        pair=(1, 2),
+        min_cell_weight=5.0,
+        max_surface_cells=16,
+    )
+
+    assert prebinned.train_bins.dtype == np.uint8
+    assert prebinned.valid_bins.dtype == np.uint8
+    assert prebinned.train_bins[3, 1] == 255
+    assert prebinned.valid_bins[7, 2] == 255
+    for name in ("gain", "coverage", "dominant_cell_gain_share"):
+        assert got[name] == pytest.approx(reference[name], abs=1e-12)
+    assert got["finite"] is reference["finite"]
+    assert got["surface_checksum"] == reference["surface_checksum"]
+
+
+def test_prebin_edges_ignore_extreme_validation_values() -> None:
+    train = np.arange(32, dtype=np.float64).reshape(8, 4)
+    ordinary = np.zeros((2, 4), dtype=np.float64)
+    extreme = ordinary.copy()
+    extreme[:, 2] = [1e30, -1e30]
+
+    ordinary_split = prebin_feature_split(train, ordinary, bins=4)
+    extreme_split = prebin_feature_split(train, extreme, bins=4)
+
+    np.testing.assert_array_equal(ordinary_split.edges, extreme_split.edges)
+    np.testing.assert_array_equal(
+        extreme_split.edges[2], fit_quantile_edges(train[:, 2], bins=4)
+    )

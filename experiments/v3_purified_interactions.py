@@ -145,6 +145,17 @@ def validate_purified_protocol(protocol: Mapping[str, object]) -> None:
 
 
 @dataclass(frozen=True)
+class PrebinnedFeatureSplit:
+    """Train-fitted compact bins for one chronological split."""
+
+    train_bins: np.ndarray
+    valid_bins: np.ndarray
+    edges: np.ndarray
+    bins: int
+    missing_sentinel: int = 255
+
+
+@dataclass(frozen=True)
 class PurifiedPairSurface:
     """Training-fitted pure interaction surface for one feature pair."""
 
@@ -509,6 +520,188 @@ def score_pair_split(
         "gain": float(gain),
         "coverage": float(coverage),
         "dominant_cell_gain_share": float(dominant),
+        "finite": bool(np.all(np.isfinite(prediction))),
+        "surface_checksum": _surface_checksum(surface),
+        "surface": surface,
+    }
+
+
+def prebin_feature_split(
+    train_features: np.ndarray,
+    valid_features: np.ndarray,
+    *,
+    bins: int,
+) -> PrebinnedFeatureSplit:
+    """Fit each feature grid on training rows and return compact bin matrices."""
+    train = np.asarray(train_features)
+    valid = np.asarray(valid_features)
+    if train.ndim != 2 or valid.ndim != 2 or train.shape[1] != valid.shape[1]:
+        raise ValueError("train and validation features must have equal 2D width")
+    if len(train) == 0 or len(valid) == 0 or bins < 2 or bins >= 255:
+        raise ValueError("pre-binning requires rows and between 2 and 254 bins")
+    edges = np.empty((train.shape[1], bins + 1), dtype=np.float64)
+    train_bins = np.full(train.shape, 255, dtype=np.uint8)
+    valid_bins = np.full(valid.shape, 255, dtype=np.uint8)
+    for column in range(train.shape[1]):
+        grid = fit_quantile_edges(train[:, column], bins)
+        edges[column] = grid
+        assigned_train = assign_quantile_bins(train[:, column], grid)
+        assigned_valid = assign_quantile_bins(valid[:, column], grid)
+        train_finite = assigned_train >= 0
+        valid_finite = assigned_valid >= 0
+        train_bins[train_finite, column] = assigned_train[train_finite]
+        valid_bins[valid_finite, column] = assigned_valid[valid_finite]
+    return PrebinnedFeatureSplit(
+        train_bins=train_bins,
+        valid_bins=valid_bins,
+        edges=edges,
+        bins=int(bins),
+    )
+
+
+def score_prebinned_pair_split(
+    prebinned: PrebinnedFeatureSplit,
+    train_residual: np.ndarray,
+    valid_residual: np.ndarray,
+    train_weight: np.ndarray,
+    valid_weight: np.ndarray,
+    *,
+    pair: tuple[int, int],
+    min_cell_weight: float,
+    max_surface_cells: int,
+) -> dict[str, object]:
+    """Score one pair from train-fitted bins using the standard purification."""
+    train_bins = np.asarray(prebinned.train_bins)
+    valid_bins = np.asarray(prebinned.valid_bins)
+    edges = np.asarray(prebinned.edges, dtype=np.float64)
+    bins = int(prebinned.bins)
+    if (
+        train_bins.ndim != 2
+        or valid_bins.ndim != 2
+        or train_bins.dtype != np.uint8
+        or valid_bins.dtype != np.uint8
+        or train_bins.shape[1] != valid_bins.shape[1]
+        or edges.shape != (train_bins.shape[1], bins + 1)
+    ):
+        raise ValueError("pre-binned split arrays are invalid")
+    if bins * bins > max_surface_cells:
+        raise MemoryError(
+            f"surface requires {bins * bins} cells; budget={max_surface_cells}"
+        )
+    if min_cell_weight <= 0.0:
+        raise ValueError("min_cell_weight must be positive")
+    left_feature, right_feature = pair
+    if (
+        isinstance(left_feature, bool)
+        or isinstance(right_feature, bool)
+        or not isinstance(left_feature, int)
+        or not isinstance(right_feature, int)
+        or left_feature >= right_feature
+        or left_feature < 0
+        or right_feature >= train_bins.shape[1]
+    ):
+        raise ValueError("pair must contain two ordered valid feature indices")
+    train_y = np.asarray(train_residual, dtype=np.float64)
+    valid_y = np.asarray(valid_residual, dtype=np.float64)
+    train_w = np.asarray(train_weight, dtype=np.float64)
+    valid_w = np.asarray(valid_weight, dtype=np.float64)
+    if (
+        train_y.shape != (len(train_bins),)
+        or train_w.shape != train_y.shape
+        or valid_y.shape != (len(valid_bins),)
+        or valid_w.shape != valid_y.shape
+        or not np.all(np.isfinite(train_y))
+        or not np.all(np.isfinite(valid_y))
+        or not np.all(np.isfinite(train_w))
+        or not np.all(np.isfinite(valid_w))
+        or np.any(train_w < 0.0)
+        or np.any(valid_w < 0.0)
+    ):
+        raise ValueError("pre-binned score arrays must be aligned and finite")
+
+    left_train = train_bins[:, left_feature]
+    right_train = train_bins[:, right_feature]
+    train_valid = (
+        (left_train != prebinned.missing_sentinel)
+        & (right_train != prebinned.missing_sentinel)
+        & (train_w > 0.0)
+    )
+    flat_train = (
+        left_train[train_valid].astype(np.int64) * bins
+        + right_train[train_valid]
+    )
+    cell_weights = np.bincount(
+        flat_train, weights=train_w[train_valid], minlength=bins * bins
+    ).reshape(bins, bins)
+    weighted_sum = np.bincount(
+        flat_train,
+        weights=train_w[train_valid] * train_y[train_valid],
+        minlength=bins * bins,
+    ).reshape(bins, bins)
+    supported = cell_weights >= float(min_cell_weight)
+    supported_weights = np.where(supported, cell_weights, 0.0)
+    means = np.divide(
+        weighted_sum, cell_weights, out=np.zeros_like(weighted_sum), where=supported
+    )
+    if float(np.sum(supported_weights)) > 0.0:
+        pure, _, _ = purify_pair_surface(means, supported_weights)
+        pure = np.where(supported, pure, 0.0)
+    else:
+        pure = np.zeros((bins, bins), dtype=np.float64)
+    train_valid_weight = float(np.sum(train_w[train_valid]))
+    surface = PurifiedPairSurface(
+        left_feature=left_feature,
+        right_feature=right_feature,
+        edges_left=edges[left_feature],
+        edges_right=edges[right_feature],
+        values=pure,
+        cell_weights=supported_weights,
+        coverage=(
+            float(np.sum(supported_weights)) / train_valid_weight
+            if train_valid_weight > 0.0 else 0.0
+        ),
+    )
+
+    left_valid = valid_bins[:, left_feature]
+    right_valid = valid_bins[:, right_feature]
+    finite_valid = (
+        (left_valid != prebinned.missing_sentinel)
+        & (right_valid != prebinned.missing_sentinel)
+    )
+    prediction = np.zeros(len(valid_bins), dtype=np.float64)
+    supported_valid = np.zeros(len(valid_bins), dtype=bool)
+    if np.any(finite_valid):
+        rows = left_valid[finite_valid].astype(np.int64)
+        columns = right_valid[finite_valid].astype(np.int64)
+        cell_supported = surface.cell_weights[rows, columns] > 0.0
+        positions = np.flatnonzero(finite_valid)[cell_supported]
+        prediction[positions] = surface.values[rows[cell_supported], columns[cell_supported]]
+        supported_valid[positions] = True
+    positive_valid = finite_valid & (valid_w > 0.0)
+    valid_weight_sum = float(np.sum(valid_w[positive_valid]))
+    coverage = (
+        float(np.sum(valid_w[supported_valid])) / valid_weight_sum
+        if valid_weight_sum > 0.0 else 0.0
+    )
+    denominator = float(np.dot(valid_w, valid_y * valid_y))
+    dominant = 0.0
+    if denominator > 0.0 and np.any(supported_valid):
+        contributions = valid_w * (2.0 * valid_y * prediction - prediction * prediction) / denominator
+        flat_valid = (
+            left_valid[supported_valid].astype(np.int64) * bins
+            + right_valid[supported_valid]
+        )
+        by_cell = np.bincount(
+            flat_valid, weights=contributions[supported_valid], minlength=bins * bins
+        )
+        absolute = np.abs(by_cell)
+        total = float(np.sum(absolute))
+        dominant = float(np.max(absolute) / total) if total > 0.0 else 0.0
+    return {
+        "pair": [left_feature, right_feature],
+        "gain": weighted_residual_gain(valid_y, prediction, valid_w),
+        "coverage": coverage,
+        "dominant_cell_gain_share": dominant,
         "finite": bool(np.all(np.isfinite(prediction))),
         "surface_checksum": _surface_checksum(surface),
         "surface": surface,
