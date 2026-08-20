@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import copy
 from typing import Any
 
@@ -11,6 +11,10 @@ import numpy as np
 from experiments.v3_purified_interactions import default_purified_protocol
 
 
+from experiments.v3_purified_interactions import (
+    prebin_feature_split,
+    score_prebinned_pair_split,
+)
 _PURIFIED = default_purified_protocol()
 _FROZEN_PROTOCOL: dict[str, object] = {
     "schema_version": 1,
@@ -253,3 +257,200 @@ def sample_complete_time_groups(
         for index in sorted(chosen)
     ]
     return np.concatenate(pieces).astype(np.int64, copy=False)
+
+
+def enumerate_lexical_pairs(n_features: int) -> list[tuple[int, int]]:
+    """Return every ordered feature pair exactly once in lexical order."""
+    if isinstance(n_features, bool) or not isinstance(n_features, int) or n_features < 2:
+        raise ValueError("n_features must be an integer of at least two")
+    return [
+        (left, right)
+        for left in range(n_features - 1)
+        for right in range(left + 1, n_features)
+    ]
+
+
+def proposal_split_rows(
+    sampled_blocks: Sequence[np.ndarray],
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Construct expanding-train/next-block row indices."""
+    if len(sampled_blocks) != 4:
+        raise ValueError("proposal scan requires exactly four sampled blocks")
+    blocks = [np.asarray(block, dtype=np.int64) for block in sampled_blocks]
+    if any(block.ndim != 1 or len(block) == 0 for block in blocks):
+        raise ValueError("proposal blocks must be nonempty row vectors")
+    joined = np.concatenate(blocks)
+    if len(np.unique(joined)) != len(joined) or np.any(np.diff(joined) <= 0):
+        raise ValueError("proposal blocks must be ordered and disjoint")
+    return [
+        (np.concatenate(blocks[:index]), blocks[index])
+        for index in range(1, len(blocks))
+    ]
+
+
+def aggregate_pair_scores(
+    split_scores: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Aggregate the frozen three-split proposal statistics for one pair."""
+    if len(split_scores) != 3:
+        raise ValueError("proposal pair requires exactly three split scores")
+    gains = np.asarray([score.get("gain") for score in split_scores], dtype=np.float64)
+    coverage = np.asarray(
+        [score.get("coverage") for score in split_scores], dtype=np.float64
+    )
+    dominant = np.asarray(
+        [score.get("dominant_cell_gain_share") for score in split_scores],
+        dtype=np.float64,
+    )
+    finite = np.asarray(
+        [bool(score.get("finite")) for score in split_scores], dtype=bool
+    )
+    all_finite = bool(
+        np.all(finite)
+        and np.all(np.isfinite(gains))
+        and np.all(np.isfinite(coverage))
+        and np.all(np.isfinite(dominant))
+    )
+    if not all_finite:
+        return {
+            "median_gain": float("nan"),
+            "mean_gain": float("nan"),
+            "drop_best_mean_gain": float("nan"),
+            "positive_blocks": int(np.sum(gains > 0.0)),
+            "minimum_coverage": float("nan"),
+            "maximum_dominant_cell_gain_share": float("nan"),
+            "all_finite": False,
+        }
+    return {
+        "median_gain": float(np.median(gains)),
+        "mean_gain": float(np.mean(gains)),
+        "drop_best_mean_gain": float(
+            np.mean(np.delete(gains, int(np.argmax(gains))))
+        ),
+        "positive_blocks": int(np.sum(gains > 0.0)),
+        "minimum_coverage": float(np.min(coverage)),
+        "maximum_dominant_cell_gain_share": float(np.max(dominant)),
+        "all_finite": True,
+    }
+
+
+def proposal_eligible(
+    summary: Mapping[str, object],
+    protocol: Mapping[str, object],
+) -> bool:
+    """Apply the frozen cheap-screen eligibility criteria."""
+    validate_proposal_protocol(protocol)
+    settings = _mapping(protocol["eligibility"], "eligibility")
+    try:
+        return bool(
+            summary["all_finite"]
+            and int(summary["positive_blocks"])
+            >= int(settings["minimum_positive_blocks"])
+            and float(summary["drop_best_mean_gain"]) > 0.0
+            and float(summary["minimum_coverage"])
+            >= float(settings["minimum_coverage"])
+            and float(summary["maximum_dominant_cell_gain_share"])
+            <= float(settings["maximum_dominant_cell_gain_share"])
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def scan_prebinned_pairs(
+    features: np.ndarray,
+    residual: np.ndarray,
+    weight: np.ndarray,
+    sampled_blocks: Sequence[np.ndarray],
+    *,
+    bins: int,
+    min_cell_weight: float,
+    max_surface_cells: int,
+    pairs: Sequence[tuple[int, int]] | None = None,
+    protocol: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Score requested pairs on three chronological pre-binned splits."""
+    x = np.asarray(features)
+    y = np.asarray(residual, dtype=np.float64)
+    w = np.asarray(weight, dtype=np.float64)
+    if (
+        x.ndim != 2
+        or y.shape != (len(x),)
+        or w.shape != y.shape
+        or not np.all(np.isfinite(y))
+        or not np.all(np.isfinite(w))
+        or np.any(w < 0.0)
+    ):
+        raise ValueError("scan arrays must be row-aligned and finite")
+    requested = list(pairs) if pairs is not None else enumerate_lexical_pairs(x.shape[1])
+    if (
+        len(requested) == 0
+        or len(set(requested)) != len(requested)
+        or any(left < 0 or left >= right or right >= x.shape[1] for left, right in requested)
+    ):
+        raise ValueError("scan pairs must be unique ordered valid indices")
+    split_rows = proposal_split_rows(sampled_blocks)
+    pair_indices = np.asarray(requested, dtype=np.int16)
+    shape = (len(requested), len(split_rows))
+    split_gain = np.empty(shape, dtype=np.float64)
+    split_coverage = np.empty(shape, dtype=np.float64)
+    split_dominant = np.empty(shape, dtype=np.float64)
+    split_finite = np.empty(shape, dtype=bool)
+    checksums = np.empty(shape, dtype="U64")
+    for split_index, (train_rows, valid_rows) in enumerate(split_rows):
+        prebinned = prebin_feature_split(
+            x[train_rows], x[valid_rows], bins=bins
+        )
+        for pair_index, pair in enumerate(requested):
+            score = score_prebinned_pair_split(
+                prebinned,
+                y[train_rows],
+                y[valid_rows],
+                w[train_rows],
+                w[valid_rows],
+                pair=pair,
+                min_cell_weight=min_cell_weight,
+                max_surface_cells=max_surface_cells,
+            )
+            split_gain[pair_index, split_index] = score["gain"]
+            split_coverage[pair_index, split_index] = score["coverage"]
+            split_dominant[pair_index, split_index] = score["dominant_cell_gain_share"]
+            split_finite[pair_index, split_index] = score["finite"]
+            checksums[pair_index, split_index] = score["surface_checksum"]
+    all_finite = (
+        np.all(split_finite, axis=1)
+        & np.all(np.isfinite(split_gain), axis=1)
+        & np.all(np.isfinite(split_coverage), axis=1)
+        & np.all(np.isfinite(split_dominant), axis=1)
+    )
+    positive_blocks = np.sum(split_gain > 0.0, axis=1).astype(np.int8)
+    median_gain = np.median(split_gain, axis=1)
+    mean_gain = np.mean(split_gain, axis=1)
+    drop_best = (np.sum(split_gain, axis=1) - np.max(split_gain, axis=1)) / 2.0
+    minimum_coverage = np.min(split_coverage, axis=1)
+    maximum_dominant = np.max(split_dominant, axis=1)
+    frozen = protocol if protocol is not None else default_proposal_protocol()
+    eligibility = _mapping(frozen["eligibility"], "eligibility")
+    eligible = (
+        all_finite
+        & (positive_blocks >= int(eligibility["minimum_positive_blocks"]))
+        & (drop_best > 0.0)
+        & (minimum_coverage >= float(eligibility["minimum_coverage"]))
+        & (maximum_dominant <= float(eligibility["maximum_dominant_cell_gain_share"]))
+    )
+    return {
+        "pair_indices": pair_indices,
+        "split_gain": split_gain,
+        "split_coverage": split_coverage,
+        "split_dominant_cell_gain_share": split_dominant,
+        "split_finite": split_finite,
+        "surface_checksum": checksums,
+        "median_gain": median_gain,
+        "mean_gain": mean_gain,
+        "drop_best_mean_gain": drop_best,
+        "positive_blocks": positive_blocks,
+        "minimum_coverage": minimum_coverage,
+        "maximum_dominant_cell_gain_share": maximum_dominant,
+        "all_finite": all_finite,
+        "eligible": eligible,
+        "scored_pair_split_count": len(requested) * len(split_rows),
+    }

@@ -7,6 +7,11 @@ import pytest
 
 from experiments.v3_low_sample_purified_proposal import (
     chronological_time_blocks,
+    aggregate_pair_scores,
+    enumerate_lexical_pairs,
+    proposal_eligible,
+    proposal_split_rows,
+    scan_prebinned_pairs,
     sample_complete_time_groups,
     split_proposal_gate_rows,
     validate_proposal_arrays,
@@ -212,3 +217,95 @@ def test_complete_time_sampling_never_splits_or_exceeds_variable_groups() -> Non
         if value not in set(time_id[got])
     ]
     assert all(len(got) + size > 9 for size in remaining_group_sizes)
+
+
+def test_enumerates_all_323_pairs_once_in_lexical_order() -> None:
+    pairs = enumerate_lexical_pairs(323)
+
+    assert len(pairs) == 52_003
+    assert pairs[:3] == [(0, 1), (0, 2), (0, 3)]
+    assert pairs[-1] == (321, 322)
+    assert len(set(pairs)) == len(pairs)
+    assert all(left < right for left, right in pairs)
+
+
+def test_proposal_splits_expand_train_into_next_block() -> None:
+    blocks = [np.array([0, 1]), np.array([2]), np.array([3, 4]), np.array([5])]
+
+    splits = proposal_split_rows(blocks)
+
+    expected = [
+        (np.array([0, 1]), np.array([2])),
+        (np.array([0, 1, 2]), np.array([3, 4])),
+        (np.array([0, 1, 2, 3, 4]), np.array([5])),
+    ]
+    for got, want in zip(splits, expected):
+        np.testing.assert_array_equal(got[0], want[0])
+        np.testing.assert_array_equal(got[1], want[1])
+
+
+def test_aggregate_pair_scores_computes_frozen_statistics() -> None:
+    summary = aggregate_pair_scores([
+        {"gain": 0.03, "coverage": 0.91, "dominant_cell_gain_share": 0.20, "finite": True},
+        {"gain": 0.01, "coverage": 0.85, "dominant_cell_gain_share": 0.30, "finite": True},
+        {"gain": -0.01, "coverage": 0.82, "dominant_cell_gain_share": 0.45, "finite": True},
+    ])
+
+    assert summary["median_gain"] == pytest.approx(0.01)
+    assert summary["mean_gain"] == pytest.approx(0.01)
+    assert summary["drop_best_mean_gain"] == pytest.approx(0.0)
+    assert summary["positive_blocks"] == 2
+    assert summary["minimum_coverage"] == pytest.approx(0.82)
+    assert summary["maximum_dominant_cell_gain_share"] == pytest.approx(0.45)
+    assert summary["all_finite"] is True
+
+
+def test_proposal_eligibility_uses_exact_frozen_boundaries() -> None:
+    protocol = default_proposal_protocol()
+    passing = {
+        "positive_blocks": 2,
+        "drop_best_mean_gain": 1e-12,
+        "minimum_coverage": 0.80,
+        "maximum_dominant_cell_gain_share": 0.50,
+        "all_finite": True,
+    }
+
+    assert proposal_eligible(passing, protocol)
+    for name, value in (
+        ("positive_blocks", 1),
+        ("drop_best_mean_gain", 0.0),
+        ("minimum_coverage", 0.7999),
+        ("maximum_dominant_cell_gain_share", 0.5001),
+        ("all_finite", False),
+    ):
+        failed = dict(passing)
+        failed[name] = value
+        assert not proposal_eligible(failed, protocol)
+
+
+def test_small_scan_scores_each_pair_once_per_split() -> None:
+    rng = np.random.default_rng(44)
+    features = rng.normal(size=(160, 4)).astype(np.float32)
+    residual = ((features[:, 0] > 0) ^ (features[:, 1] > 0)).astype(float)
+    weight = np.ones(160)
+    blocks = [np.arange(left, left + 40) for left in range(0, 160, 40)]
+
+    scores = scan_prebinned_pairs(
+        features,
+        residual,
+        weight,
+        blocks,
+        bins=4,
+        min_cell_weight=2.0,
+        max_surface_cells=16,
+    )
+
+    assert scores["pair_indices"].shape == (6, 2)
+    assert scores["split_gain"].shape == (6, 3)
+    assert scores["split_coverage"].shape == (6, 3)
+    assert scores["surface_checksum"].shape == (6, 3)
+    np.testing.assert_array_equal(
+        scores["pair_indices"], enumerate_lexical_pairs(4)
+    )
+    assert scores["scored_pair_split_count"] == 18
+    assert scores["eligible"].dtype == np.bool_
