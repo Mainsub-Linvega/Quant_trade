@@ -3,12 +3,16 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+import subprocess
+import sys
 import numpy as np
 
 import pytest
 
 from experiments.v3_low_sample_purified_proposal import (
     chronological_time_blocks,
+    benchmark_runtime_decision,
+    build_proposal_report,
     aggregate_pair_scores,
     enumerate_lexical_pairs,
     load_baseline_indices,
@@ -17,9 +21,11 @@ from experiments.v3_low_sample_purified_proposal import (
     scan_prebinned_pairs,
     sample_complete_time_groups,
     split_proposal_gate_rows,
+    parse_args,
     select_proposal_candidates,
     validate_proposal_arrays,
     default_proposal_protocol,
+    write_proposal_artifacts,
     validate_proposal_protocol,
 )
 
@@ -414,3 +420,129 @@ def test_selection_manifest_is_lexical_and_deterministic() -> None:
     assert first["manifest_json"] == second["manifest_json"]
     assert first["manifest_sha256"] == second["manifest_sha256"]
     assert len(first["manifest_sha256"]) == 64
+
+
+def test_runtime_decision_uses_only_timing_and_rss() -> None:
+    allowed = benchmark_runtime_decision(
+        elapsed_seconds=10.0,
+        benchmark_pairs=1_024,
+        total_pairs=52_003,
+        peak_rss_bytes=2 * 1024**3,
+        row_cap=40_000,
+        fallback_row_cap=20_000,
+        runtime_ceiling_seconds=1_800.0,
+        peak_rss_ceiling_bytes=4 * 1024**3,
+    )
+    fallback = benchmark_runtime_decision(
+        elapsed_seconds=40.0,
+        benchmark_pairs=1_024,
+        total_pairs=52_003,
+        peak_rss_bytes=2 * 1024**3,
+        row_cap=40_000,
+        fallback_row_cap=20_000,
+        runtime_ceiling_seconds=1_800.0,
+        peak_rss_ceiling_bytes=4 * 1024**3,
+    )
+    memory_block = benchmark_runtime_decision(
+        elapsed_seconds=10.0,
+        benchmark_pairs=1_024,
+        total_pairs=52_003,
+        peak_rss_bytes=5 * 1024**3,
+        row_cap=40_000,
+        fallback_row_cap=20_000,
+        runtime_ceiling_seconds=1_800.0,
+        peak_rss_ceiling_bytes=4 * 1024**3,
+    )
+
+    assert allowed["action"] == "run"
+    assert allowed["row_cap"] == 40_000
+    assert fallback["action"] == "fallback"
+    assert fallback["row_cap"] == 20_000
+    assert memory_block["action"] == "stop"
+    assert memory_block["reason"] == "peak_rss_exceeded"
+    assert set(allowed) == {
+        "action", "reason", "row_cap", "elapsed_seconds",
+        "estimated_full_seconds", "peak_rss_bytes",
+    }
+
+
+def test_runtime_decision_stops_when_fallback_still_exceeds_ceiling() -> None:
+    got = benchmark_runtime_decision(
+        elapsed_seconds=40.0,
+        benchmark_pairs=1_024,
+        total_pairs=52_003,
+        peak_rss_bytes=1,
+        row_cap=20_000,
+        fallback_row_cap=20_000,
+        runtime_ceiling_seconds=1_800.0,
+        peak_rss_ceiling_bytes=4 * 1024**3,
+    )
+
+    assert got["action"] == "stop"
+    assert got["reason"] == "fallback_runtime_exceeded"
+
+
+def test_atomic_reports_write_only_experiment_formats(tmp_path: Path) -> None:
+    scores = {
+        "pair_indices": np.array([[0, 1], [0, 2]], dtype=np.int16),
+        "split_gain": np.zeros((2, 3)),
+        "eligible": np.array([True, False]),
+        "scored_pair_split_count": 6,
+    }
+    selection = {
+        "pairs": [(0, 1)],
+        "core_ranked": [(0, 1)],
+        "diversity_ranked": [],
+        "eligible_count": 1,
+        "manifest_sha256": "a" * 64,
+    }
+    report = build_proposal_report(
+        label="unit",
+        task="ridge",
+        protocol=default_proposal_protocol(),
+        input_path=tmp_path / "input.npz",
+        input_sha256="b" * 64,
+        baseline_reference={
+            "source_path": "/frozen/baseline_model.json",
+            "source_sha256": "c" * 64,
+            "source_key": "selected_indices",
+            "indices": list(range(200)),
+        },
+        sampling={"row_cap": 40_000, "row_indices_sha256": "d" * 64},
+        benchmark={"action": "run", "estimated_full_seconds": 20.0},
+        scores=scores,
+        selection=selection,
+    )
+
+    paths = write_proposal_artifacts(
+        tmp_path, "unit", scores, report, force=False
+    )
+
+    assert set(paths) == {"scores", "manifest", "markdown"}
+    assert paths["scores"].name == "unit_pair_scores.npz"
+    assert paths["manifest"].name == "unit_manifest.json"
+    assert paths["markdown"].name == "unit.md"
+    assert json.loads(paths["manifest"].read_text())["pairs"] == [[0, 1]]
+    assert not list(tmp_path.glob("*.csv"))
+    assert not list(tmp_path.glob("*.tmp*"))
+    with pytest.raises(FileExistsError, match="force"):
+        write_proposal_artifacts(tmp_path, "unit", scores, report, force=False)
+
+
+def test_cli_has_no_candidate_or_csv_output_flags() -> None:
+    script = Path(__file__).resolve().parents[1] / "experiments" / "v3_low_sample_purified_proposal.py"
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--input-npz" in result.stdout
+    assert "--candidate-dir" in result.stdout
+    assert "--output-dir" in result.stdout
+    assert "--label" in result.stdout
+    assert "write-candidate" not in result.stdout
+    assert "csv" not in result.stdout.lower()

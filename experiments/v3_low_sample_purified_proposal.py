@@ -1,16 +1,24 @@
 """Leakage-safe low-sample proposal scan for purified feature pairs."""
 
 from __future__ import annotations
+import argparse
 
 from collections.abc import Mapping, Sequence
 import copy
 import hashlib
 import json
 from pathlib import Path
+import resource
+import sys
 import re
+import time
 from typing import Any
 
 import numpy as np
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 from experiments.v3_purified_interactions import default_purified_protocol
 
@@ -608,3 +616,353 @@ def select_proposal_candidates(
         "manifest_sha256": hashlib.sha256(manifest_json.encode("utf-8")).hexdigest(),
         "eligible_count": len(ranked),
     }
+
+
+def benchmark_runtime_decision(
+    *,
+    elapsed_seconds: float,
+    benchmark_pairs: int,
+    total_pairs: int,
+    peak_rss_bytes: int,
+    row_cap: int,
+    fallback_row_cap: int,
+    runtime_ceiling_seconds: float,
+    peak_rss_ceiling_bytes: int,
+) -> dict[str, object]:
+    """Choose run/fallback/stop from resource measurements alone."""
+    numeric = (
+        elapsed_seconds,
+        benchmark_pairs,
+        total_pairs,
+        peak_rss_bytes,
+        row_cap,
+        fallback_row_cap,
+        runtime_ceiling_seconds,
+        peak_rss_ceiling_bytes,
+    )
+    if any(float(value) <= 0.0 for value in numeric):
+        raise ValueError("benchmark measurements and ceilings must be positive")
+    estimated = float(elapsed_seconds) * int(total_pairs) / int(benchmark_pairs)
+    if int(peak_rss_bytes) > int(peak_rss_ceiling_bytes):
+        action = "stop"
+        reason = "peak_rss_exceeded"
+        selected_cap = int(row_cap)
+    elif estimated <= float(runtime_ceiling_seconds):
+        action = "run"
+        reason = "within_resource_ceiling"
+        selected_cap = int(row_cap)
+    elif int(row_cap) != int(fallback_row_cap):
+        action = "fallback"
+        reason = "primary_runtime_exceeded"
+        selected_cap = int(fallback_row_cap)
+    else:
+        action = "stop"
+        reason = "fallback_runtime_exceeded"
+        selected_cap = int(row_cap)
+    return {
+        "action": action,
+        "reason": reason,
+        "row_cap": selected_cap,
+        "elapsed_seconds": float(elapsed_seconds),
+        "estimated_full_seconds": estimated,
+        "peak_rss_bytes": int(peak_rss_bytes),
+    }
+
+
+def _jsonable(value: object) -> object:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def build_proposal_report(
+    *,
+    label: str,
+    task: str,
+    protocol: Mapping[str, object],
+    input_path: str | Path,
+    input_sha256: str,
+    baseline_reference: Mapping[str, object],
+    sampling: Mapping[str, object],
+    benchmark: Mapping[str, object],
+    scores: Mapping[str, object],
+    selection: Mapping[str, object],
+) -> dict[str, object]:
+    """Build a JSON-safe manifest for one completed proposal scan."""
+    validate_proposal_protocol(protocol)
+    if task not in {"ridge", "xs", "market"}:
+        raise ValueError("unknown proposal task")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", label):
+        raise ValueError("label must be a safe file stem")
+    pairs = [list(pair) for pair in selection["pairs"]]
+    pair_count = len(np.asarray(scores["pair_indices"]))
+    return {
+        "schema_version": 1,
+        "label": label,
+        "task": task,
+        "protocol": _jsonable(protocol),
+        "input": {
+            "path": str(Path(input_path).resolve()),
+            "sha256": input_sha256,
+        },
+        "baseline_reference": _jsonable(baseline_reference),
+        "sampling": _jsonable(sampling),
+        "benchmark": _jsonable(benchmark),
+        "scan": {
+            "pair_count": pair_count,
+            "split_count": 3,
+            "pair_split_count": int(scores["scored_pair_split_count"]),
+            "eligible_count": int(selection["eligible_count"]),
+        },
+        "selection": {
+            "core_ranked": _jsonable(selection["core_ranked"]),
+            "diversity_ranked": _jsonable(selection["diversity_ranked"]),
+            "pair_manifest_sha256": selection["manifest_sha256"],
+        },
+        "pairs": pairs,
+        "candidate_generated": False,
+        "submission_generated": False,
+    }
+
+
+def _proposal_markdown(report: Mapping[str, object]) -> str:
+    scan = _mapping(report["scan"], "scan")
+    benchmark = _mapping(report["benchmark"], "benchmark")
+    return "\n".join([
+        f"# Low-Sample Purified Pair Proposal: {report['label']}",
+        "",
+        f"- Task: `{report['task']}`",
+        f"- Scanned pairs: `{scan['pair_count']}`",
+        f"- Pair-split scores: `{scan['pair_split_count']}`",
+        f"- Eligible pairs: `{scan['eligible_count']}`",
+        f"- Frozen candidates: `{len(report['pairs'])}`",
+        f"- Benchmark action: `{benchmark.get('action', 'recorded')}`",
+        f"- Estimated full seconds: `{benchmark.get('estimated_full_seconds', 'n/a')}`",
+        "- Candidate model generated: `false`",
+        "- Submission generated: `false`",
+        "",
+    ])
+
+
+def write_proposal_artifacts(
+    output_dir: str | Path,
+    label: str,
+    scores: Mapping[str, object],
+    report: Mapping[str, object],
+    *,
+    force: bool = False,
+) -> dict[str, Path]:
+    """Atomically write NPZ scores plus JSON and Markdown experiment reports."""
+    directory = Path(output_dir).resolve()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", label):
+        raise ValueError("label must be a safe file stem")
+    paths = {
+        "scores": directory / f"{label}_pair_scores.npz",
+        "manifest": directory / f"{label}_manifest.json",
+        "markdown": directory / f"{label}.md",
+    }
+    if not force and any(path.exists() for path in paths.values()):
+        raise FileExistsError("proposal artifact exists; use force to overwrite")
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary = {
+        "scores": directory / f".{label}_pair_scores.tmp.npz",
+        "manifest": directory / f".{label}_manifest.json.tmp",
+        "markdown": directory / f".{label}.md.tmp",
+    }
+    arrays = {
+        name: value
+        for name, value in scores.items()
+        if isinstance(value, (np.ndarray, np.generic, int, float, bool))
+    }
+    try:
+        np.savez_compressed(temporary["scores"], **arrays)
+        temporary["manifest"].write_text(
+            json.dumps(_jsonable(report), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary["markdown"].write_text(
+            _proposal_markdown(report), encoding="utf-8"
+        )
+        for name in ("scores", "manifest", "markdown"):
+            temporary[name].replace(paths[name])
+    finally:
+        for path in temporary.values():
+            path.unlink(missing_ok=True)
+    return paths
+
+
+def _peak_rss_bytes() -> int:
+    # Linux reports KiB; this CLI runs in the project's frozen WSL environment.
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+
+
+def _sample_proposal_blocks(
+    arrays: Mapping[str, np.ndarray],
+    proposal_rows: np.ndarray,
+    *,
+    row_cap: int,
+    n_blocks: int,
+) -> list[np.ndarray]:
+    blocks = chronological_time_blocks(
+        arrays["time_id"], proposal_rows, n_blocks=n_blocks
+    )
+    return [
+        sample_complete_time_groups(arrays["time_id"], block, row_cap=row_cap)
+        for block in blocks
+    ]
+
+
+def _benchmark_scan(
+    arrays: Mapping[str, np.ndarray],
+    sampled_blocks: Sequence[np.ndarray],
+    *,
+    bins: int,
+    min_cell_weight: float,
+    benchmark_pairs: int,
+) -> tuple[dict[str, object], float, int]:
+    pairs = enumerate_lexical_pairs(arrays["features"].shape[1])[:benchmark_pairs]
+    started = time.perf_counter()
+    scores = scan_prebinned_pairs(
+        arrays["features"],
+        arrays["residual"],
+        arrays["weight"],
+        sampled_blocks,
+        bins=bins,
+        min_cell_weight=min_cell_weight,
+        max_surface_cells=bins * bins,
+        pairs=pairs,
+    )
+    return scores, time.perf_counter() - started, _peak_rss_bytes()
+
+
+def run_proposal(
+    *,
+    task: str,
+    input_path: str | Path,
+    candidate_dir: str | Path,
+    output_dir: str | Path,
+    label: str,
+    force: bool = False,
+) -> dict[str, Path]:
+    """Benchmark, resource-gate, scan, select, and report one task."""
+    protocol = default_proposal_protocol()
+    validate_proposal_protocol(protocol)
+    source = Path(input_path).resolve()
+    with np.load(source, allow_pickle=False) as loaded:
+        arrays = validate_proposal_arrays({name: loaded[name] for name in loaded.files})
+    if arrays["features"].shape[1] != int(protocol["source_feature_count"]):
+        raise ValueError("proposal input must contain all 323 source features")
+    proposal_rows, _ = split_proposal_gate_rows(arrays["fold"], protocol)
+    sampling_protocol = _mapping(protocol["sampling"], "sampling")
+    if task in {"ridge", "xs"}:
+        task_sampling = _mapping(sampling_protocol["ridge_xs"], "ridge_xs")
+        row_cap = int(task_sampling["row_cap_per_block"])
+        fallback_cap = int(task_sampling["fallback_row_cap_per_block"])
+    elif task == "market":
+        task_sampling = _mapping(sampling_protocol["market"], "market")
+        row_cap = int(task_sampling["time_cap_per_block"])
+        fallback_cap = row_cap
+    else:
+        raise ValueError("unknown proposal task")
+    benchmark_protocol = _mapping(protocol["benchmark"], "benchmark")
+    benchmark_pairs = int(benchmark_protocol["lexical_pair_count"])
+    sampled = _sample_proposal_blocks(
+        arrays, proposal_rows, row_cap=row_cap,
+        n_blocks=int(protocol["proposal_blocks"]),
+    )
+    _, elapsed, rss = _benchmark_scan(
+        arrays, sampled, bins=int(protocol["proposal_bins"]),
+        min_cell_weight=float(task_sampling["min_cell_weight"]),
+        benchmark_pairs=benchmark_pairs,
+    )
+    decision = benchmark_runtime_decision(
+        elapsed_seconds=elapsed, benchmark_pairs=benchmark_pairs,
+        total_pairs=int(protocol["source_pair_count"]), peak_rss_bytes=rss,
+        row_cap=row_cap, fallback_row_cap=fallback_cap,
+        runtime_ceiling_seconds=float(benchmark_protocol["runtime_ceiling_seconds"]),
+        peak_rss_ceiling_bytes=int(benchmark_protocol["peak_rss_ceiling_bytes"]),
+    )
+    if decision["action"] == "fallback":
+        sampled = _sample_proposal_blocks(
+            arrays, proposal_rows, row_cap=fallback_cap,
+            n_blocks=int(protocol["proposal_blocks"]),
+        )
+        _, elapsed, rss = _benchmark_scan(
+            arrays, sampled, bins=int(protocol["proposal_bins"]),
+            min_cell_weight=float(task_sampling["min_cell_weight"]),
+            benchmark_pairs=benchmark_pairs,
+        )
+        decision = benchmark_runtime_decision(
+            elapsed_seconds=elapsed, benchmark_pairs=benchmark_pairs,
+            total_pairs=int(protocol["source_pair_count"]), peak_rss_bytes=rss,
+            row_cap=fallback_cap, fallback_row_cap=fallback_cap,
+            runtime_ceiling_seconds=float(benchmark_protocol["runtime_ceiling_seconds"]),
+            peak_rss_ceiling_bytes=int(benchmark_protocol["peak_rss_ceiling_bytes"]),
+        )
+    if decision["action"] != "run":
+        raise RuntimeError(f"proposal resource gate stopped: {decision['reason']}")
+    scores = scan_prebinned_pairs(
+        arrays["features"], arrays["residual"], arrays["weight"], sampled,
+        bins=int(protocol["proposal_bins"]),
+        min_cell_weight=float(task_sampling["min_cell_weight"]),
+        max_surface_cells=int(protocol["proposal_bins"]) ** 2,
+        protocol=protocol,
+    )
+    baseline = load_baseline_indices(task, candidate_dir)
+    selection = select_proposal_candidates(
+        scores, baseline_indices=set(baseline["indices"]), protocol=protocol
+    )
+    sampled_rows = np.concatenate(sampled).astype(np.int64, copy=False)
+    sampling = {
+        "row_cap": int(decision["row_cap"]),
+        "block_row_counts": [len(block) for block in sampled],
+        "selected_time_ids": [
+            [int(value) for value in np.unique(arrays["time_id"][block])]
+            for block in sampled
+        ],
+        "row_indices_sha256": hashlib.sha256(sampled_rows.tobytes()).hexdigest(),
+    }
+    report = build_proposal_report(
+        label=label, task=task, protocol=protocol, input_path=source,
+        input_sha256=_sha256_file(source), baseline_reference=baseline,
+        sampling=sampling, benchmark=decision, scores=scores, selection=selection,
+    )
+    return write_proposal_artifacts(
+        output_dir, label, scores, report, force=force
+    )
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--task", choices=["ridge", "xs", "market"], default="ridge")
+    parser.add_argument("--input-npz", required=True)
+    parser.add_argument("--candidate-dir", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--label", required=True)
+    parser.add_argument("--force", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    args = parse_args()
+    paths = run_proposal(
+        task=args.task,
+        input_path=args.input_npz,
+        candidate_dir=args.candidate_dir,
+        output_dir=args.output_dir,
+        label=args.label,
+        force=args.force,
+    )
+    print(json.dumps({name: str(path) for name, path in paths.items()}, indent=2))
+
+
+if __name__ == "__main__":
+    main()
