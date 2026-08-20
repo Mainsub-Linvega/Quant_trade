@@ -1,0 +1,170 @@
+{
+  "experiment": "multitask_mlp",
+  "question": "共享 trunk 的 responder 辅助损失，能否让 MLP 分量补上生产 v3 的 target 残差？",
+  "pre_registration": {
+    "aux_lambda": 0.3,
+    "aux_ladder": [
+      "responder_00",
+      "responder_02",
+      "responder_03",
+      "responder_04",
+      "responder_05"
+    ],
+    "lambda_note": "√λ 缩放辅助目标列 ⟺ 该头损失权重 λ（alpha=0 时严格）",
+    "control_arm": "target_only（同架构/同种子/同迭代，仅去掉辅助头）",
+    "stage1_gates": [
+      "delta_positive",
+      "relative_gain_at_least_3pct",
+      "beats_target_only"
+    ],
+    "gate_correction_20260819": "原第二道写的是 2ΔA>ΔB；配比被重解时 A/B 只反映整体缩放，该判据不成立。已换成尺度不变的残差分解 + 本就该有的 3% 幅度门槛（收紧，非放松）。",
+    "stop_rule": "任一门槛不过即停；不调 λ / hidden / 激活 / 辅助目标集"
+  },
+  "configuration": {
+    "data_root": "/home/mainsub/Documents/Quant_trade/data",
+    "output_dir": "/home/mainsub/Documents/Quant_trade/outputs/experiments",
+    "label": "multitask_mlp_e12",
+    "baseline_cache": "/home/mainsub/Documents/Quant_trade/outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+    "candidate_meta": "/home/mainsub/Documents/Quant_trade/strategies/v3_hybrid/model/hybrid_meta.json",
+    "n_folds": 5,
+    "folds": [
+      0
+    ],
+    "train_window": 78960,
+    "embargo": 6,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "current_feature_count": 200,
+    "blend_mode": "oracle",
+    "market_hidden": [
+      32
+    ],
+    "cross_hidden": [
+      64,
+      32
+    ],
+    "max_iter": 12,
+    "batch_size": 4096,
+    "learning_rate": 0.001,
+    "alpha": 0.001,
+    "seed": 2026,
+    "force": false
+  },
+  "blend_mode_caveat": "oracle = 系数在评估折自身重解，是**上界**；仓库量过的冻结系数让步为 −2.54%~−3.84%（horizon_auxiliary_cache_probe 的 null_frozen_scale 臂）",
+  "folds": [
+    {
+      "fold": 0,
+      "train_rows": 1183708,
+      "valid_rows": 296059,
+      "dropped_unmatched_rows": 0,
+      "design_columns": 375,
+      "market_numpy_parity": 0.0,
+      "auxiliary_missing_imputed": {
+        "responder_00": 205,
+        "responder_02": 0,
+        "responder_03": 0,
+        "responder_04": 203,
+        "responder_05": 463
+      },
+      "baseline": {
+        "A": 0.0021899928557795475,
+        "B": 0.004541925371907157,
+        "peak": 0.001055954978483406,
+        "optimal_scale": 0.48217279599641866,
+        "score_at_unit_scale": -0.00016193966034806166,
+        "denominator": 957660.3665208269
+      },
+      "arms": {
+        "target_only": {
+          "coefficients": [
+            0.48580435588568016,
+            -0.0036487369825542377
+          ],
+          "coefficient_source": "oracle（在 fold 0 自身上重解，**上界**）",
+          "mlp": {
+            "A": 0.0021080001888280453,
+            "B": 0.024145204684124937,
+            "peak": 0.0001840392265972675,
+            "optimal_scale": 0.08730512813643777,
+            "score_at_unit_scale": -0.019929204306468846,
+            "denominator": 957660.3665208269
+          },
+          "blend": {
+            "A": 0.0010562165304480163,
+            "B": 0.0010562165304480158,
+            "peak": 0.0010562165304480167,
+            "optimal_scale": 1.0000000000000004,
+            "score_at_unit_scale": 0.0010562165304480167,
+            "denominator": 957660.3665208269
+          },
+          "oracle_upper_bound_peak": 0.0010562165304480163,
+          "residual_signal": -7.168287707793241e-05,
+          "residual_energy": 0.019645942533175247,
+          "blend_weight_share": 0.017022378133127215,
+          "mlp_relative_to_baseline": 0.17428700119543933,
+          "correlation_with_baseline": 0.4140921921450684,
+          "numpy_parity": 5.492038428825397e-07
+        },
+        "multitask": {
+          "coefficients": [
+            0.4784369551173008,
+            0.0037829096914241086
+          ],
+          "coefficient_source": "oracle（在 fold 0 自身上重解，**上界**）",
+          "mlp": {
+            "A": 0.002234145932982467,
+            "B": 0.02330450206179725,
+            "peak": 0.00021418213685176504,
+            "optimal_scale": 0.09586756786556157,
+            "score_at_unit_scale": -0.018836210195832315,
+            "denominator": 957660.3665208269
+          },
+          "blend": {
+            "A": 0.0010562250859497437,
+            "B": 0.001056225085949744,
+            "peak": 0.0010562250859497435,
+            "optimal_scale": 0.9999999999999998,
+            "score_at_unit_scale": 0.0010562250859497435,
+            "denominator": 957660.3665208269
+          },
+          "oracle_upper_bound_peak": 0.001056225085949744,
+          "residual_signal": 7.140203926891226e-05,
+          "residual_energy": 0.018874899242448666,
+          "blend_weight_share": 0.01759509814075722,
+          "mlp_relative_to_baseline": 0.20283264080006497,
+          "correlation_with_baseline": 0.42070961893418374,
+          "numpy_parity": 3.698306549337893e-07
+        }
+      },
+      "elapsed_seconds": 91.72770656799912
+    }
+  ],
+  "summary": {
+    "target_only": {
+      "mean_delta": 2.6155196461061757e-07,
+      "relative_gain": 0.0002476923447875271,
+      "positive_folds": 1,
+      "drop_best_mean_delta": 2.6155196461061757e-07,
+      "mean_residual_signal": -7.168287707793241e-05,
+      "mean_residual_energy": 0.019645942533175247,
+      "mean_blend_weight_share": 0.017022378133127215
+    },
+    "multitask": {
+      "mean_delta": 2.7010746633739265e-07,
+      "relative_gain": 0.00025579449109215717,
+      "positive_folds": 1,
+      "drop_best_mean_delta": 2.7010746633739265e-07,
+      "mean_residual_signal": 7.140203926891226e-05,
+      "mean_residual_energy": 0.018874899242448666,
+      "mean_blend_weight_share": 0.01759509814075722
+    },
+    "baseline_peak_mean": 0.001055954978483406,
+    "stage1_gates": {
+      "delta_positive": true,
+      "relative_gain_at_least_3pct": false,
+      "beats_target_only": true
+    },
+    "stage1_pass": false
+  },
+  "elapsed_seconds": 123.35004436399686
+}

@@ -1,0 +1,34 @@
+{
+  "experiment": "nn_capacity_ladder_plan",
+  "role": "PRE-REGISTRATION —— 必须先于任何一档跑起来之前落盘",
+  "question": "MLP 独立 peak 只有基准的 20%，是预算造成的还是能力上限？",
+  "ladder": [
+    12,
+    50,
+    150,
+    400
+  ],
+  "arms": [
+    "target_only",
+    "multitask"
+  ],
+  "gate_fraction": 0.5,
+  "gate_reads": "max(两臂) 的独立 MLP peak / 基准 peak",
+  "gate_rationale": "旧 screen 里 MLP 到 40.2% 时 oracle 混合增益才 +10.64%，到 4.8~6.2% 时 ≈ 0，08-19 在 17~20% 时是 +0.026%",
+  "extension_trigger": 0.05,
+  "extension_rung": 1200,
+  "reproduction_anchor": {
+    "target_only": 0.17428700119543933,
+    "multitask": 0.20283264080006497
+  },
+  "reproduction_tolerance": 0.001,
+  "config_allowed_to_differ": [
+    "label",
+    "max_iter"
+  ],
+  "scope_limits": [
+    "特征按 |corr(feature, e)| 选的 top-200 —— 为线性/树挑的判据",
+    "asset_id 是 15 维 one-hot，不是 embedding",
+    "sklearn MLPRegressor：无学习率调度 / 无 LayerNorm / 无 dropout"
+  ]
+}
