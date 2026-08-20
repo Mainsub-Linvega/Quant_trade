@@ -200,6 +200,40 @@ def assign_quantile_bins(values: np.ndarray, edges: np.ndarray) -> np.ndarray:
     return result
 
 
+def _direct_purified_projection(
+    surface: np.ndarray,
+    cell_weight: np.ndarray,
+    *,
+    intercept: float,
+    tolerance: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Project a surface off weighted row and column main effects."""
+    observed_rows, observed_columns = np.nonzero(cell_weight > 0.0)
+    design = np.zeros(
+        (len(observed_rows), surface.shape[0] + surface.shape[1]),
+        dtype=np.float64,
+    )
+    positions = np.arange(len(observed_rows))
+    design[positions, observed_rows] = 1.0
+    design[positions, surface.shape[0] + observed_columns] = 1.0
+    root_weight = np.sqrt(cell_weight[observed_rows, observed_columns])
+    coefficients = np.linalg.lstsq(
+        design * root_weight[:, None],
+        (surface - intercept)[observed_rows, observed_columns] * root_weight,
+        rcond=None,
+    )[0]
+    left_main = coefficients[:surface.shape[0]]
+    right_main = coefficients[surface.shape[0]:]
+    pure = surface - intercept - left_main[:, None] - right_main[None, :]
+    error = max(
+        float(np.max(np.abs(np.sum(pure * cell_weight, axis=1)))),
+        float(np.max(np.abs(np.sum(pure * cell_weight, axis=0)))),
+    )
+    if error > tolerance:
+        raise RuntimeError("direct pair-surface purification did not converge")
+    return pure, left_main, right_main
+
+
 def purify_pair_surface(
     scores: np.ndarray,
     weights: np.ndarray,
@@ -258,7 +292,9 @@ def purify_pair_surface(
         if max(float(row_error), float(column_error)) <= tolerance:
             break
     else:
-        raise RuntimeError("pair-surface purification did not converge")
+        pure, left_main, right_main = _direct_purified_projection(
+            surface, cell_weight, intercept=intercept, tolerance=tolerance
+        )
 
     return pure, (left_main, right_main), intercept
 
@@ -648,7 +684,15 @@ def score_prebinned_pair_split(
         weighted_sum, cell_weights, out=np.zeros((bins, bins)), where=supported
     )
     if float(np.sum(supported_weights)) > 0.0:
-        pure, _, _ = purify_pair_surface(means, supported_weights)
+        if np.all(supported):
+            pure, _, _ = purify_pair_surface(
+                means, supported_weights, max_iterations=10
+            )
+        else:
+            intercept = float(np.sum(means * supported_weights) / np.sum(supported_weights))
+            pure, _, _ = _direct_purified_projection(
+                means, supported_weights, intercept=intercept, tolerance=1e-10
+            )
         pure = np.where(supported, pure, 0.0)
     else:
         pure = np.zeros((bins, bins), dtype=np.float64)

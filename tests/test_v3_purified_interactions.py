@@ -698,3 +698,30 @@ def test_prebin_all_missing_feature_uses_sentinel_without_stopping_scan() -> Non
         pair=(1, 2), min_cell_weight=1.0, max_surface_cells=16,
     )
     assert score["gain"] == 0.0
+
+
+def test_purification_solves_weakly_connected_support_after_iteration_limit() -> None:
+    weights = np.array([
+        [26826.367, 408.639, 0.0, 0.0],
+        [394.939, 25757.742, 54.191, 0.0],
+        [0.0, 50.617, 26583.513, 226.210],
+        [0.0, 0.0, 324.594, 27227.889],
+    ])
+    scores = np.array([
+        [0.11, -0.07, 0.0, 0.0],
+        [0.04, 0.02, -0.06, 0.0],
+        [0.0, -0.03, 0.08, 0.01],
+        [0.0, 0.0, -0.04, 0.09],
+    ])
+
+    pure, mains, intercept = purify_pair_surface(
+        scores, weights, max_iterations=1_000
+    )
+
+    assert np.max(np.abs(np.sum(pure * weights, axis=0))) <= 1e-10
+    assert np.max(np.abs(np.sum(pure * weights, axis=1))) <= 1e-10
+    np.testing.assert_allclose(
+        pure + mains[0][:, None] + mains[1][None, :] + intercept,
+        scores,
+        atol=1e-12,
+    )
