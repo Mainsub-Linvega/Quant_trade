@@ -940,19 +940,89 @@ def run_proposal(
     )
 
 
+def run_synthetic_smoke() -> dict[str, object]:
+    """Exercise the production scanner on balanced XOR and additive controls."""
+    levels = np.array([-3.0, -1.0, 1.0, 3.0], dtype=np.float32)
+    grid = np.stack(
+        np.meshgrid(levels, levels, levels, levels, indexing="ij"), axis=-1
+    ).reshape(-1, 4)
+    rng = np.random.default_rng(2026)
+    blocks: list[np.ndarray] = []
+    feature_blocks: list[np.ndarray] = []
+    residual_blocks: list[np.ndarray] = []
+    offset = 0
+    for block_index in range(4):
+        block = np.repeat(grid, 4, axis=0)
+        order = rng.permutation(len(block))
+        block = block[order]
+        noise = rng.normal(size=(len(block), 2)).astype(np.float32)
+        features = np.column_stack([block, noise]).astype(np.float32)
+        xor = np.where(
+            (features[:, 0] > 0.0) ^ (features[:, 1] > 0.0), 1.0, -1.0
+        )
+        additive = 0.08 * features[:, 2] + 0.04 * features[:, 3]
+        feature_blocks.append(features)
+        residual_blocks.append(xor + additive)
+        blocks.append(np.arange(offset, offset + len(features), dtype=np.int64))
+        offset += len(features)
+    matrix = np.vstack(feature_blocks)
+    residual = np.concatenate(residual_blocks)
+    scores = scan_prebinned_pairs(
+        matrix,
+        residual,
+        np.ones(len(residual), dtype=np.float64),
+        blocks,
+        bins=4,
+        min_cell_weight=32.0,
+        max_surface_cells=16,
+    )
+    selection = select_proposal_candidates(
+        scores,
+        baseline_indices=set(range(matrix.shape[1])),
+        protocol=default_proposal_protocol(),
+    )
+    pair_rows = {
+        tuple(int(value) for value in pair): index
+        for index, pair in enumerate(scores["pair_indices"])
+    }
+    xor_pair = (0, 1)
+    additive_pair = (2, 3)
+    return {
+        "xor_pair": list(xor_pair),
+        "xor_eligible": bool(scores["eligible"][pair_rows[xor_pair]]),
+        "additive_control_pair": list(additive_pair),
+        "additive_control_eligible": bool(
+            scores["eligible"][pair_rows[additive_pair]]
+        ),
+        "pairs": [list(pair) for pair in selection["pairs"]],
+        "scanned_pairs": len(scores["pair_indices"]),
+        "pair_split_count": int(scores["scored_pair_split_count"]),
+        "manifest_sha256": selection["manifest_sha256"],
+    }
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", choices=["ridge", "xs", "market"], default="ridge")
-    parser.add_argument("--input-npz", required=True)
-    parser.add_argument("--candidate-dir", required=True)
-    parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--label", required=True)
+    parser.add_argument("--input-npz")
+    parser.add_argument("--candidate-dir")
+    parser.add_argument("--output-dir")
+    parser.add_argument("--label")
+    parser.add_argument("--synthetic-smoke", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser.parse_args(argv)
 
 
 def main() -> None:
     args = parse_args()
+    if args.synthetic_smoke:
+        print(json.dumps(run_synthetic_smoke(), indent=2, sort_keys=True))
+        return
+    required = (args.input_npz, args.candidate_dir, args.output_dir, args.label)
+    if any(value is None for value in required):
+        raise SystemExit(
+            "--input-npz, --candidate-dir, --output-dir, and --label are required"
+        )
     paths = run_proposal(
         task=args.task,
         input_path=args.input_npz,

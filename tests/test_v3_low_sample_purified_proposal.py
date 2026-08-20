@@ -25,6 +25,7 @@ from experiments.v3_low_sample_purified_proposal import (
     select_proposal_candidates,
     validate_proposal_arrays,
     default_proposal_protocol,
+    run_synthetic_smoke,
     write_proposal_artifacts,
     validate_proposal_protocol,
 )
@@ -546,3 +547,31 @@ def test_cli_has_no_candidate_or_csv_output_flags() -> None:
     assert "--label" in result.stdout
     assert "write-candidate" not in result.stdout
     assert "csv" not in result.stdout.lower()
+
+
+def test_synthetic_xor_is_shortlisted_and_additive_control_fails() -> None:
+    first = run_synthetic_smoke()
+    second = run_synthetic_smoke()
+
+    assert first["xor_pair"] == [0, 1]
+    assert first["xor_eligible"] is True
+    assert [0, 1] in first["pairs"]
+    assert first["additive_control_pair"] == [2, 3]
+    assert first["additive_control_eligible"] is False
+    assert first["scanned_pairs"] == 15
+    assert first["pair_split_count"] == 45
+    assert first["manifest_sha256"] == second["manifest_sha256"]
+
+
+def test_synthetic_smoke_cli_reports_without_experiment_outputs(tmp_path: Path) -> None:
+    script = Path(__file__).resolve().parents[1] / "experiments" / "v3_low_sample_purified_proposal.py"
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--synthetic-smoke"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
