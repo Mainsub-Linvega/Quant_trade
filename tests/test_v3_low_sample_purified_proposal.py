@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 import numpy as np
 
 import pytest
@@ -9,11 +11,13 @@ from experiments.v3_low_sample_purified_proposal import (
     chronological_time_blocks,
     aggregate_pair_scores,
     enumerate_lexical_pairs,
+    load_baseline_indices,
     proposal_eligible,
     proposal_split_rows,
     scan_prebinned_pairs,
     sample_complete_time_groups,
     split_proposal_gate_rows,
+    select_proposal_candidates,
     validate_proposal_arrays,
     default_proposal_protocol,
     validate_proposal_protocol,
@@ -309,3 +313,104 @@ def test_small_scan_scores_each_pair_once_per_split() -> None:
     )
     assert scores["scored_pair_split_count"] == 18
     assert scores["eligible"].dtype == np.bool_
+
+
+def test_load_baseline_indices_uses_task_specific_frozen_file(
+    tmp_path: Path,
+) -> None:
+    ridge = {"selected_indices": list(range(200))}
+    xs_indices = list(range(123, 323))
+    hybrid = {"lgbm_features": [f"feature_{value:03d}" for value in xs_indices[:200]]}
+    (tmp_path / "baseline_model.json").write_text(
+        json.dumps(ridge), encoding="utf-8"
+    )
+    (tmp_path / "hybrid_meta.json").write_text(
+        json.dumps(hybrid), encoding="utf-8"
+    )
+
+    ridge_ref = load_baseline_indices("ridge", tmp_path)
+    xs_ref = load_baseline_indices("xs", tmp_path)
+    market_ref = load_baseline_indices("market", tmp_path)
+
+    assert ridge_ref["indices"] == ridge["selected_indices"]
+    assert xs_ref["indices"] == xs_indices[:200]
+    assert market_ref["indices"] == xs_indices[:200]
+    assert ridge_ref["source_path"].endswith("baseline_model.json")
+    assert xs_ref["source_path"].endswith("hybrid_meta.json")
+    assert len(ridge_ref["source_sha256"]) == 64
+
+
+def _selection_scores() -> dict[str, np.ndarray]:
+    pairs = enumerate_lexical_pairs(30)[:270]
+    strength = np.arange(len(pairs), 0, -1, dtype=np.float64)
+    return {
+        "pair_indices": np.asarray(pairs, dtype=np.int16),
+        "drop_best_mean_gain": strength,
+        "median_gain": strength / 2,
+        "mean_gain": strength / 3,
+        "eligible": np.ones(len(pairs), dtype=bool),
+    }
+
+
+def test_selection_preserves_unrestricted_core_ranking() -> None:
+    scores = _selection_scores()
+
+    got = select_proposal_candidates(
+        scores,
+        baseline_indices=set(range(20)),
+        protocol=default_proposal_protocol(),
+    )
+
+    expected_core = [tuple(pair) for pair in scores["pair_indices"][:192]]
+    assert got["core_ranked"] == expected_core
+    assert len(got["core_ranked"]) == 192
+    assert not set(got["core_ranked"]).intersection(got["diversity_ranked"])
+
+
+def test_diversity_prefers_outside_top200_and_caps_each_parent() -> None:
+    scores = _selection_scores()
+
+    got = select_proposal_candidates(
+        scores,
+        baseline_indices=set(range(20)),
+        protocol=default_proposal_protocol(),
+    )
+
+    diversity = got["diversity_ranked"]
+    counts: dict[int, int] = {}
+    for left, right in diversity:
+        counts[left] = counts.get(left, 0) + 1
+        counts[right] = counts.get(right, 0) + 1
+    assert diversity
+    assert max(counts.values()) <= 4
+    assert any(left >= 20 or right >= 20 for left, right in diversity)
+
+
+def test_selection_never_fills_budget_from_ineligible_pairs() -> None:
+    scores = _selection_scores()
+    scores["eligible"][5:] = False
+
+    got = select_proposal_candidates(
+        scores,
+        baseline_indices=set(range(20)),
+        protocol=default_proposal_protocol(),
+    )
+
+    assert len(got["pairs"]) == 5
+    assert got["diversity_ranked"] == []
+
+
+def test_selection_manifest_is_lexical_and_deterministic() -> None:
+    scores = _selection_scores()
+
+    first = select_proposal_candidates(
+        scores, baseline_indices=set(range(20)), protocol=default_proposal_protocol()
+    )
+    second = select_proposal_candidates(
+        scores, baseline_indices=set(range(20)), protocol=default_proposal_protocol()
+    )
+
+    assert first["pairs"] == sorted(first["pairs"])
+    assert first["manifest_json"] == second["manifest_json"]
+    assert first["manifest_sha256"] == second["manifest_sha256"]
+    assert len(first["manifest_sha256"]) == 64

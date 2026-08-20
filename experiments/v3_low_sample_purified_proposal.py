@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import copy
+import hashlib
+import json
+from pathlib import Path
+import re
 from typing import Any
 
 import numpy as np
@@ -453,4 +457,154 @@ def scan_prebinned_pairs(
         "all_finite": all_finite,
         "eligible": eligible,
         "scored_pair_split_count": len(requested) * len(split_rows),
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def load_baseline_indices(
+    task: str,
+    candidate_dir: str | Path,
+) -> dict[str, object]:
+    """Load and hash the frozen task-specific direct Top200 reference."""
+    directory = Path(candidate_dir).resolve()
+    if task == "ridge":
+        source = directory / "baseline_model.json"
+        key = "selected_indices"
+    elif task in {"xs", "market"}:
+        source = directory / "hybrid_meta.json"
+        key = "lgbm_features"
+    else:
+        raise ValueError(f"unknown proposal task: {task}")
+    data = json.loads(source.read_text(encoding="utf-8"))
+    values = data.get(key)
+    if not isinstance(values, list):
+        raise ValueError(f"baseline reference is missing {key}")
+    if task == "ridge":
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+            raise ValueError("Ridge baseline indices must be integers")
+        indices = [int(value) for value in values]
+    else:
+        pattern = re.compile(r"^feature_(\d{3})$")
+        matches = [pattern.fullmatch(str(value)) for value in values]
+        if any(match is None for match in matches):
+            raise ValueError("LGBM baseline names must use feature_###")
+        indices = [int(match.group(1)) for match in matches if match is not None]
+    if (
+        len(indices) != 200
+        or len(set(indices)) != 200
+        or min(indices) < 0
+        or max(indices) >= 323
+    ):
+        raise ValueError("baseline reference must contain 200 unique source features")
+    return {
+        "indices": indices,
+        "source_path": str(source),
+        "source_sha256": _sha256_file(source),
+        "source_key": key,
+    }
+
+
+def _ranked_eligible_rows(scores: Mapping[str, object]) -> list[int]:
+    required = {
+        "pair_indices",
+        "drop_best_mean_gain",
+        "median_gain",
+        "mean_gain",
+        "eligible",
+    }
+    missing = sorted(required.difference(scores))
+    if missing:
+        raise ValueError(f"proposal scores are missing arrays: {missing}")
+    pairs = np.asarray(scores["pair_indices"])
+    drop_best = np.asarray(scores["drop_best_mean_gain"], dtype=np.float64)
+    median = np.asarray(scores["median_gain"], dtype=np.float64)
+    mean = np.asarray(scores["mean_gain"], dtype=np.float64)
+    eligible = np.asarray(scores["eligible"], dtype=bool)
+    count = len(pairs)
+    if (
+        pairs.shape != (count, 2)
+        or drop_best.shape != (count,)
+        or median.shape != (count,)
+        or mean.shape != (count,)
+        or eligible.shape != (count,)
+    ):
+        raise ValueError("proposal score arrays must be pair-aligned")
+    eligible_rows = np.flatnonzero(eligible)
+    if not (
+        np.all(np.isfinite(drop_best[eligible_rows]))
+        and np.all(np.isfinite(median[eligible_rows]))
+        and np.all(np.isfinite(mean[eligible_rows]))
+    ):
+        raise ValueError("eligible proposal ranking metrics must be finite")
+    return sorted(
+        (int(row) for row in eligible_rows),
+        key=lambda row: (
+            -float(drop_best[row]),
+            -float(median[row]),
+            -float(mean[row]),
+            int(pairs[row, 0]),
+            int(pairs[row, 1]),
+        ),
+    )
+
+
+def select_proposal_candidates(
+    scores: Mapping[str, object],
+    *,
+    baseline_indices: set[int],
+    protocol: Mapping[str, object],
+) -> dict[str, object]:
+    """Select unrestricted core plus parent-capped diversity candidates."""
+    validate_proposal_protocol(protocol)
+    if any(index < 0 or index >= 323 for index in baseline_indices):
+        raise ValueError("baseline indices must be source feature indices")
+    budget = _mapping(protocol["candidate_budget"], "candidate budget")
+    pairs = np.asarray(scores["pair_indices"])
+    ranked = _ranked_eligible_rows(scores)
+    core_rows = ranked[:int(budget["core"])]
+    core_set = set(core_rows)
+    remaining = [row for row in ranked if row not in core_set]
+    remaining.sort(
+        key=lambda row: (
+            not (
+                int(pairs[row, 0]) not in baseline_indices
+                or int(pairs[row, 1]) not in baseline_indices
+            ),
+            ranked.index(row),
+        )
+    )
+    parent_counts: dict[int, int] = {}
+    diversity_rows: list[int] = []
+    parent_cap = int(budget["diversity_parent_cap"])
+    for row in remaining:
+        left, right = (int(value) for value in pairs[row])
+        if parent_counts.get(left, 0) >= parent_cap or parent_counts.get(right, 0) >= parent_cap:
+            continue
+        diversity_rows.append(row)
+        parent_counts[left] = parent_counts.get(left, 0) + 1
+        parent_counts[right] = parent_counts.get(right, 0) + 1
+        if len(diversity_rows) == int(budget["diversity"]):
+            break
+    core = [tuple(int(value) for value in pairs[row]) for row in core_rows]
+    diversity = [tuple(int(value) for value in pairs[row]) for row in diversity_rows]
+    manifest_pairs = sorted(core + diversity)
+    manifest_json = json.dumps(
+        {"pairs": [list(pair) for pair in manifest_pairs]},
+        sort_keys=True,
+        separators=(",", ":"),
+    ) + "\n"
+    return {
+        "core_ranked": core,
+        "diversity_ranked": diversity,
+        "pairs": manifest_pairs,
+        "manifest_json": manifest_json,
+        "manifest_sha256": hashlib.sha256(manifest_json.encode("utf-8")).hexdigest(),
+        "eligible_count": len(ranked),
     }
