@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-20",
+  "task": "ridge",
+  "status": "failed_p0",
+  "decision": "stop_without_training",
+  "frozen_fusion": {
+    "market_lambda": 0.7,
+    "blend_weight": 1.17,
+    "prediction_scale": 1.16
+  },
+  "proposal": {
+    "folds": [0, 1, 2],
+    "source_pairs": 52003,
+    "eligible_pairs": 473,
+    "core_pairs": 192,
+    "diversity_pairs": 64,
+    "frozen_pairs": 256,
+    "pair_manifest_sha256": "7863707650465c6a29b7fe615d63684c0ee7eb7b30df74712a58618cf8b95511",
+    "benchmark_elapsed_seconds": 11.792256973000008,
+    "estimated_full_seconds": 598.8600970380072,
+    "peak_rss_bytes": 2680635392
+  },
+  "gate": {
+    "folds": [3, 4],
+    "rows": 583881,
+    "fold_counts": [295522, 288359],
+    "input_sha256": "83a47f0c04d21b3fb446ae2bbd68cca5d37bebfccbbdf00101b2fd62ab4288e3",
+    "scanned_pairs": 256,
+    "null_samples": 3072,
+    "null_threshold": 0.0033289864783207566,
+    "accepted_pairs": 0,
+    "runtime_seconds": 228.78,
+    "peak_rss_bytes": 1061519360
+  },
+  "gate_check_pass_counts": {
+    "positive_blocks": 5,
+    "positive_drop_best": 1,
+    "coverage": 256,
+    "tail_concentration": 253,
+    "above_null": 0
+  },
+  "closest_pair": {
+    "pair": [240, 268],
+    "median_gain": 0.00014458005364030121,
+    "drop_best_mean_gain": 0.000021361431582991263,
+    "median_to_null_ratio": 0.043430652116445916
+  },
+  "artifacts": {
+    "proposal_scores_sha256": "1edba2e177658f8b0dec14e9192480c93b9482bd0624e32f7bd26a5640c1068c",
+    "proposal_manifest_sha256": "ea9dab6a6e9ec63db2251ffcb19bbb4ee60f44c6a8693f9f32de7830606a901b",
+    "gate_report_sha256": "ee4a0d2442e6ddcb8013927b90dbcbcb3e49c51fdeedef4f4359c0e5c31cfc66"
+  },
+  "boundaries": {
+    "proposal_folds_used_for_gate": false,
+    "gate_folds_used_for_proposal_ranking": false,
+    "candidate_generated": false,
+    "submission_generated": false,
+    "thresholds_relaxed": false
+  },
+  "next_step": "Do not start Ridge pair training; preserve the negative result and review XS only as a separately pre-registered task."
+}
