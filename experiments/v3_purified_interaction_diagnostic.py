@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-npz")
     parser.add_argument("--task", choices=["ridge", "xs", "market"], default="ridge")
     parser.add_argument("--max-pairs", type=int, default=256)
+    parser.add_argument("--pair-manifest")
     parser.add_argument("--protocol", default=str(DEFAULT_PROTOCOL))
     parser.add_argument(
         "--output-dir",
@@ -71,6 +72,50 @@ def deterministic_pairs(
         if len(pairs) == max_pairs:
             break
     return pairs
+
+
+def validate_pair_manifest(
+    pairs: object,
+    *,
+    n_features: int,
+    max_pairs: int,
+) -> list[tuple[int, int]]:
+    """Validate an ordered, result-independent list of source feature pairs."""
+    if not isinstance(pairs, list) or not pairs:
+        raise ValueError("pair manifest must contain a nonempty list")
+    if len(pairs) > max_pairs:
+        raise ValueError("pair manifest exceeds the requested pair budget")
+    validated: list[tuple[int, int]] = []
+    for item in pairs:
+        if (
+            not isinstance(item, (list, tuple))
+            or len(item) != 2
+            or any(isinstance(value, bool) or not isinstance(value, int) for value in item)
+        ):
+            raise ValueError("pair manifest entries must be integer pairs")
+        left, right = int(item[0]), int(item[1])
+        if left < 0 or right >= n_features or left >= right:
+            raise ValueError("pair manifest entries must be ordered valid feature indices")
+        validated.append((left, right))
+    if len(set(validated)) != len(validated):
+        raise ValueError("pair manifest contains duplicate pairs")
+    return validated
+
+
+def load_pair_manifest(
+    path: str | Path,
+    *,
+    n_features: int,
+    max_pairs: int,
+) -> list[tuple[int, int]]:
+    """Load a JSON pair manifest without permitting result-dependent settings."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    pairs = payload.get("pairs") if isinstance(payload, dict) else payload
+    return validate_pair_manifest(
+        pairs,
+        n_features=n_features,
+        max_pairs=max_pairs,
+    )
 
 
 def validate_diagnostic_arrays(
@@ -213,6 +258,7 @@ def run_diagnostic(
     task: str,
     protocol: Mapping[str, object],
     max_pairs: int,
+    pair_manifest: list[tuple[int, int]] | None = None,
 ) -> dict[str, object]:
     """Run bounded chronological real/null scoring for one task."""
     validate_purified_protocol(protocol)
@@ -230,7 +276,15 @@ def run_diagnostic(
     if max_pairs <= 0 or max_pairs > budget:
         raise ValueError(f"max_pairs must be between 1 and frozen budget {budget}")
     task_settings = protocol["tasks"][task]
-    pairs = deterministic_pairs(323, max_pairs=max_pairs)
+    pairs = (
+        deterministic_pairs(323, max_pairs=max_pairs)
+        if pair_manifest is None
+        else validate_pair_manifest(
+            pair_manifest,
+            n_features=323,
+            max_pairs=max_pairs,
+        )
+    )
     splits = chronological_inner_splits(
         data["time_id"], n_blocks=int(protocol["inner_blocks"])
     )
@@ -254,30 +308,35 @@ def run_diagnostic(
     scored: list[dict[str, object]] = []
     all_null_gains: list[float] = []
     for pair in pairs:
+        pair_features = np.ascontiguousarray(data["features"][:, pair])
+        local_pair = (0, 1)
         block_scores: list[dict[str, object]] = []
         for train_rows, valid_rows, split_nulls in split_payloads:
+            train_pair_features = pair_features[train_rows]
+            valid_pair_features = pair_features[valid_rows]
             score = score_pair_split(
-                data["features"][train_rows],
-                data["features"][valid_rows],
+                train_pair_features,
+                valid_pair_features,
                 data["residual"][train_rows],
                 data["residual"][valid_rows],
                 data["weight"][train_rows],
                 data["weight"][valid_rows],
-                pair=pair,
+                pair=local_pair,
                 bins=int(task_settings["bins"]),
                 min_cell_weight=float(task_settings["min_cell_weight"]),
                 max_surface_cells=int(protocol["budgets"]["max_surface_cells"]),
             )
+            score["pair"] = [int(pair[0]), int(pair[1])]
             block_scores.append(_json_score(score))
             for null_train, null_valid in split_nulls:
                 null_score = score_pair_split(
-                    data["features"][train_rows],
-                    data["features"][valid_rows],
+                    train_pair_features,
+                    valid_pair_features,
                     null_train,
                     null_valid,
                     data["weight"][train_rows],
                     data["weight"][valid_rows],
-                    pair=pair,
+                    pair=local_pair,
                     bins=int(task_settings["bins"]),
                     min_cell_weight=float(task_settings["min_cell_weight"]),
                     max_surface_cells=int(protocol["budgets"]["max_surface_cells"]),
@@ -313,6 +372,7 @@ def run_diagnostic(
         "experiment": "v3_purified_interaction_p0",
         "status": "passed_p0" if accepted else "failed_p0",
         "task": task,
+        "pair_source": "lexical" if pair_manifest is None else "manifest",
         "scanned_pairs": len(pairs),
         "null_samples": len(all_null_gains),
         "null_threshold": float(null_threshold),
@@ -365,6 +425,15 @@ def main() -> None:
         task=args.task,
         protocol=protocol,
         max_pairs=args.max_pairs,
+        pair_manifest=(
+            load_pair_manifest(
+                args.pair_manifest,
+                n_features=323,
+                max_pairs=args.max_pairs,
+            )
+            if args.pair_manifest
+            else None
+        ),
     )
     paths = write_diagnostic_report(
         args.output_dir,

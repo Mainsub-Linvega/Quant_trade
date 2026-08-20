@@ -8,11 +8,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import experiments.v3_purified_interaction_diagnostic as diagnostic_module
 from experiments.v3_purified_interaction_diagnostic import (
     _synthetic_arrays,
     deterministic_pairs,
+    load_pair_manifest,
     parse_args as parse_diagnostic_args,
     run_diagnostic,
+    validate_pair_manifest,
     validate_diagnostic_arrays,
     write_diagnostic_report,
 )
@@ -307,6 +310,31 @@ def test_ridge_null_breaks_both_asset_and_time_alignment() -> None:
         assert len(rows) == 3
 
 
+def test_ridge_null_shifts_group_means_when_panel_width_varies() -> None:
+    counts = np.array([2, 3, 2, 3, 2, 3, 2, 3])
+    time_id = np.repeat(np.arange(len(counts)), counts)
+    residual = np.arange(len(time_id), dtype=np.float64)
+    embargo = 2
+
+    shuffled = make_task_null(
+        "xs", residual, time_id, seed=2026, embargo=embargo
+    )
+    got = make_task_null(
+        "ridge", residual, time_id, seed=2026, embargo=embargo
+    )
+
+    starts = np.r_[0, np.cumsum(counts)[:-1]]
+    shuffled_means = np.add.reduceat(shuffled, starts) / counts
+    got_means = np.add.reduceat(got, starts) / counts
+    np.testing.assert_allclose(got_means, np.roll(shuffled_means, embargo + 1))
+    np.testing.assert_allclose(
+        got - np.repeat(got_means, counts),
+        shuffled - np.repeat(shuffled_means, counts),
+    )
+    assert got.shape == residual.shape
+    assert np.all(np.isfinite(got))
+
+
 def test_task_null_is_deterministic_and_requires_ordered_time() -> None:
     residual = np.arange(12.0)
     time_id = np.repeat(np.arange(4), 3)
@@ -404,6 +432,79 @@ def test_deterministic_pairs_are_lexical_and_exclude_self_pairs() -> None:
     assert all(left < right for left, right in got)
 
 
+def test_pair_manifest_preserves_preregistered_order_and_validates_budget(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "pairs.json"
+    path.write_text(
+        '{"pairs": [[0, 1], [17, 322], [8, 144]]}\n',
+        encoding="utf-8",
+    )
+
+    got = load_pair_manifest(path, n_features=323, max_pairs=3)
+
+    assert got == [(0, 1), (17, 322), (8, 144)]
+    with pytest.raises(ValueError, match="duplicate"):
+        validate_pair_manifest([(0, 1), (0, 1)], n_features=323, max_pairs=3)
+    with pytest.raises(ValueError, match="ordered"):
+        validate_pair_manifest([(3, 3)], n_features=323, max_pairs=3)
+    with pytest.raises(ValueError, match="budget"):
+        validate_pair_manifest(
+            [(0, 1), (0, 2), (0, 3), (0, 4)],
+            n_features=323,
+            max_pairs=3,
+        )
+
+
+def test_diagnostic_scores_explicit_pair_manifest() -> None:
+    requested = [(0, 1), (17, 322)]
+
+    result = run_diagnostic(
+        _synthetic_arrays(),
+        task="ridge",
+        protocol=default_purified_protocol(),
+        max_pairs=2,
+        pair_manifest=requested,
+    )
+
+    assert {tuple(item["pair"]) for item in result["pairs"]} == set(requested)
+    assert result["pair_source"] == "manifest"
+
+
+def test_diagnostic_scores_only_the_current_pair_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = diagnostic_module.score_pair_split
+    widths: list[tuple[int, int]] = []
+    scored_pairs: list[tuple[int, int]] = []
+
+    def capture_widths(
+        train_features: np.ndarray,
+        valid_features: np.ndarray,
+        *args: object,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        widths.append((train_features.shape[1], valid_features.shape[1]))
+        scored_pairs.append(kwargs["pair"])
+        return original(train_features, valid_features, *args, **kwargs)
+
+    monkeypatch.setattr(diagnostic_module, "score_pair_split", capture_widths)
+
+    result = run_diagnostic(
+        _synthetic_arrays(),
+        task="ridge",
+        protocol=default_purified_protocol(),
+        max_pairs=2,
+    )
+
+    assert widths and set(widths) == {(2, 2)}
+    assert set(scored_pairs) == {(0, 1)}
+    assert {tuple(item["pair"]) for item in result["pairs"]} == {
+        (0, 1),
+        (0, 2),
+    }
+
+
 def test_diagnostic_arrays_require_exactly_323_features() -> None:
     arrays = {
         "features": np.zeros((8, 323), dtype=np.float32),
@@ -468,6 +569,7 @@ def test_purified_diagnostic_script_help_runs_from_repo_root() -> None:
     assert result.returncode == 0, result.stderr
     assert "--synthetic-smoke" in result.stdout
     assert "--max-pairs" in result.stdout
+    assert "--pair-manifest" in result.stdout
 
 
 def test_synthetic_smoke_accepts_the_planted_pair() -> None:

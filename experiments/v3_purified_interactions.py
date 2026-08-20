@@ -545,11 +545,15 @@ def _shift_complete_time_groups(
     counts: np.ndarray,
     shift: int,
 ) -> np.ndarray:
-    if len(set(int(value) for value in counts)) != 1:
-        raise ValueError("time-shift null requires equal rows per time_id")
-    width = int(counts[0])
-    matrix = np.asarray(values, dtype=np.float64).reshape(len(counts), width)
-    return np.roll(matrix, int(shift), axis=0).reshape(-1)
+    base = np.asarray(values, dtype=np.float64)
+    if len(set(int(value) for value in counts)) == 1:
+        width = int(counts[0])
+        matrix = base.reshape(len(counts), width)
+        return np.roll(matrix, int(shift), axis=0).reshape(-1)
+    starts = np.r_[0, np.cumsum(counts)[:-1]]
+    means = np.add.reduceat(base, starts) / counts
+    centered = base - np.repeat(means, counts)
+    return centered + np.repeat(np.roll(means, int(shift)), counts)
 
 
 def make_task_null(
