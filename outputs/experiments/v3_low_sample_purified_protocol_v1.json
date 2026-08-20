@@ -1,0 +1,56 @@
+{
+  "benchmark": {
+    "lexical_pair_count": 1024,
+    "peak_rss_ceiling_bytes": 4294967296,
+    "runtime_ceiling_seconds": 1800.0
+  },
+  "candidate_budget": {
+    "core": 192,
+    "diversity": 64,
+    "diversity_parent_cap": 4,
+    "maximum": 256
+  },
+  "eligibility": {
+    "maximum_dominant_cell_gain_share": 0.5,
+    "minimum_coverage": 0.8,
+    "minimum_positive_blocks": 2,
+    "positive_drop_best_mean_gain": true
+  },
+  "fusion": {
+    "blend_weight": 1.17,
+    "market_lambda": 0.7,
+    "prediction_scale": 1.16
+  },
+  "gate_folds": [
+    3,
+    4
+  ],
+  "outer": {
+    "embargo": 6,
+    "n_folds": 5,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "train_window": 78960
+  },
+  "proposal_bins": 4,
+  "proposal_blocks": 4,
+  "proposal_folds": [
+    0,
+    1,
+    2
+  ],
+  "sampling": {
+    "market": {
+      "min_cell_weight": 8.0,
+      "time_cap_per_block": 20000
+    },
+    "ridge_xs": {
+      "fallback_row_cap_per_block": 20000,
+      "min_cell_weight": 32.0,
+      "row_cap_per_block": 40000
+    }
+  },
+  "schema_version": 1,
+  "source_feature_count": 323,
+  "source_pair_count": 52003
+}
