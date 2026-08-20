@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-20",
+  "task": "ridge",
+  "status": "resource_blocked",
+  "reason": "fallback_runtime_exceeded",
+  "protocol": {
+    "proposal_folds": [0, 1, 2],
+    "gate_folds": [3, 4],
+    "proposal_blocks": 4,
+    "proposal_bins": 4,
+    "benchmark_pairs": 1024,
+    "total_pairs": 52003,
+    "runtime_ceiling_seconds": 1800.0,
+    "peak_rss_ceiling_bytes": 4294967296
+  },
+  "input": {
+    "path": "outputs/cache/v3_purified_p0_ridge_input.npz",
+    "rows": 1461732,
+    "features": 323,
+    "fold_values": [0, 1, 2, 3, 4],
+    "fold_counts": [296059, 290502, 291290, 295522, 288359],
+    "hash_matches_manifest": true
+  },
+  "benchmarks": [
+    {
+      "row_cap_per_block": 40000,
+      "block_rows": [39996, 39989, 39991, 39990],
+      "elapsed_seconds": 65.426654297,
+      "estimated_full_seconds": 3322.638968171,
+      "peak_rss_bytes": 2678067200,
+      "decision": "fallback"
+    },
+    {
+      "row_cap_per_block": 20000,
+      "block_rows": [19998, 19995, 19996, 19996],
+      "elapsed_seconds": 28.673390297,
+      "estimated_full_seconds": 1456.154605093,
+      "peak_rss_bytes": 2339676160,
+      "decision": "run_on_this_measurement"
+    },
+    {
+      "row_cap_per_block": 20000,
+      "decision": "stop_on_cli_recheck",
+      "reason": "fallback_runtime_exceeded"
+    }
+  ],
+  "conclusion": "Runtime is too close to the frozen ceiling to treat one passing measurement as robust. The fail-closed CLI recheck stopped the run.",
+  "candidate_generated": false,
+  "submission_generated": false,
+  "gate_folds_read_for_ranking": false
+}
