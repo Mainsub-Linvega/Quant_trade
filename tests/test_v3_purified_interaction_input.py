@@ -43,6 +43,7 @@ def test_ridge_input_keeps_only_strict_oof_rows_and_exact_residual() -> None:
     np.testing.assert_array_equal(got["weight"], [3.0, 4.0, 5.0, 6.0])
     np.testing.assert_array_equal(got["time_id"], [1, 1, 2, 2])
     np.testing.assert_array_equal(got["feature_indices"], np.arange(323))
+    np.testing.assert_array_equal(got["fold"], [0, 0, 1, 1])
 
 
 def test_ridge_input_rejects_misaligned_feature_cache() -> None:
@@ -61,6 +62,7 @@ def test_xs_input_uses_unweighted_cross_target_and_strict_oof_component() -> Non
     np.testing.assert_allclose(got["residual"], [-2.0, 2.0, -3.0, 3.0])
     np.testing.assert_array_equal(got["weight"], [3.0, 4.0, 5.0, 6.0])
     np.testing.assert_array_equal(got["time_id"], [1, 1, 2, 2])
+    np.testing.assert_array_equal(got["fold"], [0, 0, 1, 1])
 
 
 def test_market_input_aggregates_one_row_per_time_id() -> None:
@@ -72,6 +74,16 @@ def test_market_input_aggregates_one_row_per_time_id() -> None:
     np.testing.assert_allclose(got["residual"], [3.0, 3.0])
     np.testing.assert_array_equal(got["weight"], [7.0, 11.0])
     np.testing.assert_array_equal(got["time_id"], [1, 2])
+    np.testing.assert_array_equal(got["fold"], [0, 1])
+
+
+def test_market_input_rejects_multiple_folds_within_one_time_id() -> None:
+    features = np.arange(6 * 323, dtype=np.float32).reshape(6, 323)
+    oof = _oof_arrays()
+    oof["fold"] = np.array([-1, -1, 0, 1, 1, 1])
+
+    with pytest.raises(ValueError, match="one fold"):
+        build_market_input_arrays(features, oof)
 
 
 def test_ridge_input_rejects_missing_or_nonfinite_oof_components() -> None:
@@ -109,12 +121,16 @@ def test_ridge_input_artifacts_round_trip_and_refuse_overwrite(
     with np.load(paths["npz"], allow_pickle=False) as loaded:
         assert loaded["features"].shape == (4, 323)
         np.testing.assert_allclose(loaded["residual"], [27.7, 37.6, 46.5, 56.4])
+        np.testing.assert_array_equal(loaded["fold"], [0, 0, 1, 1])
     manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
     assert manifest["task"] == "ridge"
     assert manifest["residual_formula"] == "target - (market_ridge + e_ridge)"
     assert manifest["rows"] == 4
     assert len(manifest["npz_sha256"]) == 64
     assert not list(tmp_path.glob("*.csv"))
+    assert manifest["fold_values"] == [0, 1]
+    assert manifest["proposal_folds_present"] == [0, 1]
+    assert manifest["gate_folds_present"] == []
     assert not list(tmp_path.glob("*candidate*"))
     with pytest.raises(FileExistsError, match="force"):
         write_ridge_input_artifacts(features_path, oof_path, output_path)

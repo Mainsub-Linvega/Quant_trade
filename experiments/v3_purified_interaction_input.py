@@ -69,6 +69,7 @@ def build_ridge_input_arrays(
     market_ridge = np.asarray(arrays["market_ridge"][valid], dtype=np.float64)
     e_ridge = np.asarray(arrays["e_ridge"][valid], dtype=np.float64)
     time_id = np.asarray(arrays["time_id"][valid], dtype=np.int64)
+    fold = np.asarray(arrays["fold"][valid], dtype=np.int8)
     if (
         not np.all(np.isfinite(target))
         or not np.all(np.isfinite(weight))
@@ -84,6 +85,7 @@ def build_ridge_input_arrays(
         "residual": target - (market_ridge + e_ridge),
         "weight": weight,
         "time_id": time_id,
+        "fold": fold,
         "feature_indices": np.arange(323, dtype=np.int64),
     }
 
@@ -112,11 +114,7 @@ def _validated_component_rows(
     valid = arrays["fold"] >= 0
     if not np.any(valid):
         raise ValueError("OOF cache contains no validation rows")
-    selected = {
-        name: np.asarray(value[valid])
-        for name, value in arrays.items()
-        if name != "fold"
-    }
+    selected = {name: np.asarray(value[valid]) for name, value in arrays.items()}
     if (
         not np.all(np.isfinite(selected["target"]))
         or not np.all(np.isfinite(selected["weight"]))
@@ -145,6 +143,7 @@ def build_xs_input_arrays(
         "residual": residual,
         "weight": np.asarray(rows["weight"], dtype=np.float64),
         "time_id": time_id,
+        "fold": np.asarray(rows["fold"], dtype=np.int8),
         "feature_indices": np.arange(323, dtype=np.int64),
     }
 
@@ -183,8 +182,12 @@ def build_market_input_arrays(
     weight = np.asarray(rows["weight"], dtype=np.float64)
     time_id = np.asarray(rows["time_id"], dtype=np.int64)
     component = np.asarray(rows["market_lgbm"], dtype=np.float64)
+    fold = np.asarray(rows["fold"], dtype=np.int8)
     starts, counts = _group_bounds(time_id)
     component_by_time = component[starts]
+    fold_by_time = fold[starts]
+    if not np.array_equal(fold, np.repeat(fold_by_time, counts)):
+        raise ValueError("market input requires exactly one fold within each time_id")
     if not np.allclose(component, np.repeat(component_by_time, counts), rtol=0.0, atol=1e-12):
         raise ValueError("market_lgbm must be constant within each time_id")
     target_by_time = np.add.reduceat(target, starts) / counts
@@ -193,6 +196,7 @@ def build_market_input_arrays(
         "residual": target_by_time - component_by_time,
         "weight": np.add.reduceat(weight, starts),
         "time_id": time_id[starts],
+        "fold": fold_by_time,
         "feature_indices": np.arange(323, dtype=np.int64),
     }
 
@@ -246,6 +250,8 @@ def write_task_input_artifacts(
         np.savez(temporary_npz, **arrays)
         temporary_npz.replace(output)
         unique_times = np.unique(arrays["time_id"])
+        fold_values = sorted(int(value) for value in np.unique(arrays["fold"]))
+        proposal_folds = [value for value in fold_values if value in {0, 1, 2}]
         manifest = {
             "schema_version": 1,
             "task": task,
@@ -260,6 +266,9 @@ def write_task_input_artifacts(
             "npz": str(output),
             "npz_sha256": _sha256_file(output),
             "candidate_generated": False,
+            "fold_values": fold_values,
+            "proposal_folds_present": proposal_folds,
+            "gate_folds_present": [value for value in fold_values if value in {3, 4}],
             "submission_generated": False,
         }
         temporary_manifest.write_text(
