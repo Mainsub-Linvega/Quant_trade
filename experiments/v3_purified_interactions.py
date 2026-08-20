@@ -543,6 +543,10 @@ def prebin_feature_split(
     train_bins = np.full(train.shape, 255, dtype=np.uint8)
     valid_bins = np.full(valid.shape, 255, dtype=np.uint8)
     for column in range(train.shape[1]):
+        if not np.any(np.isfinite(train[:, column])):
+            edges[column] = 0.0
+            continue
+
         grid = fit_quantile_edges(train[:, column], bins)
         edges[column] = grid
         assigned_train = assign_quantile_bins(train[:, column], grid)
@@ -641,7 +645,7 @@ def score_prebinned_pair_split(
     supported = cell_weights >= float(min_cell_weight)
     supported_weights = np.where(supported, cell_weights, 0.0)
     means = np.divide(
-        weighted_sum, cell_weights, out=np.zeros_like(weighted_sum), where=supported
+        weighted_sum, cell_weights, out=np.zeros((bins, bins)), where=supported
     )
     if float(np.sum(supported_weights)) > 0.0:
         pure, _, _ = purify_pair_surface(means, supported_weights)

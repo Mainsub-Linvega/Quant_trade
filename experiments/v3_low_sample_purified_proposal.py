@@ -578,6 +578,7 @@ def select_proposal_candidates(
     ranked = _ranked_eligible_rows(scores)
     core_rows = ranked[:int(budget["core"])]
     core_set = set(core_rows)
+    rank_position = {row: position for position, row in enumerate(ranked)}
     remaining = [row for row in ranked if row not in core_set]
     remaining.sort(
         key=lambda row: (
@@ -585,7 +586,7 @@ def select_proposal_candidates(
                 int(pairs[row, 0]) not in baseline_indices
                 or int(pairs[row, 1]) not in baseline_indices
             ),
-            ranked.index(row),
+            rank_position[row],
         )
     )
     parent_counts: dict[int, int] = {}

@@ -681,3 +681,20 @@ def test_prebin_edges_ignore_extreme_validation_values() -> None:
     np.testing.assert_array_equal(
         extreme_split.edges[2], fit_quantile_edges(train[:, 2], bins=4)
     )
+
+
+def test_prebin_all_missing_feature_uses_sentinel_without_stopping_scan() -> None:
+    train = np.arange(40, dtype=np.float64).reshape(10, 4)
+    valid = np.arange(20, dtype=np.float64).reshape(5, 4)
+    train[:, 2] = np.nan
+    valid[:, 2] = np.nan
+
+    got = prebin_feature_split(train, valid, bins=4)
+
+    np.testing.assert_array_equal(got.train_bins[:, 2], 255)
+    np.testing.assert_array_equal(got.valid_bins[:, 2], 255)
+    score = score_prebinned_pair_split(
+        got, np.ones(10), np.ones(5), np.ones(10), np.ones(5),
+        pair=(1, 2), min_cell_weight=1.0, max_surface_cells=16,
+    )
+    assert score["gain"] == 0.0
