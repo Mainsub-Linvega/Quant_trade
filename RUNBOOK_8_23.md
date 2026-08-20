@@ -20,6 +20,11 @@
   推论：任何实验性变体**都不能最后上传**；收尾顺序见 D6。
 - ⚠️ 8/23 之后**没有外部尺子**。本项目已三次本地↔公榜量反（CLAUDE.md §8.1）⟹
   D0 的「修尺子」是后面一切比较的前提，不能跳。
+- ⭐ **2026-08-20 订正上一行的措辞**：8/23 之后不是「没有外部尺子」，而是**尺子从「盲、5 枪/天」
+  换成「不盲、无限次」** —— 回补的就是公榜期的标签，那 3,217,458 行从此可以在本地反复打分。
+  ⟹ 新的风险不是没尺子，是**有一把可以无限次拟合的尺子**。因此 8/23 之前预注册了**密封段**：
+  公榜期最后 **60,000 real time_id** 封存不训练，只当测试集（ROADMAP P10、下面 D0.4 / D4.5）。
+  ⚠️ 那段数据**只能用一次** —— 当训练数据或当干净测试集，用来训了就不能再当测试。
 
 ## 1. 已知的数据规模（2026-08-18 审计实测）
 
@@ -87,6 +92,36 @@ git diff --stat docs/ examples/ timeseries_api/     # 必须为空或已知变�
 
 ---
 
+### D0.4 ⭐ 标定密封期尺子的检出下限（约 40 分钟，Tier 1）
+
+```bash
+# 六个候选各出一次预测（每个约 6 分钟；不落任何提交格式 CSV）
+for SPEC in production_slowfast:strategies/v3_hybrid \
+            mkt_shrunk:outputs/candidates/v3_hybrid_mkt_shrunk \
+            mktwe:outputs/candidates/v3_hybrid_r480_pb_hist_mktwe \
+            asset_adapter:outputs/candidates/v3_asset_cross_3s480_shrink500 \
+            r960:outputs/candidates/v3_hybrid_r960_pb_hist_mktwe \
+            xs_shrunk:outputs/candidates/v3_hybrid_xs_shrunk; do
+  .venv/bin/python experiments/sealed_period_eval.py \
+      --candidate "${SPEC#*:}" --label "seal_${SPEC%%:*}"
+done
+
+.venv/bin/python experiments/sealed_period_eval.py \
+    --baseline seal_production_slowfast \
+    --arms mkt_shrunk=seal_mkt_shrunk mktwe=seal_mktwe \
+           asset_adapter=seal_asset_adapter r960=seal_r960 xs_shrunk=seal_xs_shrunk \
+    --labels <回补数据目录> --label sealed_tier1_calibration
+```
+
+六个候选**都有已知公榜真值**（0.0041150085 / 0.0039977510 / 0.0039673997 / 0.0039908352 /
+0.0037609312 / 0.0035771492）。这一步的产出**不是找收益，是读出这把尺子的块级方差**⟹
+`--detection-floor` 该填多少。⚠️ 在它填出来之前，任何裁决的第七道门判 `PENDING_CALIBRATION`，
+**不是自动通过**。
+
+⭐ 顺带回答一个悬案：`asset_adapter` 在 OOF 上 +1.99%、在公榜上 −0.17% —— 密封期站哪边。
+
+**⚠️ 这一步不需要重训，也不消耗任何私榜/公榜额度。** 若时间紧只能做一件事，做这个而不是 D3。
+
 ## D1：固定结构重训（只有 train 确实变了才做）
 
 ```bash
@@ -97,6 +132,10 @@ git diff --stat docs/ examples/ timeseries_api/     # 必须为空或已知变�
 ```
 
 写入 `outputs/candidates/v3_hybrid_extended_fixed/`，**不碰生产**。
+
+⚠️ **决策期重训的训练段必须止于 time_id `1,045,889`**（密封段起点 1,045,920 减 30 个 embargo）。
+训进密封段就等于把测试集喂给了模型，D2 之后的一切比较全部作废 —— 而且**不会报错**。
+最终交付件的全量重训在 **D4.5**，不在这里。
 
 ### ⚠️ D1 的坑（坑 1 / 坑 3 已于 08-19 接线，当天不需要临场决策）
 
@@ -201,6 +240,24 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 兜底是**单核 100%**（纯 numpy 树遍历不并行）⟹ 4 核评测机不会更慢。
 新候选若列数变多（例如选列宽度改成 323），**耗时必须重测** —— scar §5：
 小批量推理中取列可能比树本身更贵。
+
+## D4.5 ⭐ 最终交付件：决定拍完之后才用 100% 数据重训
+
+到这一步，所有采纳/拒绝的决定都已经由密封期做出。**现在**（而不是更早）把密封段放回训练集，
+用 `0 – 1,105,919` 全量（+24.5%）按**已经定下来的结构**重训一次，作为最终交付件。
+
+⚠️ **风险要认**：这一份训练在**没有任何评估覆盖过**的数据上。缓解是它与刚被密封期验过的是同一
+结构，且 D4 覆盖机械正确性（meta 结构、双后端对拍、一致性、耗时）。
+
+**三层回退，都有落盘产物**：
+
+| 情形 | 交哪一份 |
+|---|---|
+| D4.5 全部门禁通过 | 全量重训件 |
+| D4.5 任一门禁不过 | **决策期那份**（训练止于 1,045,889，被密封期评过分） |
+| 决策期那份也不过 | **当前生产 `v3_hybrid_slowfast`**（`outputs/v3_hybrid_submission_20260819.zip`） |
+
+⟹ 任何时候都有一份可交的东西；**时间不够就直接跳到 D5 交当前生产**。
 
 ## D5：用户打包 + 审计（**只能由用户执行**，CLAUDE.md §1.4）
 

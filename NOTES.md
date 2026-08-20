@@ -169,6 +169,94 @@ IC    = sqrt(peak)
 > 引用原样保留以说明当时的推理来源；可核验的证据一律在 `outputs/experiments/` 与
 > `experiments/ledger.csv`。
 
+### 2026-08-20 — `RESULT/INFRA`：公榜期那 3,217,458 行只能用一次 —— 封存 60,000 个 time_id 当密封测试集
+
+**日期**：2026-08-20
+**标签**：`RESULT`（基础设施与预注册；裁决本身 `BLOCKED_UNTIL_DATA_REFRESH`）
+
+**问题**（用户提的：「接下来几天就是继续看 RUNBOOK 吗，感觉没什么意思」）。RUNBOOK 确实读不出
+东西 —— 它已经写到「当天不需要做设计决策」的程度。但复查发现它**漏了一个取舍**。
+
+**动机与机制**。主办方原文（`docs/data_description.md:172`）：「在公榜测试阶段，测试数据不提供
+`responder_*`。在公榜截止后会发布标签回补数据，该部分数据将作为扩展训练数据使用」。实测两边
+schema：`data/test/*.parquet` **326 列，无 `weight` / `target` / responder**；
+`data/train/*.parquet` **375 列，带 `weight` / `target` / 47 个 responder**。
+⟹ 8/23 回补的**就是公榜期的标签**，那段数据的两种用法互斥：
+
+```text
+公榜期  time_id 888,480–1,105,919   217,440 个 real time_id   3,217,458 行
+现有 OOF 5 折验证行数合计            约 150 万行（每折约 30 万）
+⟹ 公榜期评估行数约是现有 OOF 的 2.1×，而且是最近的一段
+```
+
+而现有 OOF 的检出下限是基准 peak 的 6.1%（1s160）/ 8.7%（3s480）—— 正是它把 `mkt323` (+1.09%)、
+`phase_id` (+1.1%)、`responder_00` (+1.38%)、`lag3+lag10` (+0.38%)、扩展窗 (+1.08%) 全判成
+「测不出来」。⟹ **若把回补数据全部拿去训练，8/23–8/31 最可能的结局是「重训了，但测不出有没有
+用，于是按 RUNBOOK D6 维持现状」** —— 那是一个没有信息量的结局，而它是本项目最后一个大决定。
+
+**实验设计与固定项**（跑之前钉死，`--emit-plan` 先落盘 `sealed_period_plan.json`，
+sha256 记进每份裁决产物）：
+
+```text
+密封测试集   1,045,920 – 1,105,919   60,000 real time_id
+  4 块 × 15,000
+embargo      30 real time_id（= OOF 的 6 采样步 × sample_modulo 5，src/validation.py:40）
+决策期训练   ≤ 1,045,889（比现在多 157,410 个 time_id，+17.7%）
+最终交付     决定拍完后用 0–1,105,919 全量（+24.5%）重训一次
+门禁         RUNBOOK D2 六道在 4 块上的映射（`≥4/5 折` → `≥3/4 块`）
+             + 配对 block bootstrap（每块 25 chunk、2000 次、seed 2026、95%）
+             + 第七道「超过检出下限」—— 标定前判 None，**不是**自动通过
+```
+
+⭐ **读数口径订正（设计初稿是错的）**。初稿写「`raw = pred / prediction_scale` 反解」。
+那在 **slow/fast 下不成立** —— 最终值是 `clip(s_slow·slow + s_fast·fast)`，两个分量各有 scale，
+除以单一 `prediction_scale` 还原不出 raw。正确做法反而更简单：`peak = A²/B` 对全局缩放**严格
+不变**（`f→cf` ⟹ `A→cA`、`B→c²B`），限幅是唯一的非线性步骤 ⟹ **断言触限 0 行后直接算 peak**
+就与拿 raw 算逐位等价。少一步除法，也少一个错。有回归用例把这条不变性和
+「`optimal_scale` **不是**不变量」一起钉死。
+
+**结果**（干跑，用当前数据、无标签）：
+
+1. **推理链路**：官方 runner 全量 test **3,217,458 行**、`status=ok`、0 超时、
+   `predict_total` 5.60 分钟、`max|pred| = 0.420450`、**触限 0 行**。
+   ⭐ 与 ledger 08-18 走官方 runner 那次（`max|pred|=0.4204`、0 行触 clip）和 ROADMAP P0 的
+   `0.4204497` 对上 ⟹ **推理路径确认无误，这是一个白送的自检**。
+2. **判据链路**：`--synthetic-labels` 走通 join / 分块 / bootstrap / 判据，产物强制
+   `adjudication_valid=false`（沿用 full-resolution smoke 的 `oof_valid=false` 先例）；
+   self-vs-self 得 +0.00% / 0-of-4 / **FAIL** —— 空改动不过门禁，符合预期。
+3. **密封段实测 856,319 行**，每块 **203,176 / 224,970 / 203,264 / 224,909**。
+   ⚠️ 每块行数不等（摆动约 10%，且**交替**出现）—— 逐块 peak 是各自的比值不受影响，但读 pooled
+   数时要记得块权重不均。这个交替模式与仓库已研究过的 `phase_id` 周期性方向一致，未深究。
+
+**解释与限制**。这套东西**不会**补上离榜首 IC +20.8% 的差距 —— Tier 2 那批候选点估计全部
+≤ +1.4%，就算全部确认也换不来那个量级。它买的是**让 8/23–8/31 那个最重要的决定变成有数的
+决定**。⚠️ 最大的不确定性是：**这把尺子自己的检出下限仍然是未知数**。Tier 1 那六枪
+（`production_slowfast` / `mkt_shrunk` / `mktwe` / `asset_adapter` / `r960` / `xs_shrunk`，
+全部有已知公榜真值、盘上现成、每个约 6 分钟）就是去测它；若测出来也在 6% 以上，Tier 2 直接
+不跑 —— 那也是一个干净的结论，只花 40 分钟。
+
+⚠️ **本条只否掉「盲判」，不承诺「能判」。** 密封期是**一段**时期，不是多个 regime；它对
+私榜期（9/1–9/30 前向实盘）的代表性仍然只能靠「它是我们能拿到的最近一段」来论证，
+和 OOF 折一样存在时期错配。
+
+**决策**：ROADMAP 新增 **P10 `PREREGISTERED`**；RUNBOOK 新增 **D0.4**（Tier 1 标定）与
+**D4.5**（最终 100% 重训 + 三层回退）。8/23 之前不再动它。
+
+**工程注记**：
+- **不落提交格式 CSV**。官方 runner 必须给 `output_path`，脚本指向 `TemporaryDirectory`，
+  读完随目录销毁；预测落 `outputs/cache/sealed_pred_<label>.npz`。理由有两条：CLAUDE.md §1.4，
+  以及**盘上不留看起来像提交文件、8/31 可能被误传的东西**（P0 已经因为盘上三个 zip 写过一次警告）。
+- 干跑第一次就撞到一个口径坑：`variant_submission.stage()` 要的是**模型产物目录本身**
+  （生产在 `strategies/v3_hybrid/model/`，候选在 `outputs/candidates/<name>/` **本层**），
+  给错一层只抛裸 `FileNotFoundError`。已加 `resolve_model_dir()` 两种布局都认 + 用例。
+
+**证据**：`outputs/experiments/sealed_period_plan.{json,md}`、`seal_dryrun_gates.{json,md}`、
+`experiments/sealed_period_eval.py`、`tests/test_sealed_period_eval.py`（11 个用例）。
+全量测试 **112 passed / 22 subtests**。
+
+**后续问题**：Tier 1 标定出的检出下限是多少？若它显著低于 OOF 的 6.1~8.7%，那 08-18 那批
+「测不出来」的结论要按新下限逐条重读一遍，而不只是复验 `mkt323` 一个。
+
 ### 2026-08-20 — `REJECTED`：NN 独立能力阶梯 —— 预算确实掐住过它，但天花板只有 28.8%
 
 **问题**（用户提的：「要不要单开 v5 先本地试试 NN」）。核对下来前提要修正一半：
