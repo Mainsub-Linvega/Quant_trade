@@ -164,10 +164,13 @@ IC    = sqrt(peak)
 ## 5. 近期研究日志
 
 > ⚠️ 本节多条旧记录引用 `NEXT_STEPS_*.md`（如 `NEXT_STEPS_horizon_auxiliary_oof_validation.md`
-> 的 §3 / §5 / P2）。那是当时的**本地工作笔记，从未入库**，现已不在盘上
-> （`git log --all -- '*NEXT_STEPS*'` 为空）。按 CLAUDE.md §7「旧结论不删除」，
-> 引用原样保留以说明当时的推理来源；可核验的证据一律在 `outputs/experiments/` 与
-> `experiments/ledger.csv`。
+> 的 §3 / §5 / P2）。那是当时的**本地工作笔记，从未入库**（`git log --all -- '*NEXT_STEPS*'` 为空）。
+> ⭐ **2026-08-20 订正**：此前这里写「现已不在盘上」是错的 —— 它们在
+> `~/Documents/Quant_trade_notes/` 下（`NEXT_STEPS_horizon_auxiliary_oof_validation.md` 32KB、
+> `NEXT_STEPS.md`、`PLAN.md`、`ARCHITECTURE.md` 等），章节号与引用对得上，**可核**。
+> 那是一个独立的笔记目录、不是 git 仓库，所以 `git log` 查不到 ≠ 文件不存在。
+> 按 CLAUDE.md §7「旧结论不删除」，引用原样保留以说明当时的推理来源；
+> 可核验的**实验证据**一律仍以 `outputs/experiments/` 与 `experiments/ledger.csv` 为准。
 
 ### 2026-08-20 — `RESULT/INFRA`：公榜期那 3,217,458 行只能用一次 —— 封存 60,000 个 time_id 当密封测试集
 
