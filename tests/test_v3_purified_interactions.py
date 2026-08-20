@@ -32,6 +32,7 @@ from experiments.v3_purified_interactions import (
     purify_pair_surface,
     score_pair_split,
     prebin_feature_split,
+    score_prebinned_pair_batch_split,
     score_prebinned_pair_split,
     transform_purified_surface,
     validate_purified_protocol,
@@ -725,3 +726,71 @@ def test_purification_solves_weakly_connected_support_after_iteration_limit() ->
         scores,
         atol=1e-12,
     )
+
+
+def test_batched_prebinned_scores_match_single_pair_scores() -> None:
+    rng = np.random.default_rng(881)
+    train = rng.normal(size=(700, 6)).astype(np.float32)
+    valid = rng.normal(size=(250, 6)).astype(np.float32)
+    train[::17, 1] = np.nan
+    valid[::13, 4] = np.nan
+    train_residual = rng.normal(size=len(train))
+    valid_residual = rng.normal(size=len(valid))
+    train_weight = rng.uniform(0.2, 3.0, len(train))
+    valid_weight = rng.uniform(0.2, 3.0, len(valid))
+    pairs = [(0, 1), (1, 4), (2, 5), (3, 4)]
+    prebinned = prebin_feature_split(train, valid, bins=4)
+
+    batched = score_prebinned_pair_batch_split(
+        prebinned,
+        train_residual,
+        valid_residual,
+        train_weight,
+        valid_weight,
+        pairs=pairs,
+        min_cell_weight=5.0,
+        max_surface_cells=16,
+        batch_size=2,
+    )
+
+    np.testing.assert_array_equal(batched["pair_indices"], pairs)
+    assert batched["gain"].shape == (len(pairs),)
+    assert batched["surface_checksum"].shape == (len(pairs),)
+    for index, pair in enumerate(pairs):
+        single = score_prebinned_pair_split(
+            prebinned,
+            train_residual,
+            valid_residual,
+            train_weight,
+            valid_weight,
+            pair=pair,
+            min_cell_weight=5.0,
+            max_surface_cells=16,
+        )
+        assert batched["gain"][index] == pytest.approx(single["gain"], abs=1e-12)
+        assert batched["coverage"][index] == pytest.approx(
+            single["coverage"], abs=1e-12
+        )
+        assert batched["dominant_cell_gain_share"][index] == pytest.approx(
+            single["dominant_cell_gain_share"], abs=1e-12
+        )
+        assert bool(batched["finite"][index]) is single["finite"]
+        assert batched["surface_checksum"][index] == single["surface_checksum"]
+
+
+def test_batched_prebinned_scores_reject_invalid_batch_size() -> None:
+    matrix = np.arange(80, dtype=np.float64).reshape(20, 4)
+    prebinned = prebin_feature_split(matrix[:12], matrix[12:], bins=4)
+
+    with pytest.raises(ValueError, match="batch_size"):
+        score_prebinned_pair_batch_split(
+            prebinned,
+            np.ones(12),
+            np.ones(8),
+            np.ones(12),
+            np.ones(8),
+            pairs=[(0, 1)],
+            min_cell_weight=1.0,
+            max_surface_cells=16,
+            batch_size=0,
+        )

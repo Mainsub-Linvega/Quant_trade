@@ -9,6 +9,7 @@ import numpy as np
 
 import pytest
 
+import experiments.v3_low_sample_purified_proposal as proposal_module
 from experiments.v3_low_sample_purified_proposal import (
     chronological_time_blocks,
     benchmark_runtime_decision,
@@ -28,6 +29,9 @@ from experiments.v3_low_sample_purified_proposal import (
     run_synthetic_smoke,
     write_proposal_artifacts,
     validate_proposal_protocol,
+)
+from experiments.v3_purified_interactions import (
+    score_prebinned_pair_batch_split,
 )
 
 
@@ -320,6 +324,63 @@ def test_small_scan_scores_each_pair_once_per_split() -> None:
     )
     assert scores["scored_pair_split_count"] == 18
     assert scores["eligible"].dtype == np.bool_
+
+
+def test_scan_uses_batched_scores_without_changing_results(monkeypatch) -> None:
+    rng = np.random.default_rng(445)
+    features = rng.normal(size=(160, 4)).astype(np.float32)
+    features[::19, 2] = np.nan
+    residual = rng.normal(size=160)
+    weight = rng.uniform(0.2, 2.0, size=160)
+    blocks = [np.arange(left, left + 40) for left in range(0, 160, 40)]
+    pairs = [(0, 1), (0, 3), (1, 2), (2, 3)]
+    expected = scan_prebinned_pairs(
+        features,
+        residual,
+        weight,
+        blocks,
+        bins=4,
+        min_cell_weight=2.0,
+        max_surface_cells=16,
+        pairs=pairs,
+    )
+    calls = []
+
+    def recording_batch(*args, **kwargs):
+        calls.append((list(kwargs["pairs"]), kwargs["batch_size"]))
+        return score_prebinned_pair_batch_split(*args, **kwargs)
+
+    def forbidden_single(*args, **kwargs):
+        raise AssertionError("scanner must not use the single-pair path")
+
+    monkeypatch.setattr(
+        proposal_module, "score_prebinned_pair_batch_split", recording_batch
+    )
+    monkeypatch.setattr(
+        proposal_module, "score_prebinned_pair_split", forbidden_single
+    )
+    got = scan_prebinned_pairs(
+        features,
+        residual,
+        weight,
+        blocks,
+        bins=4,
+        min_cell_weight=2.0,
+        max_surface_cells=16,
+        pairs=pairs,
+    )
+
+    assert calls == [(pairs, proposal_module._PAIR_BATCH_SIZE)] * 3
+    for name in (
+        "pair_indices",
+        "split_gain",
+        "split_coverage",
+        "split_dominant_cell_gain_share",
+        "split_finite",
+        "surface_checksum",
+        "eligible",
+    ):
+        np.testing.assert_array_equal(got[name], expected[name])
 
 
 def test_load_baseline_indices_uses_task_specific_frozen_file(

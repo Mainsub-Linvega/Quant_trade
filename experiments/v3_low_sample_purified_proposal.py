@@ -25,8 +25,10 @@ from experiments.v3_purified_interactions import default_purified_protocol
 
 from experiments.v3_purified_interactions import (
     prebin_feature_split,
+    score_prebinned_pair_batch_split,
     score_prebinned_pair_split,
 )
+_PAIR_BATCH_SIZE = 64
 _PURIFIED = default_purified_protocol()
 _FROZEN_PROTOCOL: dict[str, object] = {
     "schema_version": 1,
@@ -412,22 +414,24 @@ def scan_prebinned_pairs(
         prebinned = prebin_feature_split(
             x[train_rows], x[valid_rows], bins=bins
         )
-        for pair_index, pair in enumerate(requested):
-            score = score_prebinned_pair_split(
-                prebinned,
-                y[train_rows],
-                y[valid_rows],
-                w[train_rows],
-                w[valid_rows],
-                pair=pair,
-                min_cell_weight=min_cell_weight,
-                max_surface_cells=max_surface_cells,
-            )
-            split_gain[pair_index, split_index] = score["gain"]
-            split_coverage[pair_index, split_index] = score["coverage"]
-            split_dominant[pair_index, split_index] = score["dominant_cell_gain_share"]
-            split_finite[pair_index, split_index] = score["finite"]
-            checksums[pair_index, split_index] = score["surface_checksum"]
+        score = score_prebinned_pair_batch_split(
+            prebinned,
+            y[train_rows],
+            y[valid_rows],
+            w[train_rows],
+            w[valid_rows],
+            pairs=requested,
+            min_cell_weight=min_cell_weight,
+            max_surface_cells=max_surface_cells,
+            batch_size=_PAIR_BATCH_SIZE,
+        )
+        split_gain[:, split_index] = score["gain"]
+        split_coverage[:, split_index] = score["coverage"]
+        split_dominant[:, split_index] = score[
+            "dominant_cell_gain_share"
+        ]
+        split_finite[:, split_index] = score["finite"]
+        checksums[:, split_index] = score["surface_checksum"]
     all_finite = (
         np.all(split_finite, axis=1)
         & np.all(np.isfinite(split_gain), axis=1)

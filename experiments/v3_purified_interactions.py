@@ -756,6 +756,211 @@ def score_prebinned_pair_split(
     }
 
 
+def score_prebinned_pair_batch_split(
+    prebinned: PrebinnedFeatureSplit,
+    train_residual: np.ndarray,
+    valid_residual: np.ndarray,
+    train_weight: np.ndarray,
+    valid_weight: np.ndarray,
+    *,
+    pairs: Sequence[tuple[int, int]],
+    min_cell_weight: float,
+    max_surface_cells: int,
+    batch_size: int,
+) -> dict[str, np.ndarray]:
+    """Score pair batches from compact sufficient statistics."""
+    train_bins = np.asarray(prebinned.train_bins)
+    valid_bins = np.asarray(prebinned.valid_bins)
+    edges = np.asarray(prebinned.edges, dtype=np.float64)
+    bins = int(prebinned.bins)
+    if (
+        train_bins.ndim != 2
+        or valid_bins.ndim != 2
+        or train_bins.dtype != np.uint8
+        or valid_bins.dtype != np.uint8
+        or train_bins.shape[1] != valid_bins.shape[1]
+        or edges.shape != (train_bins.shape[1], bins + 1)
+    ):
+        raise ValueError("pre-binned split arrays are invalid")
+    cell_count = bins * bins
+    if cell_count > max_surface_cells:
+        raise MemoryError(
+            f"surface requires {cell_count} cells; budget={max_surface_cells}"
+        )
+    if min_cell_weight <= 0.0:
+        raise ValueError("min_cell_weight must be positive")
+    if (
+        isinstance(batch_size, bool)
+        or not isinstance(batch_size, int)
+        or batch_size <= 0
+    ):
+        raise ValueError("batch_size must be a positive integer")
+
+    requested = list(pairs)
+    if len(requested) == 0:
+        raise ValueError("pairs must be nonempty")
+    if any(
+        isinstance(left, bool)
+        or isinstance(right, bool)
+        or not isinstance(left, int)
+        or not isinstance(right, int)
+        or left >= right
+        or left < 0
+        or right >= train_bins.shape[1]
+        for left, right in requested
+    ):
+        raise ValueError("pairs must contain ordered valid feature indices")
+
+    train_y = np.asarray(train_residual, dtype=np.float64)
+    valid_y = np.asarray(valid_residual, dtype=np.float64)
+    train_w = np.asarray(train_weight, dtype=np.float64)
+    valid_w = np.asarray(valid_weight, dtype=np.float64)
+    if (
+        train_y.shape != (len(train_bins),)
+        or train_w.shape != train_y.shape
+        or valid_y.shape != (len(valid_bins),)
+        or valid_w.shape != valid_y.shape
+        or not np.all(np.isfinite(train_y))
+        or not np.all(np.isfinite(valid_y))
+        or not np.all(np.isfinite(train_w))
+        or not np.all(np.isfinite(valid_w))
+        or np.any(train_w < 0.0)
+        or np.any(valid_w < 0.0)
+    ):
+        raise ValueError("pre-binned score arrays must be aligned and finite")
+
+    count = len(requested)
+    pair_indices = np.asarray(requested, dtype=np.int64)
+    gains = np.empty(count, dtype=np.float64)
+    coverages = np.empty(count, dtype=np.float64)
+    dominant = np.empty(count, dtype=np.float64)
+    finite = np.empty(count, dtype=bool)
+    checksums = np.empty(count, dtype="U64")
+    denominator = float(np.dot(valid_w, valid_y * valid_y))
+    train_wy = train_w * train_y
+    valid_wy = valid_w * valid_y
+    sentinel = int(prebinned.missing_sentinel)
+    stride = cell_count + 1
+
+    def aggregate_cells(
+        compact_bins: np.ndarray,
+        weights: np.ndarray,
+        weighted_residual: np.ndarray,
+        batch_pairs: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        left = compact_bins[:, batch_pairs[:, 0]]
+        right = compact_bins[:, batch_pairs[:, 1]]
+        valid = (left != sentinel) & (right != sentinel) & (weights[:, None] > 0.0)
+        flat = left.astype(np.int64) * bins + right.astype(np.int64)
+        flat[~valid] = cell_count
+        offsets = np.arange(len(batch_pairs), dtype=np.int64) * stride
+        codes = (flat + offsets).T.reshape(-1)
+        repeated_weight = np.broadcast_to(
+            weights, (len(batch_pairs), len(weights))
+        ).reshape(-1)
+        repeated_wy = np.broadcast_to(
+            weighted_residual, (len(batch_pairs), len(weights))
+        ).reshape(-1)
+        cell_weight = np.bincount(
+            codes, weights=repeated_weight, minlength=len(batch_pairs) * stride
+        ).reshape(len(batch_pairs), stride)[:, :cell_count]
+        cell_wy = np.bincount(
+            codes, weights=repeated_wy, minlength=len(batch_pairs) * stride
+        ).reshape(len(batch_pairs), stride)[:, :cell_count]
+        return cell_weight, cell_wy
+
+    for start in range(0, count, batch_size):
+        stop = min(start + batch_size, count)
+        batch_pairs = pair_indices[start:stop]
+        train_cell_weight, train_cell_wy = aggregate_cells(
+            train_bins, train_w, train_wy, batch_pairs
+        )
+        valid_cell_weight, valid_cell_wy = aggregate_cells(
+            valid_bins, valid_w, valid_wy, batch_pairs
+        )
+
+        for local_index, (left_feature, right_feature) in enumerate(batch_pairs):
+            output_index = start + local_index
+            cell_weights = train_cell_weight[local_index].reshape(bins, bins)
+            weighted_sum = train_cell_wy[local_index].reshape(bins, bins)
+            supported = cell_weights >= float(min_cell_weight)
+            supported_weights = np.where(supported, cell_weights, 0.0)
+            means = np.divide(
+                weighted_sum,
+                cell_weights,
+                out=np.zeros((bins, bins)),
+                where=supported,
+            )
+            if float(np.sum(supported_weights)) > 0.0:
+                if np.all(supported):
+                    pure, _, _ = purify_pair_surface(
+                        means, supported_weights, max_iterations=10
+                    )
+                else:
+                    intercept = float(
+                        np.sum(means * supported_weights) / np.sum(supported_weights)
+                    )
+                    pure, _, _ = _direct_purified_projection(
+                        means,
+                        supported_weights,
+                        intercept=intercept,
+                        tolerance=1e-10,
+                    )
+                pure = np.where(supported, pure, 0.0)
+            else:
+                pure = np.zeros((bins, bins), dtype=np.float64)
+
+            surface = PurifiedPairSurface(
+                left_feature=int(left_feature),
+                right_feature=int(right_feature),
+                edges_left=edges[left_feature],
+                edges_right=edges[right_feature],
+                values=pure,
+                cell_weights=supported_weights,
+                coverage=0.0,
+            )
+            validation_weight = valid_cell_weight[local_index].reshape(
+                bins, bins
+            )
+            validation_wy = valid_cell_wy[local_index].reshape(bins, bins)
+            supported_validation_weight = np.where(
+                supported, validation_weight, 0.0
+            )
+            valid_weight_sum = float(np.sum(validation_weight))
+            coverages[output_index] = (
+                float(np.sum(supported_validation_weight)) / valid_weight_sum
+                if valid_weight_sum > 0.0
+                else 0.0
+            )
+            by_cell = (
+                2.0 * pure * validation_wy - pure * pure * validation_weight
+            )
+            by_cell = np.where(supported, by_cell, 0.0)
+            numerator = float(np.sum(by_cell))
+            roundoff = np.finfo(np.float64).eps * denominator
+            gains[output_index] = (
+                numerator / denominator
+                if denominator > 0.0 and abs(numerator) > roundoff
+                else 0.0
+            )
+            absolute = np.abs(by_cell)
+            total = float(np.sum(absolute))
+            dominant[output_index] = (
+                float(np.max(absolute) / total) if total > 0.0 else 0.0
+            )
+            finite[output_index] = bool(np.all(np.isfinite(pure)))
+            checksums[output_index] = _surface_checksum(surface)
+
+    return {
+        "pair_indices": pair_indices,
+        "gain": gains,
+        "coverage": coverages,
+        "dominant_cell_gain_share": dominant,
+        "finite": finite,
+        "surface_checksum": checksums,
+    }
+
+
 def _group_bounds(time_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     ids = np.asarray(time_ids, dtype=np.int64)
     if ids.ndim != 1 or len(ids) == 0 or np.any(np.diff(ids) < 0):
