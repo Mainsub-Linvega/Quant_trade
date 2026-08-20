@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-20",
+  "task": "xs",
+  "status": "failed_p0",
+  "decision": "stop_without_training",
+  "ridge_pair_search_abandoned": true,
+  "frozen_fusion": {
+    "market_lambda": 0.7,
+    "blend_weight": 1.17,
+    "prediction_scale": 1.16
+  },
+  "input": {
+    "residual_formula": "target_cross_unweighted - e_lgbm",
+    "source_rows": 1461732,
+    "source_sha256": "4845b9eb979d6e557ad7b4286946c68cfa882626431db8facb941cc31cab57e3"
+  },
+  "proposal": {
+    "folds": [0, 1, 2],
+    "source_pairs": 52003,
+    "eligible_pairs": 276,
+    "core_pairs": 192,
+    "diversity_pairs": 64,
+    "frozen_pairs": 256,
+    "pair_manifest_sha256": "8edba49d1fa68a77644c06f6b4102ff87a36eb3ffdfbfe25fbf4dc75c9ee0c64",
+    "benchmark_elapsed_seconds": 10.606029707000005,
+    "estimated_full_seconds": 538.6185184112512,
+    "peak_rss_bytes": 2680315904
+  },
+  "gate": {
+    "folds": [3, 4],
+    "rows": 583881,
+    "fold_counts": [295522, 288359],
+    "input_sha256": "6dff8b8189098ef263b45c11923ab367904983551b5183c40729606099032754",
+    "scanned_pairs": 256,
+    "null_samples": 3072,
+    "null_threshold": -0.00003454835839928683,
+    "accepted_pairs": 0,
+    "runtime_seconds": 226.65,
+    "peak_rss_bytes": 1057099776
+  },
+  "gate_check_pass_counts": {
+    "positive_blocks": 1,
+    "positive_drop_best": 0,
+    "coverage": 256,
+    "tail_concentration": 255,
+    "above_null": 5
+  },
+  "closest_pair": {
+    "pair": [29, 126],
+    "block_gains": [
+      -0.0008075218096071653,
+      0.00012117610889651676,
+      0.00004291500902069434
+    ],
+    "median_gain": 0.00004291500902069434,
+    "drop_best_mean_gain": -0.0003823034002932355,
+    "positive_blocks": 2
+  },
+  "artifacts": {
+    "proposal_scores_sha256": "9fe84a34610c9b7da67ca43b935116265898866eeca96c1e9ad303a561873f1c",
+    "proposal_manifest_sha256": "c187379a8787174d43a34d540a0ac95518f3f63999e0ab8f0101fd3181b30850",
+    "gate_report_sha256": "6eb8161861d81c8af014fce3212b2f1ca2ab89fa2bfd7082badf70bfaadebfe9"
+  },
+  "boundaries": {
+    "proposal_folds_used_for_gate": false,
+    "gate_folds_used_for_proposal_ranking": false,
+    "candidate_generated": false,
+    "submission_generated": false,
+    "thresholds_relaxed": false
+  },
+  "next_step": "Do not train Ridge or XS pair features; keep the frozen production model unchanged and review a different signal family before any new training."
+}
