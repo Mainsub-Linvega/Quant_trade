@@ -1,0 +1,265 @@
+{
+  "experiment": "selection_criterion_probe",
+  "plan_sha256": "a86d4de02c255eae77a40394337f5df9282a074c27d09c1746d6b9c0c3ca3b84",
+  "baseline_cache": "v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+  "stage1_only": false,
+  "evaluator": "LightGBM 1s x 160 rounds, cross block only",
+  "detection_floor": 0.061,
+  "folds": [
+    {
+      "fold": 0,
+      "n_valid": 296059,
+      "xs_overlap_uni_lasso": 107,
+      "arms": {
+        "base": {
+          "peak": 0.002526309430119373,
+          "A": 669.9755575665807,
+          "B": 639.4522639457817,
+          "history_overlap_with_base": 40,
+          "seconds": 47.99703682999825
+        },
+        "hist_lag1": {
+          "peak": 0.002471978040562917,
+          "A": 643.088707557467,
+          "B": 602.1073289933581,
+          "history_overlap_with_base": 17,
+          "seconds": 50.375370733992895
+        },
+        "hist_roll5": {
+          "peak": 0.0022148668160689397,
+          "A": 603.531671440381,
+          "B": 591.8740091763183,
+          "history_overlap_with_base": 12,
+          "seconds": 47.45993430999806
+        },
+        "lasso200": {
+          "peak": 0.002495812458764236,
+          "A": 642.2899010121022,
+          "B": 594.8767473969144,
+          "history_overlap_with_base": 23,
+          "seconds": 46.18505842398736
+        }
+      }
+    },
+    {
+      "fold": 1,
+      "n_valid": 290502,
+      "xs_overlap_uni_lasso": 112,
+      "arms": {
+        "base": {
+          "peak": 0.0029779318087673843,
+          "A": 583.11354477116,
+          "B": 516.588816294204,
+          "history_overlap_with_base": 40,
+          "seconds": 45.39548590697814
+        },
+        "hist_lag1": {
+          "peak": 0.0027112700536606827,
+          "A": 552.3639705175523,
+          "B": 509.13317655247357,
+          "history_overlap_with_base": 19,
+          "seconds": 48.92603704298381
+        },
+        "hist_roll5": {
+          "peak": 0.002577300213962961,
+          "A": 526.7840971507904,
+          "B": 487.13999941489357,
+          "history_overlap_with_base": 15,
+          "seconds": 51.78000868999516
+        },
+        "lasso200": {
+          "peak": 0.0026871382647547667,
+          "A": 545.8435418419588,
+          "B": 501.64885907587313,
+          "history_overlap_with_base": 22,
+          "seconds": 56.32161540098605
+        }
+      }
+    },
+    {
+      "fold": 2,
+      "n_valid": 291290,
+      "xs_overlap_uni_lasso": 117,
+      "arms": {
+        "base": {
+          "peak": 0.002849703257233243,
+          "A": 578.058229963717,
+          "B": 531.2713508034233,
+          "history_overlap_with_base": 40,
+          "seconds": 53.01041859498946
+        },
+        "hist_lag1": {
+          "peak": 0.002764174507990623,
+          "A": 578.615078892262,
+          "B": 548.7656203214455,
+          "history_overlap_with_base": 22,
+          "seconds": 56.355492403992685
+        },
+        "hist_roll5": {
+          "peak": 0.0025640726422663795,
+          "A": 546.6418350871443,
+          "B": 528.0174368668269,
+          "history_overlap_with_base": 20,
+          "seconds": 54.89148789801402
+        },
+        "lasso200": {
+          "peak": 0.0029622405787069488,
+          "A": 595.878038546827,
+          "B": 543.0843530470712,
+          "history_overlap_with_base": 20,
+          "seconds": 57.690644407004584
+        }
+      }
+    },
+    {
+      "fold": 3,
+      "n_valid": 295522,
+      "xs_overlap_uni_lasso": 119,
+      "arms": {
+        "base": {
+          "peak": 0.0021638999118477782,
+          "A": 677.8938093780891,
+          "B": 715.7782050448521,
+          "history_overlap_with_base": 40,
+          "seconds": 56.90947639901424
+        },
+        "hist_lag1": {
+          "peak": 0.0021194985656409096,
+          "A": 668.609159908706,
+          "B": 710.8923175674346,
+          "history_overlap_with_base": 24,
+          "seconds": 56.833710488979705
+        },
+        "hist_roll5": {
+          "peak": 0.0019779741869162403,
+          "A": 629.018834736248,
+          "B": 674.2158896115222,
+          "history_overlap_with_base": 21,
+          "seconds": 56.73419324599672
+        },
+        "lasso200": {
+          "peak": 0.002268137182317596,
+          "A": 684.8464303429947,
+          "B": 696.9624467441233,
+          "history_overlap_with_base": 25,
+          "seconds": 59.1131561579823
+        }
+      }
+    },
+    {
+      "fold": 4,
+      "n_valid": 288359,
+      "xs_overlap_uni_lasso": 68,
+      "arms": {
+        "base": {
+          "peak": 0.0018690795265874443,
+          "A": 489.7334972297896,
+          "B": 560.2844286499814,
+          "history_overlap_with_base": 40,
+          "seconds": 58.619586190005066
+        },
+        "hist_lag1": {
+          "peak": 0.0017770484311728147,
+          "A": 468.64920794633593,
+          "B": 539.6512945232522,
+          "history_overlap_with_base": 21,
+          "seconds": 56.61874111799989
+        },
+        "hist_roll5": {
+          "peak": 0.0017658066251611565,
+          "A": 468.26633892711754,
+          "B": 542.1999215261579,
+          "history_overlap_with_base": 21,
+          "seconds": 57.59514150299947
+        },
+        "lasso200": {
+          "peak": 0.0018135403198140368,
+          "A": 476.55884755267056,
+          "B": 546.7925273367982,
+          "history_overlap_with_base": 13,
+          "seconds": 42.011897798016435
+        }
+      }
+    }
+  ],
+  "summary": {
+    "hist_lag1": {
+      "pooled_gain": -0.043832862653868654,
+      "fold_gains": [
+        -0.021506229169199087,
+        -0.0895459574734444,
+        -0.030013212437304482,
+        -0.020519131205543495,
+        -0.04923872639205429
+      ],
+      "positive_folds": 0,
+      "n_folds": 5,
+      "drop_best_gain": -0.04876766289632306,
+      "bootstrap_ci_lower": -0.07099817386407559,
+      "delta_A_not_a_gate": -0.02973002041808557,
+      "delta_B_not_a_gate": -0.016711395916907866,
+      "exceeds_detection_floor": false,
+      "gates": {
+        "1_mean_delta_peak_positive": false,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_3pct": false,
+        "5_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "passed": false
+    },
+    "hist_roll5": {
+      "pooled_gain": -0.10389209274059819,
+      "fold_gains": [
+        -0.12327967838671172,
+        -0.13453350195088976,
+        -0.10023170456147079,
+        -0.08592159180448133,
+        -0.055253347948678755
+      ],
+      "positive_folds": 0,
+      "n_folds": 5,
+      "drop_best_gain": -0.11253546856584051,
+      "bootstrap_ci_lower": -0.12472567004328083,
+      "delta_A_not_a_gate": -0.07321111091964223,
+      "delta_B_not_a_gate": -0.04557581036685528,
+      "exceeds_detection_floor": false,
+      "gates": {
+        "1_mean_delta_peak_positive": false,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_3pct": false,
+        "5_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "passed": false
+    },
+    "lasso200": {
+      "pooled_gain": -0.012921297575029245,
+      "fold_gains": [
+        -0.012071748215615852,
+        -0.09764949726400285,
+        0.03949089126668137,
+        0.04817102209723201,
+        -0.029714737111700473
+      ],
+      "positive_folds": 2,
+      "n_folds": 5,
+      "drop_best_gain": -0.0258526635641676,
+      "bootstrap_ci_lower": -0.0647062263723962,
+      "delta_A_not_a_gate": -0.018211469527156864,
+      "delta_B_not_a_gate": -0.02535230947464264,
+      "exceeds_detection_floor": false,
+      "gates": {
+        "1_mean_delta_peak_positive": false,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_3pct": false,
+        "5_paired_bootstrap_ci_lower_bound_positive": false
+      },
+      "passed": false
+    }
+  },
+  "passing_arms": [],
+  "verdict": "REJECTED",
+  "elapsed_seconds": 1351.4163761249802
+}

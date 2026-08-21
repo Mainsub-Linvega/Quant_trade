@@ -1,0 +1,97 @@
+{
+  "experiment": "function_class_probe",
+  "date": "2026-08-21",
+  "question": "在与生产截面块逐列相同的输入上，非树的函数类能否拿到树拿不到的东西？",
+  "why_now": "诊断 D：树对时间/截面维的三次扩容都以 ΔB 远大于 ΔA 失败（history 40→80 公榜 0.00%；market_asset_panel −7.24% 且 ΔB +49.44% vs ΔA +16.88%；peer_leadlag −2.31%/−1.73%）。这是『函数类吃不下』的指纹，不是『信息不存在』。",
+  "baseline": {
+    "cache": "outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+    "column": "e_lgbm",
+    "strength": "3 seeds x 480 rounds, 生产强度",
+    "why_this_one": "P8 的教训：r 的分母必须用生产强度基准。target_mlp_screen 用 1s160 弱基准（比生产弱 1.51x）导致 oracle +6.97% 与实测 +0.026% 差 270 倍。",
+    "caveat": "该 cache 早于 v3_production_oof.py 首次提交但结构完整（19 数组含 checkpoint），未列入 src/oof_cache 的隔离名单；按 RUNBOOK D2 属『未经现跑复验』，本实验为**筛选**而非配对裁决，可用。"
+  },
+  "design": {
+    "input": "[xs_dev200 || history160 || asset_id] = 361 列，与生产截面块逐列相同",
+    "label": "e_tr = y - 逐 time_id 无权截面均值（与生产截面块同口径）",
+    "weight": "w（带权，与生产截面块同口径）",
+    "valid_projection": "ê -= 逐 time_id 无权截面均值（复刻 v3_production_oof.py:461 对 e_lgbm 的处理）",
+    "folds": "沿用 rolling_time_folds(n_folds=5, train_window=78960, embargo=6)，sample_modulo=5，sampling=phase_balanced",
+    "feature_selection": "逐折在训练段内拟合（robust_transform_fit + select_features），与被比较的 cache 同口径",
+    "row_join": "按 (fold, time_id, asset_id) join，不假设顺序；并断言自算 e_va 与 cache 的 e_target 数值一致"
+  },
+  "arms": [
+    {
+      "name": "rff_full",
+      "class": "随机傅里叶特征 + 加权岭回归",
+      "D": 2048,
+      "input": "375 维 = 360 标准化数值列 + 15 维 asset one-hot"
+    },
+    {
+      "name": "rff_pca64",
+      "class": "同上，但先投影到训练段 PCA 前 64 主成分",
+      "D": 2048,
+      "input": "64 PC + 15 维 asset one-hot"
+    },
+    {
+      "name": "linear",
+      "class": "同一设计上的普通加权岭回归",
+      "role": "阴性对照"
+    }
+  ],
+  "hyperparameters": {
+    "bandwidth": "中位数启发式（训练段 20000 行子样本的成对距离中位数），唯一决策点；{0.5x, 2.0x} 仅在 fold 0 跑，作诊断不作选参",
+    "alpha": "相对阶梯 {1e-6,1e-5,1e-4,1e-3,1e-2,1e-1} × trace(ZtZ)/D，由**训练折内层**后 20% time_id 的加权 peak 选出，再在整个训练折上重拟合。不看 validation。",
+    "seed": 20260821,
+    "no_search": "不搜 D、不搜带宽、不换标签、不加列。任一门槛不过即停。"
+  },
+  "metrics": {
+    "IC": "A / sqrt(B*D)，A=Σw·e_target·ê，B=Σw·ê²，D=Σw·e_target²",
+    "r": "IC_arm / IC_e_lgbm",
+    "rho": "加权相关 Σw·ê_arm·ê_lgbm / sqrt(Σw·ê_arm² · Σw·ê_lgbm²)",
+    "blend_gain_ic": "sqrt((1 + r² − 2ρr)/(1 − ρ²)) − 1",
+    "zero_gain_boundary": "r = ρ",
+    "blend_gain_ic_is_oracle": "该增益是**最优配比的 oracle 上界**，不是可实现值 —— 线上要估配比。peer_leadlag 实测：样本内上界 +2.358%，样本外 −1.280%。所以判据 2 的 +3% 门槛读作『oracle 至少 3%』，过了之后仍必须靠 8/23 前的公榜一枪确认真实迁移率。"
+  },
+  "gates": [
+    {
+      "id": 1,
+      "name": "pooled_r_exceeds_rho_plus_margin",
+      "rule": "pooled r > rho + 0.05",
+      "one_sided_rationale": "增益关于 r=ρ 对称，但机制相反：r>ρ ⟹ 第二分量权重为正 = 加信号（ΔA）；r<ρ ⟹ 权重为负 = 减方差对冲（ΔB）。本项目已多次证明减方差型增益不迁移：cross_section_weighted_note『机制是 ΔB −3.53% 而非 ΔA —— 减方差不是加信号』、horizon_auxiliary_cache_probe 因『ΔB −2.01% 减方差』否掉 responder_00。⟹ 判据 1 只认 r>ρ 那一侧，是**收紧**不是疏漏。"
+    },
+    {
+      "id": 2,
+      "name": "implied_blend_gain_at_least_3pct_ic",
+      "rule": "blend_gain_ic >= 0.03"
+    },
+    {
+      "id": 3,
+      "name": "at_least_4_of_5_folds_r_exceeds_rho",
+      "rule": "count(r_f > rho_f) >= 4"
+    },
+    {
+      "id": 4,
+      "name": "survives_drop_best_fold",
+      "rule": "去掉 blend_gain_ic 最大的一折后，判据 2 仍成立"
+    },
+    {
+      "id": 5,
+      "name": "linear_control_does_not_pass_gate_1",
+      "rule": "linear 臂不得通过判据 1；若通过则本实验判无效（测到的是早已存在的 ridge 块，不是函数类）"
+    }
+  ],
+  "verdict_rule": "两个 rff 臂各自独立判定；任一臂五道全过 ⟹ PASS，进入 8/23 前的公榜确认。全不过 ⟹ 记录 r 的实测值：r 明显 > P9 的 0.54 则方向成立而 RFF 不是对的函数类，转序列模型；r <= 0.6 则『非树函数类』整条判 REJECTED。",
+  "stop_conditions": [
+    "设计矩阵构建超出半天 ⟹ 降级为 Stage 1 单折（fold 0）筛选，单折不过即停",
+    "任一门槛不过 ⟹ 停止，不调参不重跑"
+  ],
+  "reopen_conditions": [
+    "8/23 回补数据后基准本身变化，按原规格复验一次",
+    "换掉输入表示（不再沿用为线性/树挑的 top-200）后按原规格复验"
+  ],
+  "amendment_20260821": {
+    "reason": "单测在**跑任何数据之前**暴露：写计划时我把 (1+r²−2ρr)/(1−ρ²) 的离对角格算成了负数。恒等式是 1 + (r−ρ)²/(1−ρ²) ⟹ oracle 最优配比增益**恒 ≥ 0**、关于 r=ρ 对称。判据本身一个字未改，只补上它为什么是**单边**的理由。",
+    "old_sha256": "b32e43f2a084e007f8296ea0a1da8dfb9bf75ea09c6be02975e3476c989edcdf",
+    "no_results_observed": true
+  }
+}

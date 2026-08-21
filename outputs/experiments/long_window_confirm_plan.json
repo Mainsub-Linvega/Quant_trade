@@ -1,0 +1,51 @@
+{
+  "experiment": "long_window_confirm",
+  "date": "2026-08-21",
+  "question": "long_window_ladder 在筛选档（1s160、只截面块）给出 w512 = +6.80% / 5-of-5 / 五道全过。在**确认档**（3 种子 × 480 轮）上还成立吗？",
+  "escalation_tier": "确认档。仓库既有阶梯：筛选(1s160) → 确认(3s480) → 公榜。本实验是第二级。",
+  "arms": [
+    {"name": "base", "design": "[xs_dev200 || history160(window=5) || asset_id] = 361 列（生产截面块）"},
+    {"name": "w512", "design": "base + 40 特征 × 窗口 512 × {滚动均值, 当前−滚动均值} = +80 列 = 441 列"}
+  ],
+  "why_only_two_arms": "long_window_ladder 的 w64（线性过、树不过：+9.96%/5-of-5 vs +4.51%/3-of-5）与 w4096（树过、线性不过：+3.43%/4-of-5 vs −0.33%/1-of-5）**两个评价器不一致** ⟹ 窗口只在 512 上被稳健识别。带它们上确认档就是多重比较捞鱼。",
+  "evaluator": {
+    "model": "LightGBM 3 seeds x 480 rounds，只跑截面块（XS_SPEC），复用 v3_production_oof.fit_predict_lgbm",
+    "market_block_unchanged": "市场块**不参与、不改动**。生产的市场块设计里也含 history160，『长窗要不要同时进市场块』是**另一个问题**，本实验不回答，也不得据本实验结果去改它。"
+  },
+  "design": {
+    "folds": "与 long_window_ladder **完全相同**：rolling_time_folds(5, 78960, embargo 6)、modulo 5、phase_balanced、逐折训练段内拟合全部统计量与选列",
+    "base_rerun": "base 在本次运行内现跑（RUNBOOK D2），不复用筛选档产物",
+    "row_join": "按 (time_id, asset_id) join 生产 OOF cache 并断言 target/weight 逐位相同"
+  },
+  "gates": [
+    {"id": 1, "name": "mean_delta_peak_positive", "rule": "折均 Δpeak > 0"},
+    {"id": 2, "name": "at_least_4_of_5_folds_positive", "rule": "≥ 4/5 折为正"},
+    {"id": 3, "name": "survives_drop_best_fold", "rule": "去掉最好一折仍 > 0"},
+    {"id": 4, "name": "relative_gain_at_least_3pct", "rule": "pooled 相对增益 ≥ +3%"},
+    {"id": 5, "name": "paired_bootstrap_ci_lower_bound_positive", "rule": "配对 block bootstrap（每折 200 块 / 重抽 4000 次 / seed 2026 / 95%）下界 > 0"}
+  ],
+  "excluded_gate": {
+    "name": "2*dA > dB",
+    "why_excluded": "同前两枪：ΔA/ΔB 混着共同尺度，且是两分量配比判别式，不适用于『同一模型换输入』。只用尺度不变的 peak = A²/(B·D)。"
+  },
+  "detection_floor": {
+    "value": 0.087,
+    "source": "ROADMAP P2-R：**3s480** 的实测检出下限是基准 peak 的 8.7%（1s160 是 6.1%）",
+    "warning": "⚠️ 确认档的下限**比筛选档更高**。筛选档 +6.80% 折算过来若维持同量级，将**低于** 8.7% ⟹ 很可能出现『五道门槛全过、但低于检出下限』。那种情况读作『方向可信、幅度测不出』，只够作为花一次公榜额度的理由，**不构成晋级依据**。这一条在跑之前写死。"
+  },
+  "builtin_consistency_check": {
+    "rule": "线性次臂不依赖树的超参 ⟹ 本实验的线性 peak 必须与 long_window_ladder 的对应值**逐位相同**。不同即说明数据路径有差异，实验判无效。",
+    "tolerance": 0.0
+  },
+  "stop_conditions": [
+    "只跑 base 与 w512 两臂；不加窗口、不搜窗口值、不改 XS_SPEC、不调轮数/种子数",
+    "任一门槛不过即停，不调参重跑"
+  ],
+  "honest_prior": "中等偏低。筛选档 5/5 折且 CI 下界 +3.87% 是好信号，但本项目③类改动的迁移率历史区间是 0.51×~2.3×，且确认档下限抬到 8.7%。最可能的结局是『五道过、幅度落在 3%~8.7% 之间』。",
+  "if_pass_next_steps": [
+    "① 生产端实现 512 步滚动状态：**必须换掉本探针的 float64 cumsum**，改成 history.py 那套定序求和（离线整块与在线逐 time_id 必须逐位一致），并过 check_consistency",
+    "② 训练完整生产候选（两片森林、全窗、3 种子 480 轮）",
+    "③ 公榜一枪（CSV 由用户生成，CLAUDE.md §1.4）—— 8/23 前",
+    "④ 过完 CLAUDE.md §6 全套才谈转正"
+  ]
+}

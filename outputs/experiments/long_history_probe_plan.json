@@ -1,0 +1,41 @@
+{
+  "experiment": "long_history_probe",
+  "date": "2026-08-21",
+  "question": "逐 asset 的长历史窗（64~4096 个观测）里，还有没有生产模型没用到的信息？",
+  "why_now": {
+    "gap": "生产 history 块只有 window=5（上一次观测/差分/5 步滚动均值/偏离），而 slow/fast 证明预测在 K=2000 真实步尺度上仍有可用结构（公榜 +2.93%）。",
+    "never_tested": "temporal 家族全部实验的 MAX_LAG = 20（experiments/temporal_multiscale.py:49），只覆盖到 20 个真实步。20 到 2000 之间是 100 倍的未测跨度。",
+    "why_linear_is_enough": "function_class_probe（同日）实测：同一批输入上线性 r=0.611 / 核 r=0.798 / 树 r=1.000，三者互相 ρ≈0.6~0.7 ⟹ 它们读到的是同一个东西。因此**线性模型是「信息在不在」的有效探测器** —— 线性看不见的，换函数类也看不见。这一条是本实验能用线性做主臂的全部依据。"
+  },
+  "design": {
+    "base_arm": "与生产截面块逐列相同的 [xs_dev200 || history160 || asset_id]",
+    "long_arm": "base + 长窗块：40 个 history 特征 × 窗口 {64, 512, 4096} × {滚动均值, 当前值−滚动均值} = 240 列",
+    "window_semantics": "按**观测数**（逐 asset 行序），与生产 AssetHistory 同语义；不是真实 time_id 步长。滚动均值严格滞后（只用 t-W..t-1，不含当前行）。",
+    "label": "e_tr（截面残差），带权，与生产截面块同口径",
+    "valid_projection": "ê -= 逐 time_id 无权截面均值",
+    "folds": "rolling_time_folds(5, 78960, embargo 6)，modulo 5，phase_balanced，逐折在训练段内拟合全部统计量与选列",
+    "row_join": "按 (time_id, asset_id) join 生产 OOF cache，并断言 target/weight 逐位相同",
+    "note_on_cumsum": "长窗滚动均值用 float64 cumsum 逐 asset 向量化计算。生产 history.py 刻意不用 cumsum（为了离线/在线逐位一致），但本实验是研究探针、没有在线路径要对齐，故不受该约束。"
+  },
+  "arms": [
+    {"name": "linear_base", "role": "配对基准"},
+    {"name": "linear_long", "role": "主臂"},
+    {"name": "rff_base", "role": "次臂基准"},
+    {"name": "rff_long", "role": "次臂"}
+  ],
+  "primary_metric": "配对增量 IC(long)/IC(base) - 1，逐折 + pooled",
+  "gates": [
+    {"id": 1, "name": "pooled_relative_gain_at_least_3pct", "rule": "pooled IC(linear_long)/IC(linear_base) - 1 >= 0.03"},
+    {"id": 2, "name": "at_least_4_of_5_folds_positive", "rule": "count(fold gain > 0) >= 4"},
+    {"id": 3, "name": "survives_drop_best_fold", "rule": "去掉增益最大的一折后，pooled 增益仍 > 0"},
+    {"id": 4, "name": "two_delta_A_exceeds_delta_B", "rule": "2*dA > dB —— 增益必须来自加信号(A)而不是减方差(B)"},
+    {"id": 5, "name": "paired_bootstrap_ci_lower_bound_positive", "rule": "逐折配对 block bootstrap（每折 200 块、重抽 4000 次、seed 2026、95%）下界 > 0"}
+  ],
+  "verdict_rule": "linear_long 五道全过 ⟹ PASS，长窗信息存在，值得喂给树/序列模型并抢 8/23 前的公榜一枪。任一不过 ⟹ REJECTED，20~4096 这段判为空，配合 function_class_probe 一起关闭『当前输入表示』这条线。",
+  "stop_conditions": [
+    "不搜窗口集合、不搜特征数、不搜 alpha 之外的任何东西；alpha 仍走训练折内层后 20% 选参",
+    "任一门槛不过即停，不调窗口重跑",
+    "内存不足时降级为窗口 {512} 单档 + Stage 1 单折，并在报告里标明降级"
+  ],
+  "honest_prior": "低。反面证据：f_lags(lag3+lag10) 只有 +0.38%/3-of-5；temporal_multiscale 三臂 -2.85%/+0.18%/-4.53% 全否；history 列 40->80 公榜 0.00%。正面证据：以上全部只测到 lag 20，且全部是喂给树的手工摘要；而 slow/fast 在 K=2000 上确实拿到了公榜 +2.93%。"
+}
