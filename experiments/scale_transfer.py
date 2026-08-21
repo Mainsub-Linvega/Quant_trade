@@ -257,8 +257,10 @@ def main() -> None:
     ]
     (EXPERIMENTS / "scale_transfer.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    print(f"生产 alpha 下本地最优 scale（岭回归）：{local_ridge:.4f} "
-          f"（{', '.join(f'{r["ruler"]} {r["best_scale"]:.3f}' for r in ridge_rulers)}）")
+    # join 提到 f-string 外面：内层再嵌 f-string 就会重用外层的引号，那是 PEP 701（3.12+）
+    # 才允许的写法，评测环境的 Python 3.11 上直接 SyntaxError。
+    ruler_txt = ", ".join(f"{r['ruler']} {r['best_scale']:.3f}" for r in ridge_rulers)
+    print(f"生产 alpha 下本地最优 scale（岭回归）：{local_ridge:.4f} （{ruler_txt}）")
     print(f"臂间比 {arm_ratio_ab:.4f}（公榜对应比 {public_hybrid / public_ridge:.4f}）")
     print(f"→ hybrid 本地最优 ≈ {local_hybrid:.4f}，公榜最优 {public_hybrid:.4f}，"
           f"比值 {public_hybrid / local_hybrid:.3f}")
