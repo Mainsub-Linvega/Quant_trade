@@ -173,6 +173,139 @@ class AssetHistory:
         return history
 
 
+class AssetLongWindow:
+    """逐 asset 的**长窗**滚动均值与偏离。O(1)/行，离线整块与在线逐 time_id **逐位相同**。
+
+    ## 为什么不能直接把 AssetHistory 的 window_size 调大
+
+    `AssetHistory` 是 O(window)：每行要对 window 个滞后量**定序求和**，在线还要把
+    `(window, feature_count)` 的环形缓冲整体右移一格。window=512 时每个 time_id 要搬
+    512 × 40 × 15 ≈ 307K 个元素、共 21.4 万次 —— 跑不动。
+
+    ## 改用「持久累积和相减」
+
+        mean[t] = (cum[n] − cum[max(n−W, 0)]) / min(n, W)
+
+    与 `main.PredictionTrail` 同一套路。逐位一致的依据是**构造上一样**，不是「应该一样」：
+
+    1. 离线用 `np.cumsum(..., dtype=np.float64)`，它本身就是**定序累加**；
+    2. 在线维护**持久** running total，逐行 `running = running + current`；
+    3. 实测两者逐位相同（`np.array_equal` 为 True、max|Δ| = 0）。
+
+    ⚠️ **分块重起**的 cumsum 与整段 cumsum **不**逐位相同 —— 那正是本文件开头
+    警告的写法。持久 running total 才是整段 cumsum 的正确在线对偶；离线批处理时
+    也必须把上一批的 `running` 作为 cumsum 的**第一行**接上，不能算完再加偏移
+    （`r + (s0+s1)` 与 `(r+s0)+s1` 的舍入不同）。
+
+    边界与 `AssetHistory` 一致：无历史（n=0）⟹ mean = 0 ⟹ deviation = current。
+
+    ⚠️ **冷启动**：推理端从空状态起步，测试期前 W 个观测的窗口比训练期短。
+    W=512 时这影响每个 asset 的前 512 次观测（公榜 217,440 个 time_id 里的 0.24%）。
+    与训练端「无历史即 0」的语义一致，不额外补状态。
+    """
+
+    __slots__ = ("window", "feature_count", "_ring", "_running", "_seen")
+
+    def __init__(self, feature_count: int, window: int):
+        if feature_count <= 0 or window <= 0:
+            raise ValueError("feature_count 与 window 必须为正")
+        self.feature_count = int(feature_count)
+        self.window = int(window)
+        self._ring: np.ndarray | None = None      # (slots, window+1, F)  ring[k % (W+1)] = cum[k]
+        self._running: np.ndarray | None = None   # (slots, F)            = cum[n]
+        self._seen: np.ndarray | None = None      # (slots,)              = n
+
+    def _ensure_slots(self, n_slots: int) -> None:
+        if self._ring is not None and len(self._ring) >= n_slots:
+            return
+        ring = np.zeros((n_slots, self.window + 1, self.feature_count), dtype=np.float64)
+        running = np.zeros((n_slots, self.feature_count), dtype=np.float64)
+        seen = np.zeros(n_slots, dtype=np.int64)
+        if self._ring is not None:
+            ring[: len(self._ring)] = self._ring
+            running[: len(self._running)] = self._running
+            seen[: len(self._seen)] = self._seen
+        self._ring, self._running, self._seen = ring, running, seen
+
+    def _emit(self, current: np.ndarray, cum_n: np.ndarray, cum_left: np.ndarray,
+              denom: np.ndarray):
+        """(rolling_mean, current − rolling_mean)。float64 里算完一次性 round 回 float32。"""
+        mean = np.divide(cum_n - cum_left, denom,
+                         out=np.zeros_like(cum_n), where=denom > 0).astype(np.float32)
+        return mean, current - mean
+
+    def transform_online(self, current: np.ndarray, asset_ids: np.ndarray):
+        """一次恰好一个 time_id。与 `transform` 逐位相同，但全程向量化、无 Python 循环。
+
+        前提（官方 runner 满足）：本批内 asset_id 不重复。不满足直接抛，绝不静默算错。
+        """
+        current = np.asarray(current, dtype=np.float32)
+        if current.ndim != 2 or current.shape[1] != self.feature_count:
+            raise ValueError(f"current 形状应为 (n, {self.feature_count})，收到 {current.shape}")
+        asset_ids = np.asarray(asset_ids, dtype=np.int64)
+        if len(asset_ids) != len(current):
+            raise ValueError("asset_ids 与 current 行数不一致")
+        if not len(asset_ids):
+            raise ValueError("空批次")
+        if asset_ids.min() < 0:
+            raise ValueError("asset_id 不能为负")
+        self._ensure_slots(int(asset_ids.max()) + 1)
+        if len(asset_ids) > 1 and np.bincount(asset_ids, minlength=len(self._ring)).max() > 1:
+            raise ValueError("同一批内出现重复 asset_id —— 在线快路径要求一次一个 time_id")
+
+        seen = self._seen[asset_ids]
+        left = np.maximum(seen - self.window, 0)
+        cum_n = self._running[asset_ids]                          # 高级索引 ⟹ 已是拷贝
+        cum_left = self._ring[asset_ids, left % (self.window + 1)]
+        blocks = self._emit(current, cum_n, cum_left,
+                            (seen - left).astype(np.float64)[:, None])
+        self._ring[asset_ids, seen % (self.window + 1)] = cum_n   # 先存 cum[n]
+        self._running[asset_ids] = cum_n + current                # 再推进到 cum[n+1]
+        self._seen[asset_ids] += 1
+        return blocks
+
+    def transform(self, current: np.ndarray, asset_ids: np.ndarray):
+        """离线整块（一次吃任意多行，行内按 time_id 升序）。与 `transform_online` 逐位相同。"""
+        current = np.asarray(current, dtype=np.float32)
+        if current.ndim != 2 or current.shape[1] != self.feature_count:
+            raise ValueError(f"current 形状应为 (n, {self.feature_count})，收到 {current.shape}")
+        asset_ids = np.asarray(asset_ids, dtype=np.int64)
+        if len(asset_ids) != len(current):
+            raise ValueError("asset_ids 与 current 行数不一致")
+        if not len(asset_ids):
+            raise ValueError("空批次")
+        self._ensure_slots(int(asset_ids.max()) + 1)
+        width, span = self.feature_count, self.window + 1
+        mean = np.zeros((len(current), width), dtype=np.float32)
+
+        for asset in np.unique(asset_ids):
+            index = np.flatnonzero(asset_ids == asset)
+            start = int(self._seen[asset])
+            # ⚠️ 把上一批的 running 作为 cumsum 的**第一行**接上 —— 不能算完再加偏移。
+            forward = np.cumsum(
+                np.vstack([self._running[asset][None, :], current[index]]),
+                axis=0, dtype=np.float64)                      # forward[i] = cum[start + i]
+            base = max(start - self.window, 0)
+            if start > base:                                   # 本批之前的 cum，取自环
+                past = self._ring[asset][np.arange(base, start) % span]
+                lookup = np.vstack([past, forward])
+            else:
+                lookup = forward
+            positions = start + np.arange(len(index))
+            cum_n = lookup[positions - base]
+            left = np.maximum(positions - self.window, 0)
+            cum_left = lookup[left - base]
+            block_mean, _ = self._emit(current[index], cum_n, cum_left,
+                                       (positions - left).astype(np.float64)[:, None])
+            mean[index] = block_mean
+            # 落环：本批产生的 cum[start .. start+T]，只需保留最后 span 个
+            keep = np.arange(max(start, positions[-1] + 1 - self.window), positions[-1] + 1)
+            self._ring[asset][keep % span] = lookup[keep - base]
+            self._running[asset] = forward[-1]
+            self._seen[asset] = positions[-1] + 1
+        return mean, current - mean
+
+
 def history_design_blocks(transformed: np.ndarray, asset_ids: np.ndarray,
                           history_positions: np.ndarray, window_size: int,
                           history: AssetHistory | None = None):

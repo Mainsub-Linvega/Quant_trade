@@ -57,7 +57,7 @@ import numpy as np
 from features import (apply_robust_transform, cross_sectional_deviation,
                       single_time_deviation)
 from lgbm_numpy import NumpyForest
-from history import AssetHistory
+from history import AssetHistory, AssetLongWindow
 
 # 开机对拍的门限。两条路径只该差求和顺序（~1e-18）；真翻了一个分裂，输出会跳一个叶子值
 # （~1e-3）。1e-10 落在两者中间好几个数量级，怎么定都不会误判。
@@ -200,6 +200,14 @@ class Model:
         self.history = (AssetHistory(feature_count=len(self.history_positions),
                                      window_size=self.history_window)
                         if self.history_positions else None)
+        # ---- 长窗滚动均值（可选，第二个跨 predict 状态）。复用 history 的**同一批列**，
+        # 所以不必扩输入契约、meta 也只多一个键。⚠️ **只进截面设计**：确认档
+        # （long_window_confirm，3s480 +7.77%/5-of-5）只测了截面块，市场块未测。
+        # 缺键 ⟹ None ⟹ 下面的组装退化成原来的 blocks ⟹ 旧模型逐位不变。
+        long_window = meta.get("long_window")
+        self.long_window = (AssetLongWindow(feature_count=len(self.history_positions),
+                                            window=int(long_window))
+                            if long_window and self.history_positions else None)
         self.blend_weight = float(meta["blend_weight"])       # ê 里 LGBM 占的比重
         self.prediction_scale = np.float32(meta["prediction_scale"])
         self.prediction_clip = np.float32(meta["prediction_clip"])
@@ -380,8 +388,16 @@ class Model:
             # rolling_mean 为 0（与训练端最前面那些行同口径，模型见过这种输入），不出 NaN。
             # transform_online 与离线的 transform 逐位相同，见 history.py 的推导。
             blocks.extend(self.history.transform_online(lraw[:, self.history_positions], asset_ids))
+        # ⚠️ 有状态：与 history 同样每次 predict 都推进。离线整块与在线逐 time_id
+        # 逐位相同（AssetLongWindow 用持久累积和相减，不是分块重起的 cumsum）。
+        long_blocks = ([] if self.long_window is None
+                       else list(self.long_window.transform_online(
+                           lraw[:, self.history_positions], asset_ids)))
         blocks.append(asset_ids.astype(np.float32))   # ⚠️ asset_id 必须留在最后一列
-        design = np.column_stack(blocks)
+        # ⚠️ 长窗块只插在**截面**设计里、且在 asset_id 之前，与 train.py 逐列对应。
+        # 市场设计下面仍用未加长窗的 `blocks` ⟹ 市场块一列不动。
+        # long_blocks 为空时 `blocks[:-1] + [] + blocks[-1:]` 就是 `blocks` ⟹ 旧模型逐位不变。
+        design = np.column_stack(blocks[:-1] + long_blocks + blocks[-1:])
         e_lgbm = self._forest_mean(design, asset_ids, self.boosters, self.forest,
                                    self.num_iteration)
         e_lgbm -= e_lgbm.mean()
@@ -391,6 +407,7 @@ class Model:
             e_lgbm = _asset_scaled_zero_mean(e_lgbm, asset_ids, self.asset_cross_scales)
 
         # ---- 第二个市场分量。设计矩阵只比上面多前面那 200 列 raw（与训练端逐列对应）。
+        # ⚠️ 这里用的是**未加长窗**的 `blocks` —— 与 train.py 的 market_design 一致。
         # `m̂_lgbm` 取无权截面均值 ⟹ 它是纯市场量，不碰截面块。λ 缺省 0 ⟹ 旧模型行为不变。
         if self.market_lambda:
             market_design = np.column_stack([lraw, *blocks])

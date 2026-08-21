@@ -81,6 +81,8 @@ def public_baseline_drift(meta: dict) -> list[str]:
         "slow_fast_window": as_float(meta.get("slow_fast_window")),
         "slow_fast_slow_relative": as_float(meta.get("slow_fast_slow_relative")),
         "slow_fast_fast_relative": as_float(meta.get("slow_fast_fast_relative")),
+        # 取原值不走 as_float：基线是 None，None==None 才算不偏离
+        "long_window": meta.get("long_window"),
     }
     unknown = set(PUBLIC_BASELINE) - set(found)
     if unknown:
@@ -159,6 +161,7 @@ def audit(path: Path, expected_scale: float | None = None,
                              "slow_fast_window": meta.get("slow_fast_window"),
                              "slow_fast_slow_relative": meta.get("slow_fast_slow_relative"),
                              "slow_fast_fast_relative": meta.get("slow_fast_fast_relative"),
+                             "long_window": meta.get("long_window"),
                              "lgbm_model_files": model_files,
                              "market_model_files": market_files},
             "checks": checks, "passed": all(checks.values()),

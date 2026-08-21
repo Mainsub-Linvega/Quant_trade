@@ -1,0 +1,87 @@
+{
+  "created_at": "2026-08-21T06:27:47.385758+00:00",
+  "source": "/home/mainsub/Documents/Quant_trade/outputs/candidates/v3_hybrid_long512",
+  "destination": "/home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_long512",
+  "configuration": {
+    "prediction_scale": 1.16,
+    "blend_weight": 1.0,
+    "num_iteration": 480,
+    "n_seeds": 3,
+    "slow_fast_window": 2000,
+    "slow_fast_slow_relative": 0.387609649122807,
+    "slow_fast_fast_relative": 1.0801809210526316
+  },
+  "public_baseline": {
+    "blend_weight": 1.0,
+    "num_iteration": 480,
+    "history_window": 5,
+    "history_positions_count": 40,
+    "prediction_scale": 1.16,
+    "n_seeds": 3,
+    "market_lambda": 0.5,
+    "market_model_count": 3,
+    "cross_section_weighted": true,
+    "slow_fast_window": 2000,
+    "slow_fast_slow_relative": 0.387609649122807,
+    "slow_fast_fast_relative": 1.0801809210526316,
+    "long_window": null
+  },
+  "source_meta": {
+    "blend_weight": 0.5,
+    "prediction_scale": 1.16,
+    "num_iteration": 480
+  },
+  "source_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "ee65ca0881512c2997337485c0f88c16b452ef19675ed6fa739a254abd7938af",
+    "lgbm_market_seed2026.txt": "c055f119b5539380c8e7b929f7bee0fe540657ae2e54e7c67708bef2ea86552c",
+    "lgbm_market_seed2027.txt": "591e13692eb283a69710050484545bf4deae56f6b88b2207fe08e8f0ff87458a",
+    "lgbm_market_seed2028.txt": "91dcef3a63fb6b8818d7757dedef8046e07d037023b12fce7dcae84401bce4f9",
+    "lgbm_seed2026.txt": "796ee6fc0f72c835840891ee5062a8683257fb77709f7aab8a4dbb1c2dafd19b",
+    "lgbm_seed2027.txt": "5aa81d3b5f77739f066e966dd92c0ddc8d16263e8add60594caa8542d7a755a0",
+    "lgbm_seed2028.txt": "77f4dea00f0717b720e3aea49ec1b05a6b0cef93dd373e5fa69d5180ae3b4a17"
+  },
+  "staged_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "cc6a4db155b6e563f967728d70695043fd259bfb62d2b5e5dc254aee4e5046f1",
+    "lgbm_market_seed2026.txt": "c055f119b5539380c8e7b929f7bee0fe540657ae2e54e7c67708bef2ea86552c",
+    "lgbm_market_seed2027.txt": "591e13692eb283a69710050484545bf4deae56f6b88b2207fe08e8f0ff87458a",
+    "lgbm_market_seed2028.txt": "91dcef3a63fb6b8818d7757dedef8046e07d037023b12fce7dcae84401bce4f9",
+    "lgbm_seed2026.txt": "796ee6fc0f72c835840891ee5062a8683257fb77709f7aab8a4dbb1c2dafd19b",
+    "lgbm_seed2027.txt": "5aa81d3b5f77739f066e966dd92c0ddc8d16263e8add60594caa8542d7a755a0",
+    "lgbm_seed2028.txt": "77f4dea00f0717b720e3aea49ec1b05a6b0cef93dd373e5fa69d5180ae3b4a17"
+  },
+  "validation": {
+    "passed": true,
+    "backends": {
+      "numpy": {
+        "rows": 30,
+        "max_abs": 0.06420399102437059,
+        "mean": 0.006989921627343336,
+        "std": 0.027185005131215453
+      },
+      "lightgbm": {
+        "rows": 30,
+        "max_abs": 0.06420399102437052,
+        "mean": 0.006989921627343341,
+        "std": 0.027185005131215453
+      }
+    },
+    "numpy_vs_lightgbm_max_abs": 1.3877787807814457e-16,
+    "blend_weight": 1.0,
+    "blend_weight_sensitivity_max_abs": 0.06831061000482705,
+    "market_lambda": 0.5,
+    "market_lambda_sensitivity_max_abs": 0.007636345257450793,
+    "cross_section_weighted": true,
+    "files": {
+      "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+      "hybrid_meta.json": "cc6a4db155b6e563f967728d70695043fd259bfb62d2b5e5dc254aee4e5046f1",
+      "lgbm_market_seed2026.txt": "c055f119b5539380c8e7b929f7bee0fe540657ae2e54e7c67708bef2ea86552c",
+      "lgbm_market_seed2027.txt": "591e13692eb283a69710050484545bf4deae56f6b88b2207fe08e8f0ff87458a",
+      "lgbm_market_seed2028.txt": "91dcef3a63fb6b8818d7757dedef8046e07d037023b12fce7dcae84401bce4f9",
+      "lgbm_seed2026.txt": "796ee6fc0f72c835840891ee5062a8683257fb77709f7aab8a4dbb1c2dafd19b",
+      "lgbm_seed2027.txt": "5aa81d3b5f77739f066e966dd92c0ddc8d16263e8add60594caa8542d7a755a0",
+      "lgbm_seed2028.txt": "77f4dea00f0717b720e3aea49ec1b05a6b0cef93dd373e5fa69d5180ae3b4a17"
+    }
+  }
+}

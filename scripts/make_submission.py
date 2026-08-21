@@ -160,6 +160,10 @@ def check_v3_hybrid_meta(model_dir: Path, *, off_baseline: bool) -> dict:
         "slow_fast_window": _as_float(meta.get("slow_fast_window")),
         "slow_fast_slow_relative": _as_float(meta.get("slow_fast_slow_relative")),
         "slow_fast_fast_relative": _as_float(meta.get("slow_fast_fast_relative")),
+        # ⚠️ 2026-08-21 补：长窗块。榜上那份没有它 ⟹ 基线是 None。
+        # 这里取**原值**不走 _as_float —— None==None 才算不偏离；带长窗的候选会被判 drift，
+        # 必须显式 `--off-baseline` 才放行（有意偏离的出口）。
+        "long_window": meta.get("long_window"),
     }
     # ⚠️ 这张表与 PUBLIC_BASELINE 是**两处派生同一份口径**，08-13 就因为只改了
     # promote_v3_candidate 那边、漏了这里，打包时直接 KeyError。

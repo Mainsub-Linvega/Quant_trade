@@ -126,8 +126,16 @@ class LgbmNumpyEquivalenceTest(unittest.TestCase):
             hist, _ = history_design_blocks(raw, assets, self.meta["history_positions"],
                                             int(self.meta["history_window"]))
             blocks.extend(hist)
+        # ⚠️ 2026-08-21：长窗块只进**截面**设计、且在 asset_id 之前（与 main.py 逐列对应）。
+        long_blocks = []
+        if self.meta.get("long_window") and self.meta.get("history_positions"):
+            from history import AssetLongWindow
+            positions = np.asarray(self.meta["history_positions"], dtype=np.int64)
+            long_blocks = list(AssetLongWindow(feature_count=len(positions),
+                                               window=int(self.meta["long_window"])).transform(
+                raw[:, positions], assets))
         blocks.append(assets.astype(np.float32))
-        design = np.column_stack(blocks)
+        design = np.column_stack(blocks[:-1] + long_blocks + blocks[-1:])
         self.assertEqual(design.shape[1], self.forest.n_features,
                          "设计矩阵列数与模型不符 —— 测试的口径落后于生产了")
 

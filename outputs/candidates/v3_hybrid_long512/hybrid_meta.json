@@ -1,6 +1,6 @@
 {
   "strategy": "v3_hybrid_ridge_plus_lgbm_cross_section",
-  "blend_weight": 1.0,
+  "blend_weight": 0.5,
   "blend_note": "最终 ê = (1−w)·ê_ridge + w·ê_lgbm，w=0.5 是先验、不拟合（ROADMAP §5）",
   "num_iteration": 480,
   "num_iteration_source": "lgbm_blend_unweighted 逐折 best_iteration 的折均（范围 44~302）",
@@ -1104,10 +1104,5 @@
   "train_rows": 2645530,
   "sample_modulo": 5,
   "sampling": "phase_balanced",
-  "ridge_model_sha_note": "baseline_model.json 是 v1_ridge 生产模型的冻结拷贝，不重训",
-  "slow_fast_window": 2000,
-  "slow_fast_slow_relative": 0.387609649122807,
-  "slow_fast_fast_relative": 1.0801809210526316,
-  "slow_fast_note": "由 scripts/promote_v3_candidate.py 在 staging 时写入；train.py 不产出这三个键。默认值 = PUBLIC_BASELINE（公榜 0.0041150085 那份）",
-  "promotion_note": "Staged by scripts/promote_v3_candidate.py; source artifacts are unchanged. scale=1.16, blend_weight=1.0, seeds=3, slow_fast={'slow_fast_window': 2000, 'slow_fast_slow_relative': 0.387609649122807, 'slow_fast_fast_relative': 1.0801809210526316}"
+  "ridge_model_sha_note": "baseline_model.json 是 v1_ridge 生产模型的冻结拷贝，不重训"
 }

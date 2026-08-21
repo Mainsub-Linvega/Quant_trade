@@ -106,7 +106,10 @@ def model_identity(model_dir: Path, manifest_path: Path) -> dict[str, Any]:
         "blend_weight", "num_iteration", "prediction_scale", "prediction_clip",
         "market_lambda", "history_window", "sample_modulo", "sampling",
         "cross_section_weighted", "slow_fast_window", "slow_fast_slow_relative",
-        "slow_fast_fast_relative")}
+        "slow_fast_fast_relative",
+        # ⚠️ 2026-08-21 补：长窗块也是模型身份。这份报告号称打印「meta 身份」，
+        # 漏一个身份键就等于报告在说谎 —— 与 08-18 PUBLIC_BASELINE 漏 slow/fast 同一类。
+        "long_window")}
     identity["n_lgbm_models"] = len(meta.get("lgbm_model_files", []))
     identity["n_market_models"] = len(meta.get("market_model_files", []))
     identity["n_features"] = len(meta.get("lgbm_features", []))

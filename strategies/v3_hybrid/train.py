@@ -147,8 +147,17 @@ def predict_array(model_dir, full_features: np.ndarray, time_ids: np.ndarray,
                                         meta["history_positions"],
                                         int(meta["history_window"]))
         blocks.extend(hist)
+    # ---- 长窗块（有状态，同样从**空历史**起步，与 main.Model 新建时一致）
+    long_blocks: list[np.ndarray] = []
+    if meta.get("long_window") and meta.get("history_positions"):
+        from history import AssetLongWindow
+        positions = np.asarray(meta["history_positions"], dtype=np.int64)
+        long_blocks = list(AssetLongWindow(feature_count=len(positions),
+                                           window=int(meta["long_window"])).transform(
+            lraw[:, positions], asset_ids.astype(np.int64)))
     blocks.append(asset_ids.astype(np.float32))       # ⚠️ asset_id 必须留在最后一列
-    design = np.column_stack(blocks)
+    # ⚠️ 与 train 的组装顺序逐列对应：长窗块只在截面设计里，插在 asset_id 之前
+    design = np.column_stack(blocks[:-1] + long_blocks + blocks[-1:])
     # 市场块的设计矩阵只是在同一批块前面多拼一个 raw（与 train 的 market_design 逐列对应）
     market_design = (np.column_stack([lraw, *blocks])
                      if meta.get("market_model_files") else None)
@@ -231,6 +240,43 @@ def stream_history_blocks(data_root: Path, sample_modulo: int, sampling: str,
     return [np.concatenate(slot) for slot in parts]
 
 
+def stream_long_window_blocks(data_root: Path, sample_modulo: int, sampling: str,
+                              history_names: list[str], history_stats: tuple[np.ndarray, ...],
+                              window: int):
+    """与 `stream_history_blocks` 同构，但产出**长窗**的 2 个块（滚动均值 / 偏离）。
+
+    复用**同一批 history 列与同一套统计量** ⟹ 推理端不必扩输入契约，
+    meta 也只多一个 `long_window` 键。
+
+    ⚠️ 同样必须扫过**每一行**推进状态；`AssetLongWindow` 是 O(1)/行，
+    离线整块与在线逐 time_id 逐位相同（见其 docstring 与 tests/test_asset_long_window.py）。
+    """
+    import pyarrow.parquet as pq
+    from src.io import time_sample_mask, train_files
+    from history import AssetLongWindow
+
+    lower, upper, center, scale = history_stats
+    state = AssetLongWindow(feature_count=len(history_names), window=window)
+    parts: list[list[np.ndarray]] = [[], []]
+    kept = 0
+    for path in train_files(data_root):
+        for batch in pq.ParquetFile(path).iter_batches(
+                batch_size=120_000, columns=["time_id", "asset_id", *history_names]):
+            frame = batch.to_pandas()
+            tid = frame["time_id"].to_numpy(dtype=np.int64, copy=False)
+            aid = frame["asset_id"].to_numpy(dtype=np.int64, copy=False)
+            current = frame.loc[:, history_names].to_numpy(dtype=np.float32, copy=True)
+            apply_robust_transform(current, lower, upper, center, scale)
+            blocks = state.transform(current, aid)            # 每一行都推进状态
+            mask = time_sample_mask(tid, sample_modulo, sampling=sampling)
+            if mask.any():
+                for slot, block in zip(parts, blocks):
+                    slot.append(block[mask])
+                kept += int(mask.sum())
+        print(f"  long{window} {path.name}: 累计留下 {kept:,} 行", flush=True)
+    return [np.concatenate(slot) for slot in parts]
+
+
 def stream_history_range_blocks(data_root: Path, history_names: list[str],
                                 history_stats: tuple[np.ndarray, ...], window: int,
                                 train_range: tuple[int, int],
@@ -286,6 +332,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--feature-count", type=int, default=200)
     p.add_argument("--history-count", type=int, default=HISTORY_COUNT)
     p.add_argument("--history-window", type=int, default=HISTORY_WINDOW)
+    p.add_argument("--long-window", type=int, default=0,
+                   help="长窗滚动均值的窗长（观测数）。0 = 关闭 ⟹ 与旧模型逐位相同。"
+                        "复用 history 那 40 列，只进**截面**设计，市场设计不变。"
+                        "证据：outputs/experiments/long_window_confirm.md（3s480 +7.77%/5-of-5）")
     p.add_argument("--no-history", action="store_true",
                    help="退回到 08-10 那版无历史特征的设计矩阵（回归对照用）")
     p.add_argument("--num-iteration", type=int, default=NUM_ITERATION,
@@ -400,8 +450,19 @@ def main() -> None:
                                             args.sampling, history_names, history_stats,
                                             args.history_window))
 
+    # ---- 长窗块（可选）。复用同一批 history 列与统计量，只多一个 meta 键。
+    long_blocks: list[np.ndarray] = []
+    if args.long_window and history_positions:
+        print(f"长窗块 window={args.long_window}（复用同 {len(history_names)} 列）；"
+              f"再扫一遍全量…", flush=True)
+        long_blocks = list(stream_long_window_blocks(
+            Path(args.data_root), args.sample_modulo, args.sampling,
+            history_names, history_stats, args.long_window))
+
     blocks.append(aid.astype(np.float32))          # ⚠️ asset_id 必须留在最后一列
-    design = np.ascontiguousarray(np.column_stack(blocks))
+    # ⚠️ 长窗块**只进截面设计**。确认档（long_window_confirm）只测了截面块，
+    # 市场块未测 ⟹ `market_design = [raw, *blocks]` 保持一列不动。
+    design = np.ascontiguousarray(np.column_stack(blocks[:-1] + long_blocks + blocks[-1:]))
     assert design.shape[0] == len(tid), "历史块与采样矩阵行数不一致 —— 两条读取路径口径不同"
     min_data = max(20, int(round(MIN_DATA_FRAC * len(design))))
 
@@ -478,7 +539,7 @@ def main() -> None:
                                           market_num_iteration))
         del market_design
         gc.collect()
-    del dev, blocks
+    del dev, blocks, long_blocks
 
     meta = {
         "strategy": "v3_hybrid_ridge_plus_lgbm_cross_section",
@@ -529,6 +590,15 @@ def main() -> None:
         "market_lgbm_params": ({**market_spec, "min_data_in_leaf": market_min_data,
                                 "bagging_fraction": 0.7, "bagging_freq": 1}
                                if market_files else None),
+        "long_window": int(args.long_window) or None,
+        "long_window_note": (
+            "长窗滚动均值 + 偏离，复用 history 的那 40 列，**只进截面设计**（市场设计不变）。"
+            "缺键或 null ⟹ 完全关闭 ⟹ 与旧模型逐位相同。"
+            "证据：outputs/experiments/long_window_confirm.md —— 3s480 确认档 +7.77%、5/5 折、"
+            "去最好折 +6.49%、配对 CI 下界 +4.18%，五道门槛全过；但只有 8.7% 检出下限的 0.89× "
+            "⟹ PASS_BUT_BELOW_DETECTION_FLOOR，方向可信、幅度测不出。"
+            "⚠️ 实现必须用 AssetLongWindow（持久累积和相减，离线/在线逐位相同），"
+            "不得用分块重起的 cumsum。"),
         "train_only": args.train_only,
         "reuse_from": args.reuse_from,
         "train_rows": int(train_rows),

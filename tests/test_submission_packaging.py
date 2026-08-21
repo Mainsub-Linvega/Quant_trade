@@ -32,6 +32,7 @@ def baseline_meta() -> dict:
         "slow_fast_window": PUBLIC_BASELINE["slow_fast_window"],
         "slow_fast_slow_relative": PUBLIC_BASELINE["slow_fast_slow_relative"],
         "slow_fast_fast_relative": PUBLIC_BASELINE["slow_fast_fast_relative"],
+        "long_window": PUBLIC_BASELINE["long_window"],
     }
 
 
@@ -87,6 +88,35 @@ class PackagingMetaGateTest(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         check_v3_hybrid_meta(model_dir, off_baseline=False)
                     check_v3_hybrid_meta(model_dir, off_baseline=True)
+
+    def test_long_window_drift_is_caught_in_both_directions(self) -> None:
+        """2026-08-21 的回归。⚠️ 该键的基线在同日**翻转过**：
+
+        转正前榜上那份没有长窗（基线 None）⟹ 带长窗的候选是偏离；
+        转正后（公榜 0.0041833953）榜上那份**就是** 512 ⟹ **缺键/None 才是偏离**，
+        缺键时 `main.py` 会静默关掉长窗、交出低 1.66% 的旧模型。
+        两个方向都必须被抓住 —— 这正是 08-18 slow/fast 丢键那类事故的镜像。
+        """
+        self.assertEqual(PUBLIC_BASELINE["long_window"], 512,
+                         "基线值变了就要同步改本用例的语义，别让它静默失效")
+        for bad in (None, 64, 4096, 256):
+            with self.subTest(long_window=bad), tempfile.TemporaryDirectory() as directory:
+                meta = baseline_meta()
+                if bad is None:
+                    meta.pop("long_window")          # 缺键 = 旧模型
+                else:
+                    meta["long_window"] = bad
+                model_dir = self._write(Path(directory), meta)
+                with self.assertRaises(SystemExit):
+                    check_v3_hybrid_meta(model_dir, off_baseline=False)
+                # --off-baseline 是有意偏离的出口，必须仍然放行
+                check_v3_hybrid_meta(model_dir, off_baseline=True)
+
+    def test_baseline_long_window_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model_dir = self._write(Path(directory), baseline_meta())
+            self.assertEqual(check_v3_hybrid_meta(model_dir, off_baseline=False)["long_window"],
+                             PUBLIC_BASELINE["long_window"])
 
     def test_rejects_missing_market_forest(self) -> None:
         """市场森林文件为空时，λ 再对也没用 —— 必须拦住。"""
