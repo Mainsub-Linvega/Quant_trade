@@ -189,6 +189,11 @@ def main() -> None:
         "max_abs_prediction": float(np.max(np.abs(pred))) if len(pred) else 0.0,
         "clip_hit_rows": int((np.abs(pred) >= clip - 1e-12).sum()) if clip else 0,
         "all_zero": bool(len(pred) and not np.any(pred)),
+        # 整条预测向量的逐位指纹。max|pred| 只反映一个极值，单个叶子翻了未必动到它；
+        # 要判断两次运行（不同后端、不同机器、不同依赖版本）是否**逐位**相同，
+        # 需要这个摘要。仍然不写 CSV —— 只把 float64 缓冲区喂给 sha256。
+        "predictions_sha256": hashlib.sha256(
+            np.ascontiguousarray(pred, dtype=np.float64).tobytes()).hexdigest(),
     }
     timing_d = timing.as_dict()
     timing_d["model_init_seconds"] = float(model_init_seconds)
