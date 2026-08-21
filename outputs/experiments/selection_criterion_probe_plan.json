@@ -1,0 +1,61 @@
+{
+  "experiment": "selection_criterion_probe",
+  "date": "2026-08-21",
+  "question": "history 那 40 列按『当期相关』选、却被当成滞后量用 —— 换成与用法匹配的准则，树的 OOF peak 会不会涨？顺带测一个多元选择器（LASSO）选 200 列。",
+  "why_now": {
+    "diagnosis": "select_features 是单变量筛子（|加权 Pearson| 取 top-N），忽略特征间相关结构。",
+    "ceiling_already_bracketed": "feature_screen_1s160 把 200 列筛子整个去掉、直接给树全部 323 列：xs323 −1.00% / mkt323 +1.09% / both323 +0.10%，全不过门禁；ledger 2026-08-11 hist_c80 把 history 放宽到 top-80（超集）公榜 −0.0032%。⟹ 『筛子丢掉了有用列』被否，完美重选 200 列的收益被夹在约 ±1~2% peak。",
+    "uncovered_gap": "history_positions 是第二道独立筛子（v3_production_oof.py:412）：在 200 列 xs_dev 里按 |corr(xs_dev[t], e[t])|（当期）取 top-40。但这 40 列进模型的形态是 previous(lag1)/difference/rolling_mean(5)/rolling_deviation —— 全是滞后量。选的标准与用的方式不匹配。",
+    "measured_2026_08_21": "train_partition_008 现测（同生产口径 robust transform + xs_dev）：top-40 重合 当期vs lag1 = 24/40、当期vs rollmean5 = 25/40、lag1vs rollmean5 = 35/40；生产选法在 lag1 准则下只拿到可得 |corr| 均值的 87.6%、roll5 下 94.6%。两个滞后准则彼此高度一致而都与当期不一致 ⟹ 真实区分，非抽样噪声。"
+  },
+  "evaluator": {
+    "model": "LightGBM 筛选档 1 seed x 160 rounds，只跑截面块（XS_SPEC），复用 v3_production_oof.fit_predict_lgbm",
+    "why_tree_not_linear": "① 生产是树；② 对 lasso200 臂，用线性模型评价线性选择器是循环论证。",
+    "market_and_ridge": "不参与 —— 本次改动只碰截面块与它的 history。"
+  },
+  "design": {
+    "folds": "rolling_time_folds(5, 78960, embargo 6)，sample_modulo 5，phase_balanced，全部统计量与选列只在训练折内拟合",
+    "label": "e_tr = target - 逐 time_id 无权截面均值；截面块带权训练（与生产同口径）",
+    "valid_projection": "ê -= 逐 time_id 无权截面均值（复刻 v3_production_oof.py:461）",
+    "history_stream_optimisation": "四个臂的 history_names 取并集，逐折只跑一次 stream_history_blocks，各臂再按列切片。AssetHistory 的四个块逐列独立计算 ⟹ 并集算完再切片与单独算逐位等价（有回归用例钉住）。",
+    "row_join": "按 (time_id, asset_id) join 生产 OOF cache 并断言 target/weight 逐位相同"
+  },
+  "arms": [
+    {"name": "base", "xs200": "当期 |corr(feature, e)|（现状）", "history40": "当期 |corr(xs_dev, e)|（现状）"},
+    {"name": "hist_lag1", "primary": true, "xs200": "同 base", "history40": "|corr(lag1(xs_dev), e)|"},
+    {"name": "hist_roll5", "xs200": "同 base", "history40": "|corr(rollmean5(xs_dev), e)|"},
+    {"name": "lasso200", "xs200": "LASSO 路径上恰好 200 个非零的那一点", "history40": "在该 200 内按当期取 top-40"}
+  ],
+  "amendment_vs_plan_doc": "计划文稿里写的是 ElasticNet(l1_ratio=0.5)。实现改为**纯 LASSO**，经 sklearn.linear_model.lars_path_gram(Xy, Gram, n_samples, method='lasso') —— 只需 XᵀX(323x323) 与 Xᵀe，不必 materialize 1.18m x 323 的 float64 设计矩阵；且取『恰好 200 个非零』这一点后**没有任何自由超参**（ElasticNet 还要定 l1_ratio 与 λ₂）。**这是减少自由度、不是增加**，且在跑之前落盘。",
+  "lag_semantics": "lag1 / rollmean5 严格滞后（只用 t-W..t-1，不含当前行），无历史取 0，与 strategies/v3_hybrid/history.py 的边界规则一致。",
+  "metrics": {
+    "peak": "A^2/(B*D)，A=Σw·e·ê，B=Σw·ê²，D=Σw·e²。对预测的整体缩放严格不变。",
+    "primary": "Δpeak(arm) = peak(arm)/peak(base) - 1，逐折与 pooled"
+  },
+  "gates": [
+    {"id": 1, "name": "mean_delta_peak_positive", "rule": "折均 Δpeak > 0"},
+    {"id": 2, "name": "at_least_4_of_5_folds_positive", "rule": "≥ 4/5 折为正"},
+    {"id": 3, "name": "survives_drop_best_fold", "rule": "去掉最好一折仍 > 0"},
+    {"id": 4, "name": "relative_gain_at_least_3pct", "rule": "pooled 相对增益 ≥ +3%"},
+    {"id": 5, "name": "paired_bootstrap_ci_lower_bound_positive", "rule": "配对 block bootstrap（每折 200 块 / 重抽 4000 次 / seed 2026 / 95%）下界 > 0"}
+  ],
+  "excluded_gate": {
+    "name": "2*dA > dB",
+    "why_excluded": "2026-08-21 实测 A比/√(B比) ≡ IC比 ⟹ ΔA/ΔB 混着两臂解的共同尺度（A→cA、B→c²B 时 peak 不变而两个 Δ 都非零）；且它本是**两分量配比**的判别式，不适用于『同一模型换输入/换选列』的比较。ROADMAP 2026-08-19 记着 P8 栽过同一个坑，同日 long_history_probe 又栽一次。⟹ 只用尺度不变量 Δpeak；ΔA/ΔB 仍打印但**明确标注为非判据**。"
+  },
+  "detection_floor": {
+    "value": 0.061,
+    "source": "ROADMAP P2-R：1s160 / 5 折的实测检出下限是基准 peak 的 6.1%",
+    "reading_rule": "落在 +3% ~ +6.1% 之间读作『过门槛但低于检出下限』—— 只能作为花一次公榜额度的理由，**不能直接晋级**（mkt323 就是这么处理的）。"
+  },
+  "stop_conditions": [
+    "不搜 count、不搜窗口、不改 XS_SPEC、不加轮数、不加臂",
+    "四个臂共用一次数据加载与一套 fold 版图，一次跑完",
+    "任一门槛不过即停，不调参重跑"
+  ],
+  "honest_prior": "低。history 块整体值 +11.1% IC；换准则最多找回其中『12.4% 的可得 |corr|』那部分，折算到总分约 +0.5%~+1.5% IC，**大概率落在 6.1% 检出下限之下 ⟹ 结局是『测不出来』**。花它的理由是 8/23 前 RUNBOOK 主线本来就 BLOCKED_UNTIL_DATA_REFRESH，且它是唯一一条机制讲得通、且现测出有区分度的剩余线索。",
+  "reopen_conditions": [
+    "8/23 回补数据后基准变化，按原规格复验",
+    "history 块的**用法**改变（例如换成序列提取器）⟹ 选择准则应随用法重新匹配"
+  ]
+}

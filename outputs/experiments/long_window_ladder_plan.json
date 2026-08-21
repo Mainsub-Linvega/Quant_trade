@@ -1,0 +1,59 @@
+{
+  "experiment": "long_window_ladder",
+  "date": "2026-08-21",
+  "question": "long_history_probe 一次加了 240 列、把『信号』与『估计代价』焊死在一起。拆成单窗口各 80 列，列数降到 1/3、估计代价大致同比下降 —— 有没有哪一档由负转正？",
+  "background": {
+    "prior_probe": "long_history_probe（同日）：40 特征 × 窗口 {64,512,4096} × {滚动均值, 偏离} = 240 列，逐折 IC 增益 +3.25/+4.54/+1.42/+1.74/−19.49%，pooled +0.69%，REJECTED。",
+    "why_unanswered": "240 根列一起进一起出，无法分辨『长窗里没信号』与『有信号但被 240 列的估计方差淹掉』。⚠️ 当天曾用 ΔA/ΔB 声称『有信号但付不起方差』，**那个读数是错的并已收回**（A比/√(B比) ≡ IC比，ΔA/ΔB 混着共同尺度）⟹ 到目前为止这个问题没有答案。",
+    "never_tested_range": "temporal 全族的 MAX_LAG = 20（experiments/temporal_multiscale.py:49），而 slow/fast 在 K=2000 上拿到公榜 +2.93%。20~2000 是 100 倍的未测跨度。"
+  },
+  "arms": [
+    {"name": "base", "design": "[xs_dev200 || history160(window=5) || asset_id] = 361 列（生产截面块）"},
+    {"name": "w64", "design": "base + 40 特征 × 窗口 64 × {滚动均值, 当前−滚动均值} = +80 列"},
+    {"name": "w512", "design": "base + 同上，窗口 512 = +80 列"},
+    {"name": "w4096", "design": "base + 同上，窗口 4096 = +80 列"}
+  ],
+  "window_semantics": "按**观测数**（逐 asset 行序），与生产 AssetHistory 同语义；滚动均值严格滞后（只用 t−W..t−1，不含当前行），无历史取 0。",
+  "amendment_1_evaluator": {
+    "change": "主评价器从计划文稿写的『线性（加宽 alpha 梯子）』改为 **LightGBM 1 seed × 160 轮、只跑截面块**；线性降为**次臂**。",
+    "why": "① 生产是树；② long_history_probe 唯一的实质缺陷就是线性的内层 alpha 选参 —— fold 4 两臂都选到梯底 1e-6（≈不正则）造出 −19.49% 那个坏折。换成树，**这一整类脆弱性直接消失**（树不需要 alpha 梯子）。③ 与同日 selection_criterion_probe 用同一评价器，两枪可横向对读。",
+    "declared_before_any_result": true
+  },
+  "amendment_2_wide_ladder": {
+    "change": "线性次臂改用 WIDE_ALPHA_LADDER = {1e-8 … 1e+2}（11 档），并**逐次拟合记录选中值是否落在两端**。",
+    "why_new_constant": "旧的 function_class_probe.ALPHA_LADDER 被 long_history_probe.py **import** 走。就地加宽会让**两个已结案实验**复跑时得出与落盘产物不同的数 —— 正是 08-18『缓存出自已不存在的代码版本』那类事故的形状。⟹ 新常量在新脚本里独立声明，旧常量原样冻结不动。",
+    "boundary_rule": "任一次拟合的选中 alpha 落在梯子两端 ⟹ 该臂的线性读数标记 invalid 并在报告里显式打出；**不静默接受**。",
+    "secondary_purpose": "顺带回答：long_history_probe 的线性结论（pooled +0.69%）在正常梯子下是否复现 —— 那个 −19.49% 的坏折是不是选参失效造成的。"
+  },
+  "base_must_be_rerun": "base 臂在**本次运行内现跑**，与三个候选臂共用同一次数据加载、同一套 fold 版图、同一批 history 列（RUNBOOK D2『现跑基准』；08-18 *_exact 缓存事故的同一条教训）。不复用任何旧产物。",
+  "metrics": {
+    "peak": "A²/(B·D)，对预测的整体缩放严格不变",
+    "primary": "Δpeak(arm) = peak(arm)/peak(base) − 1，逐折与 pooled，**以树为准**"
+  },
+  "gates": [
+    {"id": 1, "name": "mean_delta_peak_positive", "rule": "折均 Δpeak > 0"},
+    {"id": 2, "name": "at_least_4_of_5_folds_positive", "rule": "≥ 4/5 折为正"},
+    {"id": 3, "name": "survives_drop_best_fold", "rule": "去掉最好一折仍 > 0"},
+    {"id": 4, "name": "relative_gain_at_least_3pct", "rule": "pooled 相对增益 ≥ +3%"},
+    {"id": 5, "name": "paired_bootstrap_ci_lower_bound_positive", "rule": "配对 block bootstrap（每折 200 块 / 重抽 4000 次 / seed 2026 / 95%）下界 > 0"}
+  ],
+  "excluded_gate": {
+    "name": "2*dA > dB",
+    "why_excluded": "同 selection_criterion_probe：ΔA/ΔB 混着共同尺度，且是两分量配比判别式，不适用于『同一模型换输入』。只用尺度不变的 peak。ΔA/ΔB 仍打印但标注非判据。"
+  },
+  "detection_floor": {
+    "value": 0.061,
+    "source": "ROADMAP P2-R：1s160 / 5 折的实测检出下限是基准 peak 的 6.1%",
+    "reading_rule": "落在 +3% ~ +6.1% 之间读作『过门槛但测不出来』，只能作为花公榜额度的理由，不能直接晋级。"
+  },
+  "stop_conditions": [
+    "只用已声明的三个窗口 64 / 512 / 4096，不搜窗口值、不加第四档、不搜列数、不改 XS_SPEC、不加轮数",
+    "四臂一次跑完，不追加臂",
+    "任一门槛不过即停，不调参重跑"
+  ],
+  "honest_prior": "低。三窗合一是 +0.69%（线性口径）；拆开后单窗口的**信号**只会更小，赌的是**估计代价降得比信号快**（列数 240→80）。三臂全负 ⟹ 『长窗』这条线连同 function_class_probe 一起彻底关闭。",
+  "reopen_conditions": [
+    "出现权重共享的提取器（1D 卷积 / 序列模型）—— 它能在拿信号的同时不按列数付估计代价，届时以本实验为配对基准复验",
+    "8/23 回补数据后基准变化，按原规格复验"
+  ]
+}
