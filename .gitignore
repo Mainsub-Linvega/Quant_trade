@@ -91,3 +91,9 @@ strategies/**/model/*.bin
 outputs/logs/
 outputs/experiments/*_smoke.json
 outputs/experiments/*_smoke.md
+
+# 云端（JupyterHub）跑出来的结果：py3.11/numpy1.24 口径，不与本地结果混排
+outputs/cloud/
+
+# Claude Code 的个人级项目配置（含仓库级权限规则），不进版本控制
+.claude/settings.local.json
