@@ -19,6 +19,8 @@ from experiments.v3_task_aligned_reselection import (
 from experiments.v3_task_aligned_reselection import select_history_lag_aligned
 from experiments.v3_task_aligned_reselection import derive_p4_selections
 from experiments.v3_task_aligned_reselection import parse_p4_args
+from experiments.v3_task_aligned_reselection import runner_import_paths
+from experiments.v3_task_aligned_reselection import spill_p4_features
 
 
 def test_market_selector_uses_per_time_unweighted_means_and_index_ties():
@@ -273,3 +275,25 @@ def test_p4_cli_rejects_screen_round_drift_and_parses_arm_set():
     assert args.arm_set == ["market_task_aligned", "xs_time_stable"]
     assert args.n_seeds == 3
     assert args.num_iteration == 480
+
+
+def test_runner_import_paths_keep_legacy_train_before_history_package(tmp_path):
+    paths = runner_import_paths(tmp_path)
+
+    assert paths == (
+        str(tmp_path / "strategies" / "v1_ridge"),
+        str(tmp_path / "experiments"),
+    )
+    assert all("v3_hybrid" not in path for path in paths)
+
+
+def test_spill_p4_features_moves_matrix_to_memmap_and_removes_source(tmp_path):
+    data = {
+        "features": np.arange(24, dtype=np.float32).reshape(6, 4),
+        "target": np.arange(6, dtype=np.float64),
+    }
+    mapped = spill_p4_features(data, tmp_path / "features.npy")
+
+    assert "features" not in data
+    assert isinstance(mapped, np.memmap)
+    np.testing.assert_array_equal(mapped, np.arange(24, dtype=np.float32).reshape(6, 4))

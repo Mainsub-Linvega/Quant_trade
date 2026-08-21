@@ -629,17 +629,36 @@ def _p4_fold_metric(
     }
 
 
-def run_p4(args: argparse.Namespace) -> dict[str, object]:
+def runner_import_paths(repo_root: Path) -> tuple[str, str]:
+    """Return the legacy module paths required by the reused V3 OOF helpers."""
+    return (
+        str(repo_root / "strategies" / "v1_ridge"),
+        str(repo_root / "experiments"),
+    )
+
+
+def spill_p4_features(
+    data: dict[str, np.ndarray], path: str | Path,
+) -> np.memmap:
+    """Release the loaded feature matrix after moving it to a read-only memmap."""
+    from experiments.v3_production_oof import spill_feature_matrix
+
+    if "features" not in data:
+        raise ValueError("loaded P4 data must contain features")
+    loaded_features = data.pop("features")
+    mapped = spill_feature_matrix(loaded_features, path)
+    del loaded_features
+    return mapped
+
     """Run the registered paired P4 screen or confirmation experiment."""
+def run_p4(args: argparse.Namespace) -> dict[str, object]:
     validate_frozen_protocol(args.mode, {
         name: getattr(args, name)
         for name in P4_COMMON_PROTOCOL
         if hasattr(args, name)
     } | {"n_seeds": args.n_seeds, "num_iteration": args.num_iteration})
     repo_root = Path(__file__).resolve().parents[1]
-    for path in (str(repo_root / "strategies" / "v1_ridge"),
-                 str(repo_root / "experiments"),
-                 str(repo_root / "strategies" / "v3_hybrid")):
+    for path in reversed(runner_import_paths(repo_root)):
         if path not in sys.path:
             sys.path.insert(0, path)
 
@@ -677,7 +696,9 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
     started = time.perf_counter()
     print(f"loading sampled data: modulo {args.sample_modulo}/{args.sampling}", flush=True)
     data = load_rows(data_root, args.sample_modulo, args.sampling)
-    features = data["features"]
+    feature_spill_path = cache_dir / f".{args.label}_features.npy"
+    features = spill_p4_features(data, feature_spill_path)
+    gc.collect()
     target = data["target"].astype(np.float64, copy=False)
     weight = np.maximum(data["weight"].astype(np.float64, copy=False), 0.0)
     time_ids = np.asarray(data["time_id"], dtype=np.int64)
@@ -873,6 +894,8 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
     partial["status"] = "completed"
     partial["gates"] = gates
     partial["elapsed_seconds"] = float(time.perf_counter() - started)
+    del features
+    feature_spill_path.unlink(missing_ok=True)
     partial["pooled"] = {
         arm: _p4_fold_metric(target[fold_id >= 0], oof[arm][fold_id >= 0], weight[fold_id >= 0],
                              scale=args.prediction_scale, clip=args.prediction_clip)
