@@ -229,14 +229,15 @@ def resolve_p4_arm(
         task: _validated_feature_set(task, baseline[task], int(counts[task]))
         for task in required
     }
+    baseline_xs = set(resolved["xs"])
+    if not set(resolved["history"]).issubset(baseline_xs):
+        raise ValueError("baseline history features must be a subset of baseline XS")
     changed_task = {
         "market_task_aligned": "market",
         "xs_time_stable": "xs",
         "history_lag_aligned": "history",
     }.get(arm)
     if changed_task is None:
-        if not set(resolved["history"]).issubset(set(resolved["xs"])):
-            raise ValueError("history features must be a subset of XS features")
         return resolved
     arm_candidates = candidates.get(arm)
     if arm_candidates is None or set(arm_candidates) != {changed_task}:
@@ -246,8 +247,8 @@ def resolve_p4_arm(
         arm_candidates[changed_task],
         int(counts[changed_task]),
     )
-    if not set(resolved["history"]).issubset(set(resolved["xs"])):
-        raise ValueError("history features must be a subset of XS features")
+    if changed_task == "history" and not set(resolved["history"]).issubset(baseline_xs):
+        raise ValueError("history candidate must be a subset of baseline XS")
     return resolved
 
 

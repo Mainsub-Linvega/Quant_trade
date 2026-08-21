@@ -131,6 +131,23 @@ def test_p4_arm_contract_rejects_history_outside_xs():
         resolve_p4_arm("history_lag_aligned", baseline, candidates, P4_COUNTS)
 
 
+def test_xs_arm_keeps_frozen_history_outside_candidate_xs():
+    baseline = {
+        "ridge": np.arange(200),
+        "xs": np.arange(200),
+        "market": np.arange(200),
+        "history": np.arange(40),
+    }
+    candidates = {
+        "xs_time_stable": {"xs": np.arange(123, 323)},
+    }
+
+    resolved = resolve_p4_arm("xs_time_stable", baseline, candidates, P4_COUNTS)
+
+    np.testing.assert_array_equal(resolved["history"], baseline["history"])
+    assert not set(resolved["history"]).issubset(set(resolved["xs"]))
+
+
 def _paired_row(fold: int, candidate_peak: float) -> dict[str, object]:
     return {
         "fold": fold,
