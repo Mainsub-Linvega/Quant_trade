@@ -7,6 +7,7 @@ arrays and return global feature indices without reading files or model state.
 from __future__ import annotations
 
 import argparse
+import os
 import gc
 import hashlib
 import json
@@ -636,6 +637,85 @@ def runner_import_paths(repo_root: Path) -> tuple[str, str]:
         str(repo_root / "experiments"),
     )
 
+def allocate_p4_arrays(
+    n_rows: int, feature_count: int, feature_path: str | Path,
+) -> dict[str, np.ndarray]:
+    """Allocate P4 arrays without creating an in-memory feature-matrix copy."""
+    if n_rows <= 0 or feature_count <= 0:
+        raise ValueError("P4 array dimensions must be positive")
+    path = Path(feature_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+    return {
+        "features": np.lib.format.open_memmap(
+            path, mode="w+", dtype=np.float32, shape=(n_rows, feature_count),
+        ),
+        "target": np.empty(n_rows, dtype=np.float64),
+        "weight": np.empty(n_rows, dtype=np.float64),
+        "time_id": np.empty(n_rows, dtype=np.int64),
+        "asset_id": np.empty(n_rows, dtype=np.int64),
+    }
+
+
+def load_p4_rows(
+    data_root: Path,
+    sample_modulo: int,
+    sampling: str,
+    feature_path: str | Path,
+) -> dict[str, np.ndarray]:
+    """Two-pass sampled loader that writes features directly to disk."""
+    import pyarrow.parquet as pq
+
+    from src.io import FEATURE_COLUMNS, time_sample_mask, train_files
+
+    files = list(train_files(data_root))
+    if not files:
+        raise ValueError("no training partitions found")
+    count = 0
+    for path in files:
+        for batch in pq.ParquetFile(path).iter_batches(
+            batch_size=120_000, columns=["time_id"],
+        ):
+            time_id = batch.column(0).to_numpy(zero_copy_only=False)
+            count += int(np.sum(time_sample_mask(time_id, sample_modulo, sampling=sampling)))
+    arrays = allocate_p4_arrays(count, len(FEATURE_COLUMNS), feature_path)
+    columns = ["time_id", "asset_id", "weight", *FEATURE_COLUMNS, "target"]
+    offset = 0
+    for path in files:
+        kept = 0
+        started = time.perf_counter()
+        for batch in pq.ParquetFile(path).iter_batches(batch_size=120_000, columns=columns):
+            frame = batch.to_pandas()
+            mask = time_sample_mask(
+                frame["time_id"].to_numpy(copy=False), sample_modulo, sampling=sampling,
+            )
+            rows = int(np.sum(mask))
+            if rows == 0:
+                continue
+            end = offset + rows
+            arrays["features"][offset:end] = frame.loc[mask, FEATURE_COLUMNS].to_numpy(
+                dtype=np.float32, copy=False,
+            )
+            arrays["target"][offset:end] = frame.loc[mask, "target"].to_numpy(
+                dtype=np.float64, copy=False,
+            )
+            arrays["weight"][offset:end] = frame.loc[mask, "weight"].to_numpy(
+                dtype=np.float64, copy=False,
+            )
+            arrays["time_id"][offset:end] = frame.loc[mask, "time_id"].to_numpy(
+                dtype=np.int64, copy=False,
+            )
+            arrays["asset_id"][offset:end] = frame.loc[mask, "asset_id"].to_numpy(
+                dtype=np.int64, copy=False,
+            )
+            offset = end
+            kept += rows
+        print(f"  {path.name}: {kept:,} rows ({time.perf_counter()-started:.0f}s)", flush=True)
+    if offset != count:
+        raise RuntimeError(f"P4 loader wrote {offset} rows after counting {count}")
+    arrays["features"].flush()
+    return arrays
+
 
 def spill_p4_features(
     data: dict[str, np.ndarray], path: str | Path,
@@ -668,7 +748,6 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
         row_slice,
     )
     from experiments.history_peak import fit_ridge, ridge_designs
-    from lgbm_xs import load_rows
     from src.io import FEATURE_COLUMNS
     from src.validation import rolling_time_folds
     from strategies.v3_hybrid.train import stream_history_blocks
@@ -694,10 +773,10 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
         raise SystemExit(f"output exists; use --force: {json_path}")
 
     started = time.perf_counter()
-    print(f"loading sampled data: modulo {args.sample_modulo}/{args.sampling}", flush=True)
-    data = load_rows(data_root, args.sample_modulo, args.sampling)
     feature_spill_path = cache_dir / f".{args.label}_features.npy"
-    features = spill_p4_features(data, feature_spill_path)
+    print(f"streaming sampled data: modulo {args.sample_modulo}/{args.sampling}", flush=True)
+    data = load_p4_rows(data_root, args.sample_modulo, args.sampling, feature_spill_path)
+    features = data["features"]
     gc.collect()
     target = data["target"].astype(np.float64, copy=False)
     weight = np.maximum(data["weight"].astype(np.float64, copy=False), 0.0)

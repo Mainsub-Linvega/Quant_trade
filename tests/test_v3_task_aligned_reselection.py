@@ -21,6 +21,7 @@ from experiments.v3_task_aligned_reselection import derive_p4_selections
 from experiments.v3_task_aligned_reselection import parse_p4_args
 from experiments.v3_task_aligned_reselection import runner_import_paths
 from experiments.v3_task_aligned_reselection import spill_p4_features
+from experiments.v3_task_aligned_reselection import allocate_p4_arrays
 
 
 def test_market_selector_uses_per_time_unweighted_means_and_index_ties():
@@ -297,3 +298,16 @@ def test_spill_p4_features_moves_matrix_to_memmap_and_removes_source(tmp_path):
     assert "features" not in data
     assert isinstance(mapped, np.memmap)
     np.testing.assert_array_equal(mapped, np.arange(24, dtype=np.float32).reshape(6, 4))
+
+
+def test_allocate_p4_arrays_uses_feature_memmap_and_aligned_metadata(tmp_path):
+    arrays = allocate_p4_arrays(5, 3, tmp_path / "features.npy")
+
+    assert isinstance(arrays["features"], np.memmap)
+    assert arrays["features"].shape == (5, 3)
+    for name in ("target", "weight", "time_id", "asset_id"):
+        assert arrays[name].shape == (5,)
+    arrays["features"][:] = 2.5
+    arrays["features"].flush()
+    reopened = np.load(tmp_path / "features.npy", mmap_mode="r")
+    np.testing.assert_array_equal(reopened, np.full((5, 3), 2.5, dtype=np.float32))
