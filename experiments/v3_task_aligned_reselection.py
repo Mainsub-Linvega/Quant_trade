@@ -6,9 +6,19 @@ arrays and return global feature indices without reading files or model state.
 
 from __future__ import annotations
 
+import argparse
+import gc
+import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
+import sys
+import time
+from typing import Any
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 import numpy as np
 
@@ -34,6 +44,52 @@ P4_COMMON_PROTOCOL = {
     "prediction_clip": 0.5,
     "history_window": 5,
 }
+def parse_p4_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", choices=tuple(P4_MODE_PROTOCOL), default="screen")
+    parser.add_argument("--arm-set", default=",".join(P4_ARMS))
+    parser.add_argument("--data-root", default="data")
+    parser.add_argument("--output-dir", default="outputs/experiments")
+    parser.add_argument("--cache-dir", default="outputs/cache")
+    parser.add_argument("--label", default="v3_p4_task_aligned_screen_1s160_phasebal_prodwindow")
+    parser.add_argument("--n-folds", type=int, default=P4_COMMON_PROTOCOL["n_folds"])
+    parser.add_argument("--train-window", type=int, default=P4_COMMON_PROTOCOL["train_window"])
+    parser.add_argument("--embargo", type=int, default=P4_COMMON_PROTOCOL["embargo"])
+    parser.add_argument("--sample-modulo", type=int, default=P4_COMMON_PROTOCOL["sample_modulo"])
+    parser.add_argument("--sampling", choices=["periodic", "phase_balanced"], default=P4_COMMON_PROTOCOL["sampling"])
+    parser.add_argument("--n-seeds", type=int, default=None)
+    parser.add_argument("--num-iteration", type=int, default=None)
+    parser.add_argument("--market-lambda", type=float, default=P4_COMMON_PROTOCOL["market_lambda"])
+    parser.add_argument("--blend-weight", type=float, default=P4_COMMON_PROTOCOL["blend_weight"])
+    parser.add_argument("--prediction-scale", type=float, default=P4_COMMON_PROTOCOL["prediction_scale"])
+    parser.add_argument("--prediction-clip", type=float, default=P4_COMMON_PROTOCOL["prediction_clip"])
+    parser.add_argument("--history-window", type=int, default=P4_COMMON_PROTOCOL["history_window"])
+    parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--num-threads", type=int, default=4)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+    mode_defaults = P4_MODE_PROTOCOL[args.mode]
+    if args.n_seeds is None:
+        args.n_seeds = mode_defaults["n_seeds"]
+    if args.num_iteration is None:
+        args.num_iteration = mode_defaults["num_iteration"]
+    arms = [item.strip() for item in str(args.arm_set).split(",") if item.strip()]
+    if not arms or len(set(arms)) != len(arms) or any(item not in P4_ARMS for item in arms):
+        parser.error(f"--arm-set must contain unique registered arms: {P4_ARMS}")
+    args.arm_set = arms
+    protocol = {
+        name: getattr(args, name)
+        for name in P4_COMMON_PROTOCOL
+        if hasattr(args, name)
+    }
+    protocol.update({"n_seeds": args.n_seeds, "num_iteration": args.num_iteration})
+    try:
+        validate_frozen_protocol(args.mode, protocol)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.seed != 2026 or args.num_threads <= 0:
+        parser.error("P4 seed must be 2026 and num_threads must be positive")
+    return args
 P4_MODE_PROTOCOL = {
     "screen": {"n_seeds": 1, "num_iteration": 160},
     "confirmation": {"n_seeds": 3, "num_iteration": 480},
@@ -48,6 +104,92 @@ def validate_frozen_protocol(mode: str, protocol: Mapping[str, object]) -> dict[
         if protocol.get(name) != value:
             raise ValueError(f"{name}={protocol.get(name)!r}; expected {value!r}")
     return expected
+def _rank_baseline_features(
+    features: np.ndarray,
+    target: np.ndarray,
+    count: int,
+    weights: np.ndarray | None = None,
+) -> np.ndarray:
+    values = np.asarray(features, dtype=np.float64)
+    labels = np.asarray(target, dtype=np.float64)
+    if values.ndim != 2 or labels.shape != (len(values),):
+        raise ValueError("baseline ranking inputs must be aligned")
+    if not np.all(np.isfinite(values)) or not np.all(np.isfinite(labels)):
+        raise ValueError("baseline ranking inputs must be finite")
+    if weights is None:
+        mass = np.ones(len(labels), dtype=np.float64)
+    else:
+        mass = np.asarray(weights, dtype=np.float64)
+        if mass.shape != labels.shape or not np.all(np.isfinite(mass)) or np.any(mass < 0.0):
+            raise ValueError("weights must be finite, non-negative, and aligned")
+    total = float(np.sum(mass))
+    if total <= 0.0:
+        raise ValueError("weights must contain positive mass")
+    mean_x = np.sum(values * mass[:, None], axis=0) / total
+    mean_y = float(np.sum(labels * mass) / total)
+    centered_x = values - mean_x
+    centered_y = labels - mean_y
+    with np.errstate(divide="ignore", invalid="ignore"):
+        correlations = np.abs(
+            np.sum(centered_x * (centered_y * mass)[:, None], axis=0)
+            / np.sqrt(
+                np.sum(np.square(centered_x) * mass[:, None], axis=0)
+                * np.sum(np.square(centered_y) * mass)
+            )
+        )
+    correlations = np.nan_to_num(correlations, nan=0.0, posinf=0.0, neginf=0.0)
+    indices = np.arange(values.shape[1], dtype=np.int64)
+    return indices[np.lexsort((indices, -correlations))[:count]]
+
+
+def derive_p4_selections(
+    transformed: np.ndarray,
+    target: np.ndarray,
+    cross_target: np.ndarray,
+    time_ids: np.ndarray,
+    asset_ids: np.ndarray,
+    *,
+    weights: np.ndarray | None = None,
+    counts: Mapping[str, int] = P4_COUNTS,
+) -> dict[str, Any]:
+    """Derive the baseline and all three registered candidate arms for one fold."""
+    values, labels, ids = _validate_panel(
+        transformed, target, time_ids, int(counts["ridge"]),
+    )
+    cross = np.asarray(cross_target, dtype=np.float64)
+    assets = np.asarray(asset_ids, dtype=np.int64)
+    if cross.shape != labels.shape or assets.shape != labels.shape:
+        raise ValueError("target views and asset_ids must match training rows")
+    if not np.all(np.isfinite(cross)):
+        raise ValueError("cross_target must be finite")
+    width = values.shape[1]
+    for task in P4_COUNTS:
+        if task not in counts or int(counts[task]) <= 0 or int(counts[task]) > width:
+            raise ValueError(f"invalid P4 count for {task}")
+    ridge = _rank_baseline_features(values, labels, int(counts["ridge"]), weights)
+    xs = _rank_baseline_features(values, cross, int(counts["xs"]))
+    history = select_history_lag_aligned(
+        values[:, np.sort(xs)], cross, ids, assets, np.sort(xs),
+        count=int(counts["history"]), window=P4_COMMON_PROTOCOL["history_window"],
+    )["selected_indices"]
+    baseline = {"ridge": ridge, "xs": xs, "market": xs.copy(), "history": history}
+    candidates = {
+        "market_task_aligned": {"market": select_market_task_aligned(
+            values, labels, ids, count=int(counts["market"]),
+        )},
+        "xs_time_stable": {"xs": select_xs_time_stable(
+            values, cross, ids, count=int(counts["xs"]),
+        )},
+        "history_lag_aligned": {"history": select_history_lag_aligned(
+            values[:, np.sort(xs)], cross, ids, assets, np.sort(xs),
+            count=int(counts["history"]), window=P4_COMMON_PROTOCOL["history_window"],
+        )["selected_indices"]},
+    }
+    arms = {
+        arm: resolve_p4_arm(arm, baseline, candidates, counts)
+        for arm in P4_ARMS
+    }
+    return {"baseline": baseline, "candidates": candidates, "arms": arms}
 
 
 def _validate_panel(
@@ -443,3 +585,298 @@ def write_p4_bundle(payload: Mapping[str, object], output_dir: str | Path, label
     )
     _atomic_write_text(markdown_path, _render_markdown(payload))
     return {"json": json_path, "markdown": markdown_path, "fold_dir": fold_dir}
+def _selection_hash(selection: Mapping[str, np.ndarray]) -> str:
+    digest = hashlib.sha256()
+    for task in ("ridge", "xs", "market", "history"):
+        digest.update(task.encode("ascii"))
+        digest.update(np.asarray(selection[task], dtype=np.int64).tobytes())
+    return digest.hexdigest()
+
+
+def _group_mean_1d(values: np.ndarray, time_ids: np.ndarray) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64)
+    ids = np.asarray(time_ids, dtype=np.int64)
+    if values.shape != ids.shape or values.ndim != 1 or len(ids) == 0:
+        raise ValueError("group mean inputs must be aligned and non-empty")
+    starts = np.r_[0, np.flatnonzero(ids[1:] != ids[:-1]) + 1]
+    counts = np.diff(np.r_[starts, len(ids)])
+    return np.repeat(np.add.reduceat(values, starts) / counts, counts)
+
+
+def _p4_fold_metric(
+    target: np.ndarray,
+    prediction: np.ndarray,
+    weight: np.ndarray,
+    *,
+    scale: float,
+    clip: float,
+) -> dict[str, float]:
+    from src.metric import scale_invariant_score, weighted_zero_mean_r2
+
+    raw = scale_invariant_score(target, prediction, weight)
+    frozen_prediction = np.clip(prediction * scale, -clip, clip)
+    frozen = scale_invariant_score(target, frozen_prediction, weight)
+    return {
+        "score": float(weighted_zero_mean_r2(target, frozen_prediction, weight)),
+        "peak": float(raw["peak"]),
+        "A": float(raw["A"]),
+        "B": float(raw["B"]),
+        "optimal_scale": float(raw["optimal_scale"]),
+        "frozen_score": float(weighted_zero_mean_r2(target, frozen_prediction, weight)),
+        "frozen_peak": float(frozen["peak"]),
+        "frozen_A": float(frozen["A"]),
+        "frozen_B": float(frozen["B"]),
+    }
+
+
+def run_p4(args: argparse.Namespace) -> dict[str, object]:
+    """Run the registered paired P4 screen or confirmation experiment."""
+    validate_frozen_protocol(args.mode, {
+        name: getattr(args, name)
+        for name in P4_COMMON_PROTOCOL
+        if hasattr(args, name)
+    } | {"n_seeds": args.n_seeds, "num_iteration": args.num_iteration})
+    repo_root = Path(__file__).resolve().parents[1]
+    for path in (str(repo_root / "strategies" / "v1_ridge"),
+                 str(repo_root / "experiments"),
+                 str(repo_root / "strategies" / "v3_hybrid")):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
+    from experiments.v3_production_oof import (
+        build_task_lgbm_designs,
+        fit_predict_lgbm,
+        row_slice,
+    )
+    from experiments.history_peak import fit_ridge, ridge_designs
+    from lgbm_xs import load_rows
+    from src.io import FEATURE_COLUMNS
+    from src.validation import rolling_time_folds
+    from strategies.v3_hybrid.train import stream_history_blocks
+    from train import robust_transform_fit
+    from experiments.v3_interaction_oof import compose_hybrid_raw
+    from features import cross_sectional_deviation
+
+    data_root = Path(args.data_root)
+    if not data_root.is_absolute():
+        data_root = repo_root / data_root
+    output_dir = Path(args.output_dir)
+    cache_dir = Path(args.cache_dir)
+    if not output_dir.is_absolute():
+        output_dir = repo_root / output_dir
+    if not cache_dir.is_absolute():
+        cache_dir = repo_root / cache_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / f"{args.label}.json"
+    md_path = output_dir / f"{args.label}.md"
+    npz_path = cache_dir / f"{args.label}.npz"
+    if not args.force and any(path.exists() for path in (json_path, md_path, npz_path)):
+        raise SystemExit(f"output exists; use --force: {json_path}")
+
+    started = time.perf_counter()
+    print(f"loading sampled data: modulo {args.sample_modulo}/{args.sampling}", flush=True)
+    data = load_rows(data_root, args.sample_modulo, args.sampling)
+    features = data["features"]
+    target = data["target"].astype(np.float64, copy=False)
+    weight = np.maximum(data["weight"].astype(np.float64, copy=False), 0.0)
+    time_ids = np.asarray(data["time_id"], dtype=np.int64)
+    asset_ids = np.asarray(data["asset_id"], dtype=np.int64)
+    unique_time_ids = np.unique(time_ids)
+    folds = rolling_time_folds(unique_time_ids, args.n_folds, args.train_window, args.embargo)
+    n = len(target)
+    evaluated_arms = ["baseline_corr", *[arm for arm in args.arm_set if arm != "baseline_corr"]]
+    oof = {arm: np.full(n, np.nan, dtype=np.float64) for arm in evaluated_arms}
+    fold_id = np.full(n, -1, dtype=np.int16)
+    fold_records: list[dict[str, object]] = []
+    paired_rows = {arm: [] for arm in evaluated_arms if arm != "baseline_corr"}
+    protocol = {
+        **P4_COMMON_PROTOCOL,
+        "n_seeds": args.n_seeds,
+        "num_iteration": args.num_iteration,
+        "mode": args.mode,
+    }
+    partial: dict[str, object] = {
+        "experiment": "p4_task_aligned_feature_reselection",
+        "status": "running",
+        "protocol": protocol,
+        "arms": evaluated_arms,
+        "folds": fold_records,
+        "gates": {},
+        "submission_generated": False,
+    }
+
+    for fold_index, (train_ids, valid_ids) in enumerate(folds):
+        fold_started = time.perf_counter()
+        tr = row_slice(time_ids, train_ids)
+        va = row_slice(time_ids, valid_ids)
+        raw_train = np.asarray(features[tr])
+        transformed_train, stats = robust_transform_fit(raw_train.copy())
+        transformed_valid = np.asarray(features[va]).copy()
+        from features import apply_robust_transform
+        apply_robust_transform(
+            transformed_valid, stats["lower"], stats["upper"],
+            stats["center"], stats["scale"],
+        )
+        y_tr, y_va = target[tr], target[va]
+        w_tr, w_va = weight[tr], weight[va]
+        tid_tr, tid_va = time_ids[tr], time_ids[va]
+        aid_tr, aid_va = asset_ids[tr], asset_ids[va]
+        cross_target = y_tr - _group_mean_1d(y_tr, tid_tr)
+        selections = derive_p4_selections(
+            transformed_train, y_tr, cross_target, tid_tr, aid_tr,
+            weights=w_tr, counts=P4_COUNTS,
+        )
+        baseline = selections["baseline"]
+        history_cache: dict[tuple[int, ...], tuple[list[np.ndarray], list[np.ndarray]]] = {}
+
+        ridge_train = ridge_designs(transformed_train, tid_tr, baseline["ridge"], None)
+        ridge_valid = ridge_designs(transformed_valid, tid_va, baseline["ridge"], None)
+        ridge_alpha = 2_000_000.0 * len(train_ids) / 78_960
+        ridge = fit_ridge(ridge_train, y_tr, w_tr, ridge_alpha)
+        ridge_prediction = ridge.predict(ridge_valid).astype(np.float64)
+        del ridge_train, ridge_valid, ridge
+        ridge_market = _group_mean_1d(ridge_prediction, tid_va)
+        ridge_residual = ridge_prediction - ridge_market
+
+        def get_history(selection: Mapping[str, np.ndarray]) -> tuple[list[np.ndarray], list[np.ndarray]]:
+            key = tuple(int(v) for v in selection["history"])
+            if key not in history_cache:
+                names = [FEATURE_COLUMNS[index] for index in selection["history"]]
+                history_stats = tuple(stats[name][selection["history"]]
+                                      for name in ("lower", "upper", "center", "scale"))
+                all_blocks = stream_history_blocks(
+                    data_root, args.sample_modulo, args.sampling, names,
+                    history_stats, args.history_window,
+                )
+                history_cache[key] = (
+                    [np.asarray(block[tr]) for block in all_blocks],
+                    [np.asarray(block[va]) for block in all_blocks],
+                )
+                del all_blocks
+            return history_cache[key]
+
+        component_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        def fit_components(selection: Mapping[str, np.ndarray], name: str) -> tuple[np.ndarray, np.ndarray]:
+            history_tr, history_va = get_history(selection)
+            designs_tr = build_task_lgbm_designs(
+                transformed_train, tid_tr, aid_tr,
+                xs_indices=selection["xs"], market_indices=selection["market"],
+                history_blocks=history_tr,
+            )
+            designs_va = build_task_lgbm_designs(
+                transformed_valid, tid_va, aid_va,
+                xs_indices=selection["xs"], market_indices=selection["market"],
+                history_blocks=history_va,
+            )
+            xs_prediction = fit_predict_lgbm(
+                designs_tr["xs"], cross_target, w_tr, designs_va["xs"],
+                args, f"fold {fold_index} {name} XS", {
+                    "num_leaves": 63, "learning_rate": 0.03,
+                    "feature_fraction": 0.7, "lambda_l2": 1.0,
+                }, num_iteration=args.num_iteration,
+            )
+            market_prediction = fit_predict_lgbm(
+                designs_tr["market"], y_tr, None, designs_va["market"],
+                args, f"fold {fold_index} {name} Market", {
+                    "num_leaves": 15, "learning_rate": 0.02,
+                    "feature_fraction": 0.4, "lambda_l2": 30.0,
+                }, min_data_scale=25.0 / 3.0, num_iteration=args.num_iteration,
+            )
+            return xs_prediction, market_prediction
+
+        def get_components(arm: str, selection: Mapping[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+            if arm in component_cache:
+                return component_cache[arm]
+            if arm == "baseline_corr" or arm == "history_lag_aligned":
+                result = fit_components(selection, arm)
+            else:
+                base_xs, base_market = component_cache["baseline_corr"]
+                if arm == "market_task_aligned":
+                    _, market = fit_components(selection, arm)
+                    result = base_xs, market
+                elif arm == "xs_time_stable":
+                    xs, _ = fit_components(selection, arm)
+                    result = xs, base_market
+                else:
+                    raise ValueError(f"unknown P4 arm: {arm}")
+            component_cache[arm] = result
+            return result
+
+        # Baseline is always materialized first so candidate arms can reuse it.
+        get_components("baseline_corr", selections["arms"]["baseline_corr"])
+        arm_metrics: dict[str, object] = {}
+        out_indices = np.arange(va.start, va.stop)
+        for arm in evaluated_arms:
+            xs_prediction, market_prediction = get_components(arm, selections["arms"][arm])
+            raw_prediction = compose_hybrid_raw(
+                ridge_prediction, xs_prediction, market_prediction, tid_va,
+                market_lambda=args.market_lambda, blend_weight=args.blend_weight,
+            )
+            frozen_prediction = np.clip(
+                raw_prediction * args.prediction_scale,
+                -args.prediction_clip, args.prediction_clip,
+            )
+            metric = _p4_fold_metric(
+                y_va, raw_prediction, w_va,
+                scale=args.prediction_scale, clip=args.prediction_clip,
+            )
+            oof[arm][out_indices] = frozen_prediction
+            arm_metrics[arm] = {
+                **metric,
+                "selection_hash": _selection_hash(selections["arms"][arm]),
+                "ridge": [int(v) for v in selections["arms"][arm]["ridge"]],
+                "xs": [int(v) for v in selections["arms"][arm]["xs"]],
+                "market": [int(v) for v in selections["arms"][arm]["market"]],
+                "history": [int(v) for v in selections["arms"][arm]["history"]],
+            }
+            if arm != "baseline_corr":
+                paired_rows[arm].append({
+                    "fold": fold_index,
+                    "baseline": arm_metrics["baseline_corr"],
+                    "candidate": arm_metrics[arm],
+                })
+        fold_id[out_indices] = fold_index
+        fold_records.append({
+            "fold": fold_index,
+            "train_time_range": [int(train_ids[0]), int(train_ids[-1])],
+            "valid_time_range": [int(valid_ids[0]), int(valid_ids[-1])],
+            "train_rows": int(len(y_tr)),
+            "valid_rows": int(len(y_va)),
+            "arms": arm_metrics,
+            "elapsed_seconds": float(time.perf_counter() - fold_started),
+        })
+        partial["folds"] = fold_records
+        write_p4_bundle(partial, output_dir, args.label)
+        del transformed_train, transformed_valid, stats, component_cache, history_cache
+        gc.collect()
+
+    gates: dict[str, object] = {}
+    for arm, rows in paired_rows.items():
+        gates[arm] = paired_gate(rows) if len(rows) == 5 else {
+            "passed": False, "reason": "incomplete_five_fold_evidence", "completed_folds": len(rows),
+        }
+    partial["status"] = "completed"
+    partial["gates"] = gates
+    partial["elapsed_seconds"] = float(time.perf_counter() - started)
+    partial["pooled"] = {
+        arm: _p4_fold_metric(target[fold_id >= 0], oof[arm][fold_id >= 0], weight[fold_id >= 0],
+                             scale=args.prediction_scale, clip=args.prediction_clip)
+        for arm in evaluated_arms
+    }
+    partial["submission_generated"] = False
+    np.savez_compressed(npz_path, target=target, weight=weight, time_id=time_ids,
+                        asset_id=asset_ids, fold=fold_id, **oof)
+    write_p4_bundle(partial, output_dir, args.label)
+    return partial
+
+
+def main() -> None:
+    args = parse_p4_args()
+    run_p4(args)
+
+
+
+
+if __name__ == "__main__":
+    main()

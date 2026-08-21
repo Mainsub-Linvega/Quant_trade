@@ -17,6 +17,8 @@ from experiments.v3_task_aligned_reselection import (
     resolve_p4_arm,
 )
 from experiments.v3_task_aligned_reselection import select_history_lag_aligned
+from experiments.v3_task_aligned_reselection import derive_p4_selections
+from experiments.v3_task_aligned_reselection import parse_p4_args
 
 
 def test_market_selector_uses_per_time_unweighted_means_and_index_ties():
@@ -222,3 +224,52 @@ def test_atomic_bundle_contains_fold_manifests_and_no_submission(tmp_path):
     assert paths["markdown"].exists()
     assert (paths["fold_dir"] / "fold_0.json").exists()
     assert not any("submission" in path.name.lower() for path in tmp_path.iterdir())
+
+
+def test_synthetic_selection_pipeline_is_deterministic_and_keeps_fixed_contract():
+    time_ids = np.repeat(np.arange(12), 4)
+    asset_ids = np.tile(np.arange(4), 12)
+    row = np.arange(len(time_ids), dtype=np.float64)
+    cross_target = np.tile([-1.5, -0.5, 0.5, 1.5], 12)
+    target = 0.2 * np.repeat(np.arange(12, dtype=np.float64), 4) + cross_target
+    features = np.column_stack([
+        np.repeat(np.arange(12, dtype=np.float64), 4),
+        np.tile([-1.5, -0.5, 0.5, 1.5], 12),
+        np.roll(np.tile([-1.5, -0.5, 0.5, 1.5], 12), 4),
+        np.sin(row / 3.0),
+        np.cos(row / 5.0),
+        np.zeros(len(row)),
+    ])
+    counts = {"ridge": 3, "xs": 3, "market": 3, "history": 2}
+
+    first = derive_p4_selections(
+        features, target, cross_target, time_ids, asset_ids, counts=counts,
+    )
+    second = derive_p4_selections(
+        features, target, cross_target, time_ids, asset_ids, counts=counts,
+    )
+
+    assert set(first) == {"baseline", "candidates", "arms"}
+    assert set(first["arms"]) == {
+        "baseline_corr", "market_task_aligned", "xs_time_stable", "history_lag_aligned",
+    }
+    for name, arm in first["arms"].items():
+        assert set(arm) == set(counts)
+        assert all(len(arm[task]) == counts[task] for task in counts)
+        if name != "xs_time_stable":
+            assert set(arm["history"]).issubset(set(arm["xs"]))
+    for name in first["arms"]:
+        for task in counts:
+            np.testing.assert_array_equal(first["arms"][name][task], second["arms"][name][task])
+
+
+def test_p4_cli_rejects_screen_round_drift_and_parses_arm_set():
+    with pytest.raises(SystemExit):
+        parse_p4_args(["--mode", "screen", "--num-iteration", "480"])
+    args = parse_p4_args([
+        "--mode", "confirmation", "--arm-set", "market_task_aligned,xs_time_stable",
+    ])
+    assert args.mode == "confirmation"
+    assert args.arm_set == ["market_task_aligned", "xs_time_stable"]
+    assert args.n_seeds == 3
+    assert args.num_iteration == 480
