@@ -6,7 +6,9 @@ arrays and return global feature indices without reading files or model state.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
+from pathlib import Path
 
 import numpy as np
 
@@ -20,6 +22,32 @@ P4_ARMS = (
     "history_lag_aligned",
 )
 P4_COUNTS = {"ridge": 200, "xs": 200, "market": 200, "history": 40}
+P4_COMMON_PROTOCOL = {
+    "n_folds": 5,
+    "train_window": 78_960,
+    "embargo": 6,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "market_lambda": 0.7,
+    "blend_weight": 1.17,
+    "prediction_scale": 1.16,
+    "prediction_clip": 0.5,
+    "history_window": 5,
+}
+P4_MODE_PROTOCOL = {
+    "screen": {"n_seeds": 1, "num_iteration": 160},
+    "confirmation": {"n_seeds": 3, "num_iteration": 480},
+}
+
+
+def validate_frozen_protocol(mode: str, protocol: Mapping[str, object]) -> dict[str, object]:
+    if mode not in P4_MODE_PROTOCOL:
+        raise ValueError(f"unknown P4 mode: {mode}")
+    expected = {**P4_COMMON_PROTOCOL, **P4_MODE_PROTOCOL[mode]}
+    for name, value in expected.items():
+        if protocol.get(name) != value:
+            raise ValueError(f"{name}={protocol.get(name)!r}; expected {value!r}")
+    return expected
 
 
 def _validate_panel(
@@ -321,3 +349,97 @@ def paired_gate(fold_rows: list[Mapping[str, object]]) -> dict[str, object]:
         "alignment_energy_passed": alignment_energy_passed,
         "fold_deltas": fold_deltas,
     }
+
+
+def candidate_gate_impossible(
+    deltas: list[float] | np.ndarray,
+    *,
+    total_folds: int = 5,
+    required_positive: int = 4,
+) -> bool:
+    values = np.asarray(deltas, dtype=np.float64)
+    if values.ndim != 1 or len(values) > total_folds:
+        raise ValueError("fold deltas must be a partial one-dimensional sequence")
+    if total_folds <= 0 or not 0 < required_positive <= total_folds:
+        raise ValueError("invalid positive-fold gate")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("fold deltas must be finite")
+    positives = int(np.sum(values > 0.0))
+    remaining = total_folds - len(values)
+    return positives + remaining < required_positive
+
+
+def _json_default(value: object) -> object:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
+
+
+def _atomic_write_text(path: Path, value: str) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(value, encoding="utf-8")
+    temporary.replace(path)
+
+
+def _render_markdown(payload: Mapping[str, object]) -> str:
+    lines = [
+        "# P4 Task-Aligned Feature Reselection",
+        "",
+        f"Status: **{payload.get('status', 'unknown')}**",
+        "",
+        "| Fold | Arm | Peak | A | B |",
+        "|---:|---|---:|---:|---:|",
+    ]
+    for fold in payload.get("folds", []):
+        if not isinstance(fold, Mapping):
+            continue
+        arms = fold.get("arms", {})
+        if not isinstance(arms, Mapping):
+            continue
+        for arm, metrics in arms.items():
+            if not isinstance(metrics, Mapping):
+                continue
+            lines.append(
+                f"| {fold['fold']} | {arm} | {float(metrics.get('peak', np.nan)):.8f} | "
+                f"{float(metrics.get('A', np.nan)):.8f} | {float(metrics.get('B', np.nan)):.8f} |"
+            )
+    lines.extend([
+        "",
+        "## Gates",
+        "",
+        "```json",
+        json.dumps(payload.get("gates", {}), ensure_ascii=False, indent=2, default=_json_default),
+        "```",
+        "",
+        "No candidate arms were combined after observing results. No submission CSV was generated.",
+    ])
+    return "\n".join(lines) + "\n"
+
+
+def write_p4_bundle(payload: Mapping[str, object], output_dir: str | Path, label: str) -> dict[str, Path]:
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    fold_dir = directory / f"{label}_folds"
+    fold_dir.mkdir(parents=True, exist_ok=True)
+    for fold in payload.get("folds", []):
+        if not isinstance(fold, Mapping) or "fold" not in fold:
+            raise ValueError("every fold artifact requires a fold index")
+        fold_path = fold_dir / f"fold_{int(fold['fold'])}.json"
+        _atomic_write_text(
+            fold_path,
+            json.dumps(fold, ensure_ascii=False, indent=2, default=_json_default) + "\n",
+        )
+    json_path = directory / f"{label}.json"
+    markdown_path = directory / f"{label}.md"
+    _atomic_write_text(
+        json_path,
+        json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default) + "\n",
+    )
+    _atomic_write_text(markdown_path, _render_markdown(payload))
+    return {"json": json_path, "markdown": markdown_path, "fold_dir": fold_dir}

@@ -114,7 +114,12 @@ def test_history_selector_rejects_missing_asset_ids():
         )
 
 
-from experiments.v3_task_aligned_reselection import paired_gate
+from experiments.v3_task_aligned_reselection import (
+    candidate_gate_impossible,
+    paired_gate,
+    validate_frozen_protocol,
+    write_p4_bundle,
+)
 
 
 def test_p4_arm_contract_rejects_history_outside_xs():
@@ -178,3 +183,42 @@ def test_paired_gate_rejects_non_finite_metrics():
     gate = paired_gate(rows)
     assert gate["passed"] is False
     assert gate["all_finite"] is False
+
+
+def test_candidate_gate_impossible_uses_remaining_positive_folds():
+    assert candidate_gate_impossible([-0.1, -0.2], total_folds=5) is True
+    assert candidate_gate_impossible([0.1, -0.2], total_folds=5) is False
+
+
+def test_validate_frozen_protocol_accepts_only_registered_modes():
+    screen = {
+        "n_folds": 5, "train_window": 78960, "embargo": 6,
+        "sample_modulo": 5, "sampling": "phase_balanced",
+        "n_seeds": 1, "num_iteration": 160, "market_lambda": 0.7,
+        "blend_weight": 1.17, "prediction_scale": 1.16,
+        "prediction_clip": 0.5, "history_window": 5,
+    }
+    assert validate_frozen_protocol("screen", screen)["n_seeds"] == 1
+    with pytest.raises(ValueError, match="num_iteration"):
+        validate_frozen_protocol("screen", {**screen, "num_iteration": 480})
+    confirmation = {**screen, "n_seeds": 3, "num_iteration": 480}
+    assert validate_frozen_protocol("confirmation", confirmation)["n_seeds"] == 3
+
+
+def test_atomic_bundle_contains_fold_manifests_and_no_submission(tmp_path):
+    payload = {
+        "experiment": "p4",
+        "status": "running",
+        "protocol": {"n_folds": 1},
+        "arms": {"baseline_corr": {}},
+        "folds": [{"fold": 0, "arms": {"baseline_corr": {"peak": 1.0}}}],
+        "gates": {},
+        "submission_generated": False,
+    }
+
+    paths = write_p4_bundle(payload, tmp_path, "p4_test")
+
+    assert paths["json"].exists()
+    assert paths["markdown"].exists()
+    assert (paths["fold_dir"] / "fold_0.json").exists()
+    assert not any("submission" in path.name.lower() for path in tmp_path.iterdir())
