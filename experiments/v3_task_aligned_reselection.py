@@ -757,7 +757,11 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
             return history_cache[key]
 
         component_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-        def fit_components(selection: Mapping[str, np.ndarray], name: str) -> tuple[np.ndarray, np.ndarray]:
+
+        def fit_components(
+            selection: Mapping[str, np.ndarray], name: str,
+            tasks: tuple[str, ...] = ("xs", "market"),
+        ) -> tuple[np.ndarray, np.ndarray]:
             history_tr, history_va = get_history(selection)
             designs_tr = build_task_lgbm_designs(
                 transformed_train, tid_tr, aid_tr,
@@ -769,6 +773,14 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
                 xs_indices=selection["xs"], market_indices=selection["market"],
                 history_blocks=history_va,
             )
+            if tasks == ("market",):
+                return np.empty(0, dtype=np.float64), fit_predict_lgbm(
+                    designs_tr["market"], y_tr, None, designs_va["market"],
+                    args, f"fold {fold_index} {name} Market", {
+                        "num_leaves": 15, "learning_rate": 0.02,
+                        "feature_fraction": 0.4, "lambda_l2": 30.0,
+                    }, min_data_scale=25.0 / 3.0, num_iteration=args.num_iteration,
+                )
             xs_prediction = fit_predict_lgbm(
                 designs_tr["xs"], cross_target, w_tr, designs_va["xs"],
                 args, f"fold {fold_index} {name} XS", {
@@ -776,6 +788,8 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
                     "feature_fraction": 0.7, "lambda_l2": 1.0,
                 }, num_iteration=args.num_iteration,
             )
+            if tasks == ("xs",):
+                return xs_prediction, np.empty(0, dtype=np.float64)
             market_prediction = fit_predict_lgbm(
                 designs_tr["market"], y_tr, None, designs_va["market"],
                 args, f"fold {fold_index} {name} Market", {
@@ -793,10 +807,10 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
             else:
                 base_xs, base_market = component_cache["baseline_corr"]
                 if arm == "market_task_aligned":
-                    _, market = fit_components(selection, arm)
+                    _, market = fit_components(selection, arm, ("market",))
                     result = base_xs, market
                 elif arm == "xs_time_stable":
-                    xs, _ = fit_components(selection, arm)
+                    xs, _ = fit_components(selection, arm, ("xs",))
                     result = xs, base_market
                 else:
                     raise ValueError(f"unknown P4 arm: {arm}")
