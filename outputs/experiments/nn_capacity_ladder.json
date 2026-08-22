@@ -1,5 +1,6 @@
 {
   "experiment": "nn_capacity_ladder",
+  "label_prefix": "multitask_mlp_e",
   "plan_path": "/home/mainsub/Documents/Quant_trade/outputs/experiments/nn_capacity_ladder_plan.json",
   "plan_sha256": "cfdd43bc5c8a2bf946d033851dc998804f225cb676101313be082d937eafd074",
   "baseline_peak": 0.001055954978483406,

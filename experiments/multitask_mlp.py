@@ -140,6 +140,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sampling", default="phase_balanced",
                    choices=["periodic", "phase_balanced"])
     p.add_argument("--current-feature-count", type=int, default=200)
+    p.add_argument("--cross-selection-override", default=None,
+                   help=("JSON：{fold: [200 个全局列号]}，只覆盖 **cross 块**的选列。"
+                         "不给＝行为逐位不变（P9 的 e12 锚点可复现这一点）。"
+                         "为 ROADMAP P9 范围项 ③（特征选择不再沿用为线性/树挑的 top-200）"
+                         "提供单轴入口 —— market 块与 history 块**不动**，否则就是组合臂。"))
     p.add_argument("--blend-mode", default="oracle", choices=["oracle", "frozen"],
                    help="oracle=评估折上重解系数（上界，只用于 Stage 1 看符号）；"
                         "frozen=只用更早的折拟合系数（Stage 2 终审）")
@@ -305,6 +310,8 @@ def main() -> None:
     baseline = load_baseline(Path(args.baseline_cache))
     base_lookup = {int(key): index for index, key in enumerate(baseline["key"])}
 
+    selection_override = (json.loads(Path(args.cross_selection_override).read_text(encoding="utf-8"))
+                          if args.cross_selection_override else None)
     meta = json.loads(Path(args.candidate_meta).read_text(encoding="utf-8"))
     lgbm_global = np.array([int(name.split("_")[-1]) for name in meta["lgbm_features"]],
                            dtype=np.int64)
@@ -350,6 +357,18 @@ def main() -> None:
         market_selected = select_features(t_train, y_train, w_train, args.current_feature_count)
         cross_selected = select_features(t_train, e_train, np.ones_like(e_train),
                                          args.current_feature_count)
+        if selection_override is not None:
+            override = selection_override.get(str(fold_index))
+            if override is None:
+                raise SystemExit(f"--cross-selection-override 里没有 fold {fold_index} 的选列")
+            replacement = np.sort(np.asarray(override, dtype=np.int64))
+            if len(replacement) != args.current_feature_count:
+                raise SystemExit(f"fold {fold_index} 的覆盖选列有 {len(replacement)} 列，"
+                                 f"应为 {args.current_feature_count}")
+            shared = len(set(replacement.tolist()) & set(np.asarray(cross_selected).tolist()))
+            print(f"  cross 选列被覆盖：与基准判据重合 {shared}/{args.current_feature_count}",
+                  flush=True)
+            cross_selected = replacement
         market_train = group_mean(t_train[:, market_selected], starts_train, counts_train)
         market_valid = group_mean(t_valid[:, market_selected], starts_valid, counts_valid)
         cross_train = cross_sectional_deviation(t_train[:, cross_selected].copy(), tid_train)

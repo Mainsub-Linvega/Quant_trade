@@ -227,6 +227,111 @@ def ab_pair(total: np.ndarray, coef: np.ndarray) -> tuple[float, float]:
     return float(c @ v / D), float(c @ G @ c / D)
 
 
+
+def evaluate_arm(arm: str, auxes: list[np.ndarray], base_pred: np.ndarray, bname: str, *,
+                 y: np.ndarray, w: np.ndarray, starts: np.ndarray, gidx: np.ndarray,
+                 n_groups: int, group_fold: np.ndarray, fold_list: list[int],
+                 boot_rng: np.random.Generator, block_size: int, n_boot: int) -> dict[str, Any]:
+    """单个臂的完整评估：冻结系数 → 逐折 Δpeak → 配对 block bootstrap → 七道门禁。
+
+    ⚠️ **本函数是 2026-08-22 从 `main()` 里原样抽出来的，一个数值都没动。**
+    抽它的唯一理由是让后续脚本能复用而不必抄第二份（CLAUDE.md §8「不另写一份」）。
+    抽取后 `main()` 的输出与抽取前**逐字节相同**已实测（`elapsed_seconds` 除外）。
+
+    ⚠️ `boot_rng` 由调用方提供且**按调用顺序消耗**：本文件的 `main()` 传一条共享流
+    （所以 08-18 那张表只在**同样的臂顺序**下复现）。若调用方希望每个臂与顺序无关，
+    应逐臂传一条自己的流 —— 届时点估计仍逐位复现，只有 bootstrap CI 会不同。
+    """
+    if bname == "pure_e":
+        aux_use = [zero_mean_per_time(a, starts, len(y)) for a in auxes]
+    else:
+        aux_use = auxes
+    preds = [base_pred, *aux_use]
+    n = len(preds)
+    rows = moment_rows(y, w, preds, gidx, n_groups)
+    per_fold = {f: rows[group_fold == f].sum(axis=0) for f in fold_list}
+
+    deltas, deltas_frozen, bases, dA, dB = [], [], [], [], []
+    frozen: dict[int, np.ndarray] = {}
+    for i, f in enumerate(fold_list):
+        if i == 0:
+            continue                                   # fold 0 只用于拟合系数
+        past = np.sum([per_fold[g] for g in fold_list[:i]], axis=0)
+        coef = solve(past, n)
+        frozen[f] = coef
+        ev = per_fold[f]
+        peak_b = baseline_peak(ev, n)
+        cand = frozen_score(ev, coef)
+        # 同一冻结口径下的基准（只冻结一个 scale、不加 auxiliary）⟹ 剥掉让步
+        base_only = baseline_frozen_score(past, ev, n)
+        A_c, B_c = ab_pair(ev, coef)
+        D, v, G = split(ev, n)
+        A_b, B_b = v[0] / D, G[0, 0] / D
+        deltas.append(cand - peak_b)
+        deltas_frozen.append(cand - base_only)
+        bases.append(peak_b)
+        dA.append((A_c - A_b) / A_b if A_b else float("nan"))
+        dB.append((B_c - B_b) / B_b if B_b else float("nan"))
+
+    deltas = np.array(deltas); bases = np.array(bases)
+    deltas_frozen = np.array(deltas_frozen)
+    drop = np.delete(deltas, int(np.argmax(deltas))) if len(deltas) > 1 else deltas
+    pos = int((deltas > 0).sum())
+    rel = float(deltas.mean() / bases.mean())
+    mean_dA, mean_dB = float(np.mean(dA)), float(np.mean(dB))
+
+    # 配对 block bootstrap：系数冻结在最后一折，只重采样**评估折**的 time_id
+    eval_mask = np.isin(group_fold, fold_list[1:])
+    eval_rows = rows[eval_mask]
+    m_groups = len(eval_rows)
+    prefix = np.vstack([np.zeros(rows.shape[1]), np.cumsum(eval_rows, axis=0)])
+    # block 必须显著小于评估折的组数，否则每次抽样都从 0 开始 ⟹ CI 退化成一个点
+    block = min(block_size, max(m_groups // 10, 1))
+    nb = int(np.ceil(m_groups / block))
+    coef_last = frozen[fold_list[-1]]
+    samples = np.empty(n_boot)
+    for b in range(n_boot):
+        st = boot_rng.integers(0, max(m_groups - block, 0) + 1, size=nb)
+        sp = np.minimum(st + block, m_groups)
+        tot = (prefix[sp] - prefix[st]).sum(axis=0)
+        samples[b] = frozen_score(tot, coef_last) - baseline_peak(tot, n)
+    ci = np.percentile(samples, [2.5, 50, 97.5])
+    floor = float((ci[2] - ci[0]) / 2.0)
+
+    checks = {
+        "1_mean_delta_positive": bool(deltas.mean() > 0),
+        f"2_at_least_{MIN_POSITIVE_FOLDS}_of_{len(deltas)}_folds_positive":
+            bool(pos >= MIN_POSITIVE_FOLDS),
+        "3_survives_drop_best_fold": bool(drop.mean() > 0),
+        "4_relative_gain_at_least_3pct": bool(rel >= MIN_RELATIVE_GAIN),
+        "5_two_delta_A_exceeds_delta_B": bool(2 * mean_dA > mean_dB),
+        "6_paired_bootstrap_ci_lower_bound_positive": bool(ci[0] > 0),
+        "7_exceeds_detection_floor": bool(deltas.mean() > floor),
+    }
+    corr = (float(np.corrcoef(base_pred, aux_use[0])[0, 1]) if aux_use else float("nan"))
+    result = {
+        "mean_delta": float(deltas.mean()), "relative": rel,
+        "mean_delta_drop_best": float(drop.mean()),
+        "mean_delta_vs_frozen_baseline": float(deltas_frozen.mean()),
+        "per_fold_delta": [float(x) for x in deltas],
+        "baseline_peak_mean": float(bases.mean()),
+        "positive_folds": pos, "n_folds": int(len(deltas)),
+        "sign_test_p": sign_test_p(pos, len(deltas)),
+        "delta_A_relative": mean_dA, "delta_B_relative": mean_dB,
+        "corr_with_baseline": corr,
+        "frozen_coefficients": {str(f): [float(c) for c in frozen[f]] for f in frozen},
+        "paired_bootstrap": {"p2.5": float(ci[0]), "p50": float(ci[1]),
+                             "p97.5": float(ci[2]), "half_width": floor,
+                             "block_size_effective": int(block),
+                             "eval_groups": int(m_groups)},
+        "checks": checks, "pass": all(checks.values()),
+    }
+    print(f"  [{bname:6s}] {arm:18s} Δ折均 {deltas.mean():+.3e}（{rel*100:+.2f}%）"
+          f" 正折 {pos}/{len(deltas)} 检出下限 {floor:.2e} "
+          f"{'PASS' if all(checks.values()) else 'FAIL'}", flush=True)
+
+    return result
+
 def main() -> None:
     args = parse_args()
     out_dir = Path(args.output_dir); out_dir.mkdir(parents=True, exist_ok=True)
@@ -265,93 +370,10 @@ def main() -> None:
         base_pred = data[column]
         results[bname] = {}
         for arm, auxes in arms.items():
-            if bname == "pure_e":
-                aux_use = [zero_mean_per_time(a, starts, len(y)) for a in auxes]
-            else:
-                aux_use = auxes
-            preds = [base_pred, *aux_use]
-            n = len(preds)
-            rows = moment_rows(y, w, preds, gidx, n_groups)
-            per_fold = {f: rows[group_fold == f].sum(axis=0) for f in fold_list}
-
-            deltas, deltas_frozen, bases, dA, dB = [], [], [], [], []
-            frozen: dict[int, np.ndarray] = {}
-            for i, f in enumerate(fold_list):
-                if i == 0:
-                    continue                                   # fold 0 只用于拟合系数
-                past = np.sum([per_fold[g] for g in fold_list[:i]], axis=0)
-                coef = solve(past, n)
-                frozen[f] = coef
-                ev = per_fold[f]
-                peak_b = baseline_peak(ev, n)
-                cand = frozen_score(ev, coef)
-                # 同一冻结口径下的基准（只冻结一个 scale、不加 auxiliary）⟹ 剥掉让步
-                base_only = baseline_frozen_score(past, ev, n)
-                A_c, B_c = ab_pair(ev, coef)
-                D, v, G = split(ev, n)
-                A_b, B_b = v[0] / D, G[0, 0] / D
-                deltas.append(cand - peak_b)
-                deltas_frozen.append(cand - base_only)
-                bases.append(peak_b)
-                dA.append((A_c - A_b) / A_b if A_b else float("nan"))
-                dB.append((B_c - B_b) / B_b if B_b else float("nan"))
-
-            deltas = np.array(deltas); bases = np.array(bases)
-            deltas_frozen = np.array(deltas_frozen)
-            drop = np.delete(deltas, int(np.argmax(deltas))) if len(deltas) > 1 else deltas
-            pos = int((deltas > 0).sum())
-            rel = float(deltas.mean() / bases.mean())
-            mean_dA, mean_dB = float(np.mean(dA)), float(np.mean(dB))
-
-            # 配对 block bootstrap：系数冻结在最后一折，只重采样**评估折**的 time_id
-            eval_mask = np.isin(group_fold, fold_list[1:])
-            eval_rows = rows[eval_mask]
-            m_groups = len(eval_rows)
-            prefix = np.vstack([np.zeros(rows.shape[1]), np.cumsum(eval_rows, axis=0)])
-            # block 必须显著小于评估折的组数，否则每次抽样都从 0 开始 ⟹ CI 退化成一个点
-            block = min(args.block_size, max(m_groups // 10, 1))
-            nb = int(np.ceil(m_groups / block))
-            coef_last = frozen[fold_list[-1]]
-            samples = np.empty(args.n_boot)
-            for b in range(args.n_boot):
-                st = boot_rng.integers(0, max(m_groups - block, 0) + 1, size=nb)
-                sp = np.minimum(st + block, m_groups)
-                tot = (prefix[sp] - prefix[st]).sum(axis=0)
-                samples[b] = frozen_score(tot, coef_last) - baseline_peak(tot, n)
-            ci = np.percentile(samples, [2.5, 50, 97.5])
-            floor = float((ci[2] - ci[0]) / 2.0)
-
-            checks = {
-                "1_mean_delta_positive": bool(deltas.mean() > 0),
-                f"2_at_least_{MIN_POSITIVE_FOLDS}_of_{len(deltas)}_folds_positive":
-                    bool(pos >= MIN_POSITIVE_FOLDS),
-                "3_survives_drop_best_fold": bool(drop.mean() > 0),
-                "4_relative_gain_at_least_3pct": bool(rel >= MIN_RELATIVE_GAIN),
-                "5_two_delta_A_exceeds_delta_B": bool(2 * mean_dA > mean_dB),
-                "6_paired_bootstrap_ci_lower_bound_positive": bool(ci[0] > 0),
-                "7_exceeds_detection_floor": bool(deltas.mean() > floor),
-            }
-            corr = (float(np.corrcoef(base_pred, aux_use[0])[0, 1]) if aux_use else float("nan"))
-            results[bname][arm] = {
-                "mean_delta": float(deltas.mean()), "relative": rel,
-                "mean_delta_drop_best": float(drop.mean()),
-                "mean_delta_vs_frozen_baseline": float(deltas_frozen.mean()),
-                "per_fold_delta": [float(x) for x in deltas],
-                "baseline_peak_mean": float(bases.mean()),
-                "positive_folds": pos, "n_folds": int(len(deltas)),
-                "sign_test_p": sign_test_p(pos, len(deltas)),
-                "delta_A_relative": mean_dA, "delta_B_relative": mean_dB,
-                "corr_with_baseline": corr,
-                "frozen_coefficients": {str(f): [float(c) for c in frozen[f]] for f in frozen},
-                "paired_bootstrap": {"p2.5": float(ci[0]), "p50": float(ci[1]),
-                                     "p97.5": float(ci[2]), "half_width": floor,
-                                     "block_size_effective": int(block),
-                                     "eval_groups": int(m_groups)},
-                "checks": checks, "pass": all(checks.values()),
-            }
-            print(f"  [{bname:6s}] {arm:18s} Δ折均 {deltas.mean():+.3e}（{rel*100:+.2f}%）"
-                  f" 正折 {pos}/{len(deltas)} 检出下限 {floor:.2e} "
-                  f"{'PASS' if all(checks.values()) else 'FAIL'}", flush=True)
+            results[bname][arm] = evaluate_arm(
+                arm, auxes, base_pred, bname, y=y, w=w, starts=starts, gidx=gidx,
+                n_groups=n_groups, group_fold=group_fold, fold_list=fold_list,
+                boot_rng=boot_rng, block_size=args.block_size, n_boot=args.n_boot)
 
     # 负控制 / harness 校准
     ncp = {b: results[b]["negctrl_shuffle"]["pass"] for b in BASELINES}

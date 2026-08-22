@@ -88,6 +88,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--result-dir", default=str(_REPO_ROOT / "outputs" / "experiments"))
     p.add_argument("--label-prefix", default="multitask_mlp_e")
     p.add_argument("--output-dir", default=str(_REPO_ROOT / "outputs" / "experiments"))
+    p.add_argument("--summary-label", default=None,
+                   help="汇总产物的 label；不给＝沿用 SUMMARY_LABEL（原行为）")
+    p.add_argument("--anchor-label", default=None,
+                   help=("把 08-19 锚点自检改为读**另一次**基准跑的 12 档 JSON。"
+                         "用于「换特征集」这类臂 —— 它的 12 档按设计就不该复现锚点，"
+                         "而环境自检仍然必须做，只是要由同一次会话里的基准臂来做。"
+                         "不给＝原行为（拿本阶梯自己的 12 档比）。"))
     p.add_argument("--force", action="store_true")
     return p.parse_args()
 
@@ -387,11 +394,21 @@ def summarize(args: argparse.Namespace) -> None:
         rungs.append(read_rung(path))
 
     assert_single_axis(rungs)
-    reproduction = assert_reproduces_anchor(rungs)
+    if args.anchor_label:
+        anchor_path = result_dir / f"{args.anchor_label}.json"
+        if not anchor_path.is_file():
+            raise SystemExit(f"缺少锚点跑 {anchor_path} —— 先用**默认选列**跑一次 12 档")
+        reproduction = assert_reproduces_anchor([read_rung(anchor_path)])
+        reproduction["anchor_from"] = str(anchor_path)
+        reproduction["note"] = ("本阶梯的 12 档按设计不复现锚点（特征集变了）；"
+                                "环境自检由同一次会话的基准臂完成")
+    else:
+        reproduction = assert_reproduces_anchor(rungs)
     verdict = judge(rungs)
 
     payload = {
-        "experiment": "nn_capacity_ladder",
+        "experiment": args.summary_label or SUMMARY_LABEL,
+        "label_prefix": args.label_prefix,
         "plan_path": str(plan_path),
         "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
         "baseline_peak": rungs[0]["baseline_peak"],
@@ -399,7 +416,8 @@ def summarize(args: argparse.Namespace) -> None:
         "reproduction_check": reproduction,
         "verdict": verdict,
     }
-    write(out_dir, SUMMARY_LABEL, payload, render_summary(payload), args.force)
+    write(out_dir, args.summary_label or SUMMARY_LABEL, payload,
+          render_summary(payload), args.force)
     print(f"\n最好一档 max_iter={verdict['best_at_max_iter']}（{verdict['best_arm']}）"
           f" = 基准的 {verdict['best_relative']:.1%}；门槛 {GATE_FRACTION:.0%}", flush=True)
     print(f"判定：{verdict['verdict']}", flush=True)
