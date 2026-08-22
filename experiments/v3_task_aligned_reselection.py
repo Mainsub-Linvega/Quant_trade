@@ -173,11 +173,18 @@ def derive_p4_selections(
             raise ValueError(f"invalid P4 count for {task}")
     ridge = _rank_baseline_features(values, labels, int(counts["ridge"]), weights)
     xs = _rank_baseline_features(values, cross, int(counts["xs"]))
+    xs_ordered = np.sort(xs)
+    xs_values = values[:, xs_ordered]
+    baseline_xs_deviation = _cross_sectional_center(xs_values, ids)
+    baseline_history_positions = _rank_baseline_features(
+        baseline_xs_deviation, cross, int(counts["history"]), None,
+    )
+    baseline_history = xs_ordered[np.sort(baseline_history_positions)]
     history = select_history_lag_aligned(
-        values[:, np.sort(xs)], cross, ids, assets, np.sort(xs),
+        xs_values, cross, ids, assets, xs_ordered,
         count=int(counts["history"]), window=P4_COMMON_PROTOCOL["history_window"],
     )["selected_indices"]
-    baseline = {"ridge": ridge, "xs": xs, "market": xs.copy(), "history": history}
+    baseline = {"ridge": ridge, "xs": xs, "market": xs.copy(), "history": baseline_history}
     candidates = {
         "market_task_aligned": {"market": select_market_task_aligned(
             values, labels, ids, count=int(counts["market"]),
@@ -185,7 +192,7 @@ def derive_p4_selections(
         "xs_time_stable": {"xs": select_xs_time_stable(
             values, cross, ids, count=int(counts["xs"]),
         )},
-        "history_lag_aligned": {"history": history.copy()},
+        "history_lag_aligned": {"history": history},
     }
     arms = {
         arm: resolve_p4_arm(arm, baseline, candidates, counts)
