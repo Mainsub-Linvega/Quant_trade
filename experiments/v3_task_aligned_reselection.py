@@ -657,6 +657,22 @@ def allocate_p4_arrays(
     }
 
 
+def reuse_p4_feature_memmap(
+    feature_path: str | Path, n_rows: int, feature_count: int,
+) -> np.memmap:
+    """Open a previously completed P4 feature memmap after validating shape."""
+    path = Path(feature_path)
+    if not path.exists():
+        raise FileNotFoundError(path)
+    mapped = np.load(path, mmap_mode="r")
+    if not isinstance(mapped, np.memmap):
+        raise ValueError("P4 feature cache is not a NumPy memmap")
+    if mapped.shape != (n_rows, feature_count) or mapped.dtype != np.dtype(np.float32):
+        raise ValueError(
+            f"invalid P4 feature cache shape/dtype: {mapped.shape}/{mapped.dtype}"
+        )
+    return mapped
+
 def load_p4_rows(
     data_root: Path,
     sample_modulo: int,
@@ -714,6 +730,51 @@ def load_p4_rows(
     if offset != count:
         raise RuntimeError(f"P4 loader wrote {offset} rows after counting {count}")
     arrays["features"].flush()
+    return arrays
+
+def load_p4_metadata(
+    data_root: Path,
+    sample_modulo: int,
+    sampling: str,
+    n_rows: int,
+) -> dict[str, np.ndarray]:
+    """Load sampled labels and row keys while reusing an existing feature map."""
+    import pyarrow.parquet as pq
+
+    from src.io import time_sample_mask, train_files
+
+    arrays = {
+        "target": np.empty(n_rows, dtype=np.float64),
+        "weight": np.empty(n_rows, dtype=np.float64),
+        "time_id": np.empty(n_rows, dtype=np.int64),
+        "asset_id": np.empty(n_rows, dtype=np.int64),
+    }
+    offset = 0
+    columns = ["time_id", "asset_id", "weight", "target"]
+    for path in train_files(data_root):
+        kept = 0
+        started = time.perf_counter()
+        for batch in pq.ParquetFile(path).iter_batches(batch_size=120_000, columns=columns):
+            frame = batch.to_pandas()
+            mask = time_sample_mask(
+                frame["time_id"].to_numpy(copy=False), sample_modulo, sampling=sampling,
+            )
+            rows = int(np.sum(mask))
+            if rows == 0:
+                continue
+            end = offset + rows
+            if end > n_rows:
+                raise RuntimeError("P4 metadata rows exceed the feature cache")
+            for name, dtype in (("target", np.float64), ("weight", np.float64),
+                                ("time_id", np.int64), ("asset_id", np.int64)):
+                arrays[name][offset:end] = frame.loc[mask, name].to_numpy(
+                    dtype=dtype, copy=False,
+                )
+            offset = end
+            kept += rows
+        print(f"  {path.name}: {kept:,} metadata rows ({time.perf_counter()-started:.0f}s)", flush=True)
+    if offset != n_rows:
+        raise RuntimeError(f"P4 metadata wrote {offset} rows for {n_rows} cached features")
     return arrays
 
 
@@ -774,9 +835,19 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
 
     started = time.perf_counter()
     feature_spill_path = cache_dir / f".{args.label}_features.npy"
-    print(f"streaming sampled data: modulo {args.sample_modulo}/{args.sampling}", flush=True)
-    data = load_p4_rows(data_root, args.sample_modulo, args.sampling, feature_spill_path)
-    features = data["features"]
+    if feature_spill_path.exists():
+        cached = np.load(feature_spill_path, mmap_mode="r")
+        features = reuse_p4_feature_memmap(
+            feature_spill_path, cached.shape[0], len(FEATURE_COLUMNS),
+        )
+        data = load_p4_metadata(
+            data_root, args.sample_modulo, args.sampling, cached.shape[0],
+        )
+        del cached
+    else:
+        print(f"streaming sampled data: modulo {args.sample_modulo}/{args.sampling}", flush=True)
+        data = load_p4_rows(data_root, args.sample_modulo, args.sampling, feature_spill_path)
+        features = data["features"]
     gc.collect()
     target = data["target"].astype(np.float64, copy=False)
     weight = np.maximum(data["weight"].astype(np.float64, copy=False), 0.0)

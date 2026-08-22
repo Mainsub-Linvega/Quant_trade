@@ -21,6 +21,7 @@ from experiments.v3_task_aligned_reselection import derive_p4_selections
 from experiments.v3_task_aligned_reselection import parse_p4_args
 from experiments.v3_task_aligned_reselection import runner_import_paths
 from experiments.v3_task_aligned_reselection import spill_p4_features
+from experiments.v3_task_aligned_reselection import reuse_p4_feature_memmap
 from experiments.v3_task_aligned_reselection import allocate_p4_arrays
 
 
@@ -311,3 +312,14 @@ def test_allocate_p4_arrays_uses_feature_memmap_and_aligned_metadata(tmp_path):
     arrays["features"].flush()
     reopened = np.load(tmp_path / "features.npy", mmap_mode="r")
     np.testing.assert_array_equal(reopened, np.full((5, 3), 2.5, dtype=np.float32))
+
+
+def test_reuse_p4_feature_memmap_accepts_complete_existing_file(tmp_path):
+    source = tmp_path / "features.npy"
+    mapped = np.lib.format.open_memmap(source, mode="w+", dtype=np.float32, shape=(4, 3))
+    mapped[:] = 1.0
+    mapped.flush()
+
+    reopened = reuse_p4_feature_memmap(source, 4, 3)
+    assert isinstance(reopened, np.memmap)
+    np.testing.assert_array_equal(reopened, np.ones((4, 3), dtype=np.float32))
