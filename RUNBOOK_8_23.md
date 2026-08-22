@@ -61,6 +61,34 @@ git diff --stat docs/ examples/ timeseries_api/     # 必须为空或已知变�
 
 ⚠️ `retrain_extended.py` 会自己复核这一条，audit 不达标它直接拒绝运行（已验证）。
 
+### D0.2b ⭐ 回补包里有没有 `responder_*` 列（2026-08-22 新增，约 1 秒）
+
+```bash
+.venv/bin/python scripts/check_backfill_responders.py \
+    --audit  outputs/data_audits/data_release_20260823.json \
+    --output outputs/data_audits/backfill_responders_20260823.json
+```
+
+**为什么必须当天核**：`docs/data_description.md:173` 只说「发布**标签回补数据**，该部分数据将
+作为**扩展训练数据**使用」，Timeline（`competition_description.md:213`）也只写「发布扩展训练
+数据」—— **原文从未逐字列出回补包的字段清单**。窄读（标签 = `target`+`weight`）与宽读
+（扩展训练数据 = 含 responder）都成立，**只能实测**。
+
+而 2026-08-22 收口的 responder 四项 `REJECTED` **共用同一条重开条件**，答案直接决定
+8/23–8/31 要不要重开一条已经关掉的线：
+
+| 判定 | 含义 | 动作 |
+|---|---|---|
+| `train_unchanged` | train split 没变 | responder 轴维持关闭（D0.2 主判据也会拦下重训）|
+| `backfill_has_responders` | 回补文件**全部**带 responder | ⭐ **触发重开** ⟹ 走 D3.5 |
+| `backfill_has_no_responders` | 回补文件**全都不**带 | responder 轴维持关闭，8/31 前不再碰 |
+| `backfill_schema_inconsistent` | 部分带部分不带 | ⚠️ **退出码 1，停下来查原因**，不要按任一分支走 |
+
+⚠️ 本脚本**不重新扫 parquet**，只读 D0.2 已落盘的审计 JSON（`audit_data_release.py:92`
+逐文件存了 `columns`，且 `columns` 本身就在 `file_identity` 的比较键里 `:133`）⟹
+它与 D0.2 是同一份真值，不会出现两处口径分家。
+四支判定都有回归用例（`tests/test_check_backfill_responders.py`）。
+
 ### D0.3 ⭐ 修尺子：离线复算每一份历史公榜提交
 
 ```bash
@@ -215,6 +243,36 @@ resource smoke 可以在约 11.5GB RSS 完成，但它使用全局生产 stats/f
 唯一保留「扩展数据复验资格」的 V4 结构项（08-12：+1.34%、4/5 折，机制干净但未过 +3%）。
 **原规格复验，不重开 T1/T2/T3 和 MLP 搜索**（那些已全否）。
 
+## D3.5：responder 原规格复验 —— **只在 D0.2b 判 `backfill_has_responders` 时才做**
+
+⚠️⚠️ **默认不做。** responder 这条线于 2026-08-22 走完并**由证据关闭**：Stage C 补测覆盖了
+全部 24 族 / 47 列（28 格无一过门禁）、选列判据在前置测量处结案、P9 范围项 ③ 也已否掉。
+只有回补包**确实带来新的 responder 列**才回到这一步。
+
+**纪律（比做不做更重要）**：
+
+- **按原规格复验，不得借机改设计** —— 沿用各自的预注册文件，不换臂、不调阈值、不加梯子成员：
+
+  ```bash
+  .venv/bin/python experiments/responder_stage_c_fill.py --label responder_stage_c_fill_0823
+  .venv/bin/python experiments/responder_selection_probe.py --label responder_selection_probe_0823
+  ```
+
+- **顺序在 D3 之后、D4 之前。** 两个脚本对训练窗的依赖不同，别一刀切：
+  - `responder_stage_c_fill` 读的是**固定缓存**（`responder_oof_*.npz` + v3 基准 OOF cache），
+    重训与训练窗都影响不到它 ⟹ 什么时候跑都一样；
+  - `responder_selection_probe` 是在 fold 上**现算**选列的（`TRAIN_WINDOW = 78_960`）⟹
+    若 ROADMAP P2-R 的 recency 阶梯改了生产训练窗，**必须先定下窗口再跑它**，
+    否则量出来的重合度不是新生产结构上的重合度。
+    ⚠️ P2-R 只在 ROADMAP 里，**本文件没有把它排成 D 步骤**。
+- **过门槛也只能进 P10 Tier 2**，由密封期尺子裁决；**不建候选模型、不碰生产、不花提交额度**。
+- ⚠️ 时间不够就**直接跳过这一步** —— 它的期望值是「关严」不是「涨分」，
+  而 8/31 的交付件不依赖它。
+
+**证据入口**：`outputs/experiments/responder_stage_c_fill.md`、
+`responder_selection_probe.md`、`nn_capacity_ladder_respsel.md`、
+`responder_reaudit_20260814.md`（母条件原文在 :93-100）。
+
 ## D4：转正门禁全链
 
 ```bash
@@ -309,6 +367,8 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 | 情形 | 动作 |
 |---|---|
 | D0.2 显示 train 未变 | 停止重训，只做 D0.3；生产维持不变 |
+| D0.2b 判 `backfill_schema_inconsistent` | **退出码 1，停下来查原因**（部分回补文件带 responder、部分不带 ⟹ 要么理解错了包结构、要么包本身有问题）。**不要按任一分支走**，也不要跳过 —— 它同时说明 D0.2 的 schema 比较可能也在读一个不一致的东西 |
+| D0.2b 判 `backfill_has_responders` | 记进 ledger，**排在 D3 之后**做 D3.5 原规格复验；时间不够就跳过（期望值是关严不是涨分）|
 | D0.3 复算对不上公布分数 | **先修复算器**，不解释现象；修不好就不用本地尺子做任何采纳决策 |
 | D1 重训候选被 slow/fast 门禁拦下 | 按 D1 坑 1 的 (a) 或 (b) 处理，写进 ledger；不用 `--off-baseline` 绕 |
 | D4 耗时或双后端对拍不过 | 回滚到 `v3_hybrid_slowfast`，`outputs/promotions/backups/` 有备份 |
