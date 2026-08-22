@@ -813,6 +813,54 @@ def load_p4_metadata(
     return arrays
 
 
+def stream_p4_fold_history_blocks(
+    data_root: Path,
+    sample_modulo: int,
+    sampling: str,
+    history_names: list[str],
+    history_stats: tuple[np.ndarray, ...],
+    window: int,
+    train_slice: slice,
+    valid_slice: slice,
+    total_rows: int,
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    """Stream causal history once and retain only the current fold's rows."""
+    import pyarrow.parquet as pq
+    from src.io import time_sample_mask, train_files
+    from strategies.v3_hybrid.history import AssetHistory
+    from strategies.v3_hybrid.features import apply_robust_transform
+
+    train_len = int(train_slice.stop - train_slice.start)
+    valid_len = int(valid_slice.stop - valid_slice.start)
+    train_blocks = [np.empty((train_len, len(history_names)), dtype=np.float32) for _ in range(4)]
+    valid_blocks = [np.empty((valid_len, len(history_names)), dtype=np.float32) for _ in range(4)]
+    lower, upper, center, scale = history_stats
+    history = AssetHistory(feature_count=len(history_names), window_size=window)
+    kept = 0
+    columns = ["time_id", "asset_id", *history_names]
+    for path in train_files(data_root):
+        for batch in pq.ParquetFile(path).iter_batches(batch_size=120_000, columns=columns):
+            frame = batch.to_pandas()
+            tid = frame["time_id"].to_numpy(dtype=np.int64, copy=False)
+            aid = frame["asset_id"].to_numpy(dtype=np.int64, copy=False)
+            current = frame.loc[:, history_names].to_numpy(dtype=np.float32, copy=True)
+            apply_robust_transform(current, lower, upper, center, scale)
+            blocks = history.transform(current, aid)
+            mask = time_sample_mask(tid, sample_modulo, sampling=sampling)
+            sampled_rows = np.flatnonzero(mask)
+            global_rows = kept + sampled_rows
+            for target_slice, outputs in ((train_slice, train_blocks), (valid_slice, valid_blocks)):
+                selected = (global_rows >= target_slice.start) & (global_rows < target_slice.stop)
+                if not np.any(selected):
+                    continue
+                source_rows = sampled_rows[selected]
+                target_rows = global_rows[selected] - target_slice.start
+                for output, block in zip(outputs, blocks, strict=True):
+                    output[target_rows] = block[source_rows]
+            kept += len(sampled_rows)
+    if kept != total_rows:
+        raise RuntimeError(f"P4 history stream wrote {kept} rows; expected {total_rows}")
+    return train_blocks, valid_blocks
 def spill_p4_features(
     data: dict[str, np.ndarray], path: str | Path,
 ) -> np.memmap:
@@ -951,15 +999,10 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
                 names = [FEATURE_COLUMNS[index] for index in selection["history"]]
                 history_stats = tuple(stats[name][selection["history"]]
                                       for name in ("lower", "upper", "center", "scale"))
-                all_blocks = stream_history_blocks(
+                history_cache[key] = stream_p4_fold_history_blocks(
                     data_root, args.sample_modulo, args.sampling, names,
-                    history_stats, args.history_window,
+                    history_stats, args.history_window, tr, va, len(target),
                 )
-                history_cache[key] = (
-                    [np.asarray(block[tr]) for block in all_blocks],
-                    [np.asarray(block[va]) for block in all_blocks],
-                )
-                del all_blocks
             return history_cache[key]
 
         component_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
