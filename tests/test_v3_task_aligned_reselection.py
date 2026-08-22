@@ -22,6 +22,7 @@ from experiments.v3_task_aligned_reselection import parse_p4_args
 from experiments.v3_task_aligned_reselection import runner_import_paths
 from experiments.v3_task_aligned_reselection import spill_p4_features
 from experiments.v3_task_aligned_reselection import reuse_p4_feature_memmap
+from experiments.v3_task_aligned_reselection import _validate_panel
 from experiments.v3_task_aligned_reselection import allocate_p4_arrays
 
 
@@ -323,3 +324,11 @@ def test_reuse_p4_feature_memmap_accepts_complete_existing_file(tmp_path):
     reopened = reuse_p4_feature_memmap(source, 4, 3)
     assert isinstance(reopened, np.memmap)
     np.testing.assert_array_equal(reopened, np.ones((4, 3), dtype=np.float32))
+
+
+def test_validate_panel_preserves_float32_feature_storage():
+    features = np.ones((6, 3), dtype=np.float32)
+    values, _, _ = _validate_panel(features, np.ones(6), np.arange(6), 2)
+
+    assert values.dtype == np.float32
+    assert np.shares_memory(values, features)

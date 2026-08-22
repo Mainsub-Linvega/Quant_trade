@@ -111,7 +111,7 @@ def _rank_baseline_features(
     count: int,
     weights: np.ndarray | None = None,
 ) -> np.ndarray:
-    values = np.asarray(features, dtype=np.float64)
+    values = np.asarray(features)
     labels = np.asarray(target, dtype=np.float64)
     if values.ndim != 2 or labels.shape != (len(values),):
         raise ValueError("baseline ranking inputs must be aligned")
@@ -126,18 +126,22 @@ def _rank_baseline_features(
     total = float(np.sum(mass))
     if total <= 0.0:
         raise ValueError("weights must contain positive mass")
-    mean_x = np.sum(values * mass[:, None], axis=0) / total
-    mean_y = float(np.sum(labels * mass) / total)
-    centered_x = values - mean_x
-    centered_y = labels - mean_y
+    target_sum = float(np.sum(labels * mass))
+    mean_y = target_sum / total
+    target_variance = float(np.sum(np.square(labels - mean_y) * mass))
+    feature_sum = np.zeros(values.shape[1], dtype=np.float64)
+    square_sum = np.zeros(values.shape[1], dtype=np.float64)
+    cross_sum = np.zeros(values.shape[1], dtype=np.float64)
+    for start in range(0, values.shape[1], 64):
+        stop = min(start + 64, values.shape[1])
+        block = np.asarray(values[:, start:stop], dtype=np.float64)
+        feature_sum[start:stop] = np.sum(block * mass[:, None], axis=0)
+        square_sum[start:stop] = np.sum(np.square(block) * mass[:, None], axis=0)
+        cross_sum[start:stop] = np.sum(block * ((labels - mean_y) * mass)[:, None], axis=0)
+    covariance = cross_sum - feature_sum * target_sum / total
+    variance = square_sum - np.square(feature_sum) / total
     with np.errstate(divide="ignore", invalid="ignore"):
-        correlations = np.abs(
-            np.sum(centered_x * (centered_y * mass)[:, None], axis=0)
-            / np.sqrt(
-                np.sum(np.square(centered_x) * mass[:, None], axis=0)
-                * np.sum(np.square(centered_y) * mass)
-            )
-        )
+        correlations = np.abs(covariance / np.sqrt(variance * target_variance))
     correlations = np.nan_to_num(correlations, nan=0.0, posinf=0.0, neginf=0.0)
     indices = np.arange(values.shape[1], dtype=np.int64)
     return indices[np.lexsort((indices, -correlations))[:count]]
@@ -181,10 +185,7 @@ def derive_p4_selections(
         "xs_time_stable": {"xs": select_xs_time_stable(
             values, cross, ids, count=int(counts["xs"]),
         )},
-        "history_lag_aligned": {"history": select_history_lag_aligned(
-            values[:, np.sort(xs)], cross, ids, assets, np.sort(xs),
-            count=int(counts["history"]), window=P4_COMMON_PROTOCOL["history_window"],
-        )["selected_indices"]},
+        "history_lag_aligned": {"history": history.copy()},
     }
     arms = {
         arm: resolve_p4_arm(arm, baseline, candidates, counts)
@@ -199,7 +200,7 @@ def _validate_panel(
     time_ids: np.ndarray,
     count: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    values = np.asarray(features, dtype=np.float64)
+    values = np.asarray(features)
     labels = np.asarray(target, dtype=np.float64)
     ids = np.asarray(time_ids, dtype=np.int64)
     if values.ndim != 2 or len(values) == 0:
@@ -222,20 +223,22 @@ def _group_layout(time_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _correlation_columns(features: np.ndarray, target: np.ndarray) -> np.ndarray:
-    x = np.asarray(features, dtype=np.float64)
+    x = np.asarray(features)
     y = np.asarray(target, dtype=np.float64)
-    x_centered = x - x.mean(axis=0, keepdims=True)
+    mean_x = np.mean(x, axis=0, dtype=np.float64)
     y_centered = y - y.mean()
-    numerator = x_centered.T @ y_centered
-    denominator = np.sqrt(
-        np.sum(np.square(x_centered), axis=0) * float(y_centered @ y_centered)
-    )
-    return np.divide(
-        numerator,
-        denominator,
-        out=np.zeros(x.shape[1], dtype=np.float64),
-        where=denominator > 0.0,
-    )
+    y_energy = float(y_centered @ y_centered)
+    numerator = np.zeros(x.shape[1], dtype=np.float64)
+    x_energy = np.zeros(x.shape[1], dtype=np.float64)
+    for start in range(0, x.shape[1], 64):
+        stop = min(start + 64, x.shape[1])
+        block = np.asarray(x[:, start:stop], dtype=np.float64)
+        block -= mean_x[start:stop]
+        numerator[start:stop] = block.T @ y_centered
+        x_energy[start:stop] = np.sum(np.square(block), axis=0)
+    denominator = np.sqrt(x_energy * y_energy)
+    return np.divide(numerator, denominator, out=np.zeros(x.shape[1], dtype=np.float64),
+                     where=denominator > 0.0)
 
 
 def select_market_task_aligned(
@@ -281,7 +284,7 @@ def select_xs_time_stable(
 
 
 def _cross_sectional_center(values: np.ndarray, time_ids: np.ndarray) -> np.ndarray:
-    centered = np.asarray(values, dtype=np.float64).copy()
+    centered = np.asarray(values, dtype=np.float32).copy()
     starts, counts = _group_layout(time_ids)
     means = np.add.reduceat(centered, starts, axis=0) / counts[:, None]
     centered -= np.repeat(means, counts, axis=0)
@@ -299,7 +302,7 @@ def select_history_lag_aligned(
     n_blocks: int = 4,
 ) -> dict[str, object]:
     """Rank baseline XS bases by stable causal history association."""
-    values = np.asarray(transformed_xs, dtype=np.float64)
+    values = np.asarray(transformed_xs)
     labels = np.asarray(cross_target, dtype=np.float64)
     ids = np.asarray(time_ids, dtype=np.int64)
     if asset_ids is None:
@@ -324,7 +327,7 @@ def select_history_lag_aligned(
         raise ValueError("history count and window must be valid")
 
     history = AssetHistory(feature_count=values.shape[1], window_size=window)
-    history_blocks = history.transform(values.astype(np.float32), assets)
+    history_blocks = history.transform(values.astype(np.float32, copy=False), assets)
     family_names = (
         "previous", "difference", "rolling_mean", "rolling_deviation",
     )
@@ -881,8 +884,8 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
         fold_started = time.perf_counter()
         tr = row_slice(time_ids, train_ids)
         va = row_slice(time_ids, valid_ids)
-        raw_train = np.asarray(features[tr])
-        transformed_train, stats = robust_transform_fit(raw_train.copy())
+        transformed_train = np.asarray(features[tr])
+        transformed_train, stats = robust_transform_fit(transformed_train)
         transformed_valid = np.asarray(features[va]).copy()
         from features import apply_robust_transform
         apply_robust_transform(
