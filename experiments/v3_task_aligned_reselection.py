@@ -884,7 +884,7 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
         fold_started = time.perf_counter()
         tr = row_slice(time_ids, train_ids)
         va = row_slice(time_ids, valid_ids)
-        transformed_train = np.asarray(features[tr])
+        transformed_train = np.array(features[tr], dtype=np.float32, copy=True)
         transformed_train, stats = robust_transform_fit(transformed_train)
         transformed_valid = np.asarray(features[va]).copy()
         from features import apply_robust_transform
