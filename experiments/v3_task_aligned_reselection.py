@@ -333,21 +333,46 @@ def select_history_lag_aligned(
     if count <= 0 or count > len(candidates) or window <= 0:
         raise ValueError("history count and window must be valid")
 
-    history = AssetHistory(feature_count=values.shape[1], window_size=window)
-    history_blocks = history.transform(values.astype(np.float32, copy=False), assets)
     family_names = (
         "previous", "difference", "rolling_mean", "rolling_deviation",
     )
     row_blocks = contiguous_time_blocks(ids, n_blocks)
-    correlations = np.zeros(
-        (n_blocks, len(family_names), values.shape[1]), dtype=np.float64
-    )
-    for family_index, family_values in enumerate(history_blocks):
-        centered = _cross_sectional_center(family_values, ids)
-        for block_index, rows in enumerate(row_blocks):
-            correlations[block_index, family_index] = _correlation_columns(
-                centered[rows], labels[rows]
-            )
+    feature_count = values.shape[1]
+    block_stops = np.asarray([int(rows[-1]) + 1 for rows in row_blocks], dtype=np.int64)
+    sum_x = np.zeros((n_blocks, len(family_names), feature_count), dtype=np.float64)
+    sum_x2 = np.zeros_like(sum_x)
+    sum_xy = np.zeros_like(sum_x)
+    sum_y = np.zeros(n_blocks, dtype=np.float64)
+    sum_y2 = np.zeros(n_blocks, dtype=np.float64)
+    row_count = np.zeros(n_blocks, dtype=np.float64)
+    history = AssetHistory(feature_count=feature_count, window_size=window)
+    starts, counts = _group_layout(ids)
+    for start, group_count in zip(starts, counts, strict=True):
+        stop = int(start + group_count)
+        block_index = min(int(np.searchsorted(block_stops, start, side="right")), n_blocks - 1)
+        families = history.transform_online(
+            values[start:stop].astype(np.float32, copy=False), assets[start:stop],
+        )
+        y_group = labels[start:stop]
+        sum_y[block_index] += float(np.sum(y_group))
+        sum_y2[block_index] += float(np.sum(np.square(y_group)))
+        row_count[block_index] += len(y_group)
+        for family_index, family_values in enumerate(families):
+            centered = np.asarray(family_values, dtype=np.float64)
+            centered -= centered.mean(axis=0, keepdims=True)
+            sum_x[block_index, family_index] += np.sum(centered, axis=0)
+            sum_x2[block_index, family_index] += np.sum(np.square(centered), axis=0)
+            sum_xy[block_index, family_index] += centered.T @ y_group
+    mean_y = sum_y / row_count
+    covariance = sum_xy - sum_x * mean_y[:, None, None]
+    variance_x = sum_x2 - np.square(sum_x) / row_count[:, None, None]
+    variance_y = sum_y2 - np.square(sum_y) / row_count
+    with np.errstate(divide="ignore", invalid="ignore"):
+        correlations = np.divide(
+            covariance, np.sqrt(variance_x * variance_y[:, None, None]),
+            out=np.zeros_like(covariance),
+            where=(variance_x > 0.0) & (variance_y[:, None, None] > 0.0),
+        )
 
     median_abs = np.median(np.abs(correlations), axis=0)
     positive = np.mean(correlations > 0.0, axis=0)
@@ -893,12 +918,6 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
         va = row_slice(time_ids, valid_ids)
         transformed_train = np.array(features[tr], dtype=np.float32, copy=True)
         transformed_train, stats = robust_transform_fit(transformed_train)
-        transformed_valid = np.asarray(features[va]).copy()
-        from features import apply_robust_transform
-        apply_robust_transform(
-            transformed_valid, stats["lower"], stats["upper"],
-            stats["center"], stats["scale"],
-        )
         y_tr, y_va = target[tr], target[va]
         w_tr, w_va = weight[tr], weight[va]
         tid_tr, tid_va = time_ids[tr], time_ids[va]
@@ -907,6 +926,12 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
         selections = derive_p4_selections(
             transformed_train, y_tr, cross_target, tid_tr, aid_tr,
             weights=w_tr, counts=P4_COUNTS,
+        )
+        transformed_valid = np.asarray(features[va]).copy()
+        from features import apply_robust_transform
+        apply_robust_transform(
+            transformed_valid, stats["lower"], stats["upper"],
+            stats["center"], stats["scale"],
         )
         baseline = selections["baseline"]
         history_cache: dict[tuple[int, ...], tuple[list[np.ndarray], list[np.ndarray]]] = {}
