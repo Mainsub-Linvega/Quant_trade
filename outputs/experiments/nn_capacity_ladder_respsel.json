@@ -1,0 +1,210 @@
+{
+  "experiment": "nn_capacity_ladder_respsel",
+  "label_prefix": "multitask_mlp_respsel_e",
+  "plan_path": "/home/mainsub/Documents/Quant_trade/outputs/experiments/nn_capacity_ladder_plan.json",
+  "plan_sha256": "cfdd43bc5c8a2bf946d033851dc998804f225cb676101313be082d937eafd074",
+  "baseline_peak": 0.001055954978483406,
+  "rungs": [
+    {
+      "path": "/home/mainsub/Documents/Quant_trade/outputs/experiments/multitask_mlp_respsel_e12.json",
+      "max_iter": 12,
+      "configuration": {
+        "data_root": "/home/mainsub/Documents/Quant_trade/data",
+        "output_dir": "/home/mainsub/Documents/Quant_trade/outputs/experiments",
+        "label": "multitask_mlp_respsel_e12",
+        "baseline_cache": "/home/mainsub/Documents/Quant_trade/outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+        "candidate_meta": "/home/mainsub/Documents/Quant_trade/strategies/v3_hybrid/model/hybrid_meta.json",
+        "n_folds": 5,
+        "folds": [
+          0
+        ],
+        "train_window": 78960,
+        "embargo": 6,
+        "sample_modulo": 5,
+        "sampling": "phase_balanced",
+        "current_feature_count": 200,
+        "cross_selection_override": "/tmp/claude-1000/-home-mainsub-Documents-Quant-trade/c9dca47a-2c9c-4edd-97e0-587dceacc543/scratchpad/cross_selection_respsel.json",
+        "blend_mode": "oracle",
+        "market_hidden": [
+          32
+        ],
+        "cross_hidden": [
+          64,
+          32
+        ],
+        "max_iter": 12,
+        "batch_size": 4096,
+        "learning_rate": 0.001,
+        "alpha": 0.001,
+        "seed": 2026,
+        "force": true
+      },
+      "baseline_peak": 0.001055954978483406,
+      "arms": {
+        "target_only": 0.17476462764684791,
+        "multitask": 0.2164162215269357
+      },
+      "best_arm": "multitask",
+      "best_relative": 0.2164162215269357,
+      "elapsed_seconds": 115.9515710850028
+    },
+    {
+      "path": "/home/mainsub/Documents/Quant_trade/outputs/experiments/multitask_mlp_respsel_e50.json",
+      "max_iter": 50,
+      "configuration": {
+        "data_root": "/home/mainsub/Documents/Quant_trade/data",
+        "output_dir": "/home/mainsub/Documents/Quant_trade/outputs/experiments",
+        "label": "multitask_mlp_respsel_e50",
+        "baseline_cache": "/home/mainsub/Documents/Quant_trade/outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+        "candidate_meta": "/home/mainsub/Documents/Quant_trade/strategies/v3_hybrid/model/hybrid_meta.json",
+        "n_folds": 5,
+        "folds": [
+          0
+        ],
+        "train_window": 78960,
+        "embargo": 6,
+        "sample_modulo": 5,
+        "sampling": "phase_balanced",
+        "current_feature_count": 200,
+        "cross_selection_override": "/tmp/claude-1000/-home-mainsub-Documents-Quant-trade/c9dca47a-2c9c-4edd-97e0-587dceacc543/scratchpad/cross_selection_respsel.json",
+        "blend_mode": "oracle",
+        "market_hidden": [
+          32
+        ],
+        "cross_hidden": [
+          64,
+          32
+        ],
+        "max_iter": 50,
+        "batch_size": 4096,
+        "learning_rate": 0.001,
+        "alpha": 0.001,
+        "seed": 2026,
+        "force": true
+      },
+      "baseline_peak": 0.001055954978483406,
+      "arms": {
+        "target_only": 0.24893625919349002,
+        "multitask": 0.27442241920603866
+      },
+      "best_arm": "multitask",
+      "best_relative": 0.27442241920603866,
+      "elapsed_seconds": 240.83779715700075
+    },
+    {
+      "path": "/home/mainsub/Documents/Quant_trade/outputs/experiments/multitask_mlp_respsel_e150.json",
+      "max_iter": 150,
+      "configuration": {
+        "data_root": "/home/mainsub/Documents/Quant_trade/data",
+        "output_dir": "/home/mainsub/Documents/Quant_trade/outputs/experiments",
+        "label": "multitask_mlp_respsel_e150",
+        "baseline_cache": "/home/mainsub/Documents/Quant_trade/outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+        "candidate_meta": "/home/mainsub/Documents/Quant_trade/strategies/v3_hybrid/model/hybrid_meta.json",
+        "n_folds": 5,
+        "folds": [
+          0
+        ],
+        "train_window": 78960,
+        "embargo": 6,
+        "sample_modulo": 5,
+        "sampling": "phase_balanced",
+        "current_feature_count": 200,
+        "cross_selection_override": "/tmp/claude-1000/-home-mainsub-Documents-Quant-trade/c9dca47a-2c9c-4edd-97e0-587dceacc543/scratchpad/cross_selection_respsel.json",
+        "blend_mode": "oracle",
+        "market_hidden": [
+          32
+        ],
+        "cross_hidden": [
+          64,
+          32
+        ],
+        "max_iter": 150,
+        "batch_size": 4096,
+        "learning_rate": 0.001,
+        "alpha": 0.001,
+        "seed": 2026,
+        "force": true
+      },
+      "baseline_peak": 0.001055954978483406,
+      "arms": {
+        "target_only": 0.04437458905944708,
+        "multitask": 0.06922987068077531
+      },
+      "best_arm": "multitask",
+      "best_relative": 0.06922987068077531,
+      "elapsed_seconds": 630.8292233760003
+    },
+    {
+      "path": "/home/mainsub/Documents/Quant_trade/outputs/experiments/multitask_mlp_respsel_e400.json",
+      "max_iter": 400,
+      "configuration": {
+        "data_root": "/home/mainsub/Documents/Quant_trade/data",
+        "output_dir": "/home/mainsub/Documents/Quant_trade/outputs/experiments",
+        "label": "multitask_mlp_respsel_e400",
+        "baseline_cache": "/home/mainsub/Documents/Quant_trade/outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+        "candidate_meta": "/home/mainsub/Documents/Quant_trade/strategies/v3_hybrid/model/hybrid_meta.json",
+        "n_folds": 5,
+        "folds": [
+          0
+        ],
+        "train_window": 78960,
+        "embargo": 6,
+        "sample_modulo": 5,
+        "sampling": "phase_balanced",
+        "current_feature_count": 200,
+        "cross_selection_override": "/tmp/claude-1000/-home-mainsub-Documents-Quant-trade/c9dca47a-2c9c-4edd-97e0-587dceacc543/scratchpad/cross_selection_respsel.json",
+        "blend_mode": "oracle",
+        "market_hidden": [
+          32
+        ],
+        "cross_hidden": [
+          64,
+          32
+        ],
+        "max_iter": 400,
+        "batch_size": 4096,
+        "learning_rate": 0.001,
+        "alpha": 0.001,
+        "seed": 2026,
+        "force": true
+      },
+      "baseline_peak": 0.001055954978483406,
+      "arms": {
+        "target_only": 0.008574017419560397,
+        "multitask": 0.014611975815487014
+      },
+      "best_arm": "multitask",
+      "best_relative": 0.014611975815487014,
+      "elapsed_seconds": 1578.579042841
+    }
+  ],
+  "reproduction_check": {
+    "checked": true,
+    "max_abs_drift": 0.0,
+    "drift": {
+      "target_only": 0.0,
+      "multitask": 0.0
+    },
+    "expected": {
+      "target_only": 0.17428700119543933,
+      "multitask": 0.20283264080006497
+    },
+    "anchor_from": "/home/mainsub/Documents/Quant_trade/outputs/experiments/mtmlp_anchorcheck_e12.json",
+    "note": "本阶梯的 12 档按设计不复现锚点（特征集变了）；环境自检由同一次会话的基准臂完成"
+  },
+  "verdict": {
+    "gate_fraction": 0.5,
+    "best_relative": 0.27442241920603866,
+    "best_at_max_iter": 50,
+    "best_arm": "multitask",
+    "final_relative": 0.014611975815487014,
+    "climb_rate_last_step": -0.7889353876903216,
+    "still_climbing": false,
+    "turned_over": true,
+    "passes_gate": false,
+    "verdict": "REJECTED",
+    "action": "曲线在 <50% 处掉头 ⟹ **sklearn MLPRegressor + 生产特征表示 + 这套预算**下不具竞争力。⚠️ 这**不是**「NN 不行」—— 见适用范围三条。",
+    "extension_due": false,
+    "extension_rung": null
+  }
+}

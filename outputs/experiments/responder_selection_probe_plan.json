@@ -1,0 +1,96 @@
+{
+  "experiment": "responder_selection_probe_plan",
+  "role": "PRE-REGISTRATION —— 必须先于结果落盘（CLAUDE.md §5.1）",
+  "question": "用 responder 的窗口梯子把选列判据的估计方差压下去，选出来的 200 列会不会与现状不同？不同到能被本地尺子测出来吗？",
+  "why_not_covered_by_selection_criterion_probe": "那次三个臂换的是**被估计的量**（LASSO 多元系数、lag1、rollmean5）；本判据换的是**估计的方差** —— 同一个量、多次测量取平均。机制不同。",
+  "why_this_mechanism_is_allowed": "responder_reaudit_20260814.md:93-100 的母条件排除的是「换目标 / 线性叠加 / 对预测值做二层校准」。用 responder 给 feature 打分三者都不是，属该条点名认可的 representation 一类；且推理端完全不需要 responder。同时命中 ROADMAP.md:456 给 v5 划的第 ③ 条范围项。",
+  "ladder": {
+    "family": "a",
+    "family_members": [
+      "responder_00",
+      "responder_01",
+      "responder_02",
+      "responder_03",
+      "responder_04",
+      "responder_05",
+      "responder_06"
+    ],
+    "admission": "responder_window_atlas.H_fit_is_equal_weight_MA",
+    "atlas_criterion": "整条自相关曲线拟合出 H_j < 5 且 RMSE ≤ 0.06（确认是等权 MA），且与 target 的错位相关支撑宽度 ≈ 5 + H_j − 1（±2）",
+    "members": [
+      {
+        "responder": "responder_00",
+        "fitted_H": 1,
+        "fit_rmse": 0.02413967018396557,
+        "is_equal_weight_MA": true
+      },
+      {
+        "responder": "responder_02",
+        "fitted_H": 2,
+        "fit_rmse": 0.025061847850260544,
+        "is_equal_weight_MA": true
+      },
+      {
+        "responder": "responder_03",
+        "fitted_H": 4,
+        "fit_rmse": 0.04505474937714487,
+        "is_equal_weight_MA": true
+      },
+      {
+        "responder": "responder_04",
+        "fitted_H": 7,
+        "fit_rmse": 0.0457490959360332,
+        "is_equal_weight_MA": true
+      },
+      {
+        "responder": "responder_05",
+        "fitted_H": 10,
+        "fit_rmse": 0.053625846698678356,
+        "is_equal_weight_MA": true
+      }
+    ],
+    "rejected": [
+      {
+        "responder": "responder_01",
+        "fitted_H": 1,
+        "fit_rmse": 0.0601347301809276,
+        "is_equal_weight_MA": false
+      },
+      {
+        "responder": "responder_06",
+        "fitted_H": 12,
+        "fit_rmse": 0.19231075606999348,
+        "is_equal_weight_MA": false
+      }
+    ]
+  },
+  "ladder_admission": "α 族（`unit_interval`）成员中 `responder_window_atlas` 自己判定 `H_fit_is_equal_weight_MA == True` 的；**不看与 target 的相关** —— responder_targets_stage1 已证伪该论证形式",
+  "criterion": "score_j = mean_k corr(feature_j, e_k)，e_k = 第 k 级标签的逐 time_id 无权截面残差",
+  "baseline_criterion": "|corr(feature_j, e_target)| —— 现状，strategies/v1_ridge/train.py:86-108",
+  "feature_count": 200,
+  "history_count": 40,
+  "folds": {
+    "n_folds": 5,
+    "train_window": 78960,
+    "embargo": 6,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced"
+  },
+  "decision_rule": {
+    "line": 190,
+    "at_or_above": "重合 ≥ 190/200 ⟹ 改动幅度低于 1s160 的 6.1% 检出下限，判「与 base 不可区分」，**不跑 OOF**，结案",
+    "below": "重合 < 190/200 ⟹ 落进 selection_criterion_probe 已量过的区间（lasso200 重合 68~119/200 → −1.29%，且分歧越大掉得越多是单调的）⟹ 先验是掉分；只有能写出一条不依赖「判据更好」的机制假设时才跑 1s160 五折",
+    "detection_floor": 0.061
+  },
+  "self_checks": [
+    "自算相关的 top-200 / top-40 必须与 select_features 逐位相同（逐折断言）",
+    "S_base 与 S_new 用同一批 complete-case 行 ⟹ 唯一差别是标签",
+    "另报全行 S_base 与 complete-case S_base 的重合，证明限制行集本身没挪动选列"
+  ],
+  "limits": [
+    "v3_production_oof.py 不支持长窗（截面设计 361 列，生产是 441 列）⟹ 结论不能直接外推到生产结构",
+    "v3_production_oof.py:390-402 假设 xs/market 两个宽度是同一判据的嵌套 top-N；换判据若破坏嵌套会 AssertionError",
+    "选列是模型身份的一部分（train.py:469-478 的 reuse_forest 硬校验）⟹ 换选列则两片森林都得重训；PUBLIC_BASELINE 里目前没有选列身份",
+    "本脚本只做前置测量，不训练、不产生任何可晋级的候选"
+  ]
+}

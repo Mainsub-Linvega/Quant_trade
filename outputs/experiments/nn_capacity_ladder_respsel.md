@@ -1,0 +1,35 @@
+# NN 独立能力阶梯（`nn_capacity_ladder`）
+
+预注册：`/home/mainsub/Documents/Quant_trade/outputs/experiments/nn_capacity_ladder_plan.json`（sha256 `cfdd43bc5c8a2bf9…`） ⟹ 判据先于结果落盘，可核验。
+
+## 曲线：独立 MLP peak / 基准 peak
+
+| max_iter | target_only | multitask | 较好者 | 相对上一档 | 耗时 |
+|---:|---:|---:|---:|---:|---:|
+| 12 | 17.5% | 21.6% | **21.6%** | — | 1.9 min |
+| 50 | 24.9% | 27.4% | **27.4%** | +26.8% | 4.0 min |
+| 150 | 4.4% | 6.9% | **6.9%** | -74.8% | 10.5 min |
+| 400 | 0.9% | 1.5% | **1.5%** | -78.9% | 26.3 min |
+
+基准 peak（生产 3s480，fold 0）= 0.00105595
+
+⭐ **自检通过**：12 档与 08-19 的最大偏差 0.00e+00 < 容差 0.001 ⟹ 环境与数据一致，曲线可解读。
+
+## 判定
+
+```text
+最好一档        max_iter=50  （multitask）  27.4%
+门槛            50%
+末档相对前一档  -78.9%   （≥ +5% 视为仍在爬）
+```
+
+## **REJECTED**
+
+曲线在 <50% 处掉头 ⟹ **sklearn MLPRegressor + 生产特征表示 + 这套预算**下不具竞争力。⚠️ 这**不是**「NN 不行」—— 见适用范围三条。
+
+## ⚠️ 适用范围
+
+本阶梯测的是**一个特定 NN 配方**，不是「NN 这个模型族」。三处对 NN 不利且本轮未动：
+特征按 `|corr(feature, e)|` 选的 top-200（为线性/树挑的判据）、`asset_id` 是 15 维
+one-hot 而非 embedding、sklearn `MLPRegressor` 无学习率调度 / 无 LayerNorm / 无 dropout。
+⟹ 上面三条正是 v5（8/31 之后）要处理的东西；本阶梯为它定范围，不替它下结论。

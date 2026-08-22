@@ -1,0 +1,690 @@
+{
+  "experiment": "responder_family_grid",
+  "source": "/home/mainsub/Documents/Quant_trade/data/train/train_partition_000.parquet",
+  "n_responders": 47,
+  "target_range": [
+    -2.2348527908325195,
+    2.2334694862365723
+  ],
+  "unit_interval_tol": 0.001,
+  "columns": [
+    {
+      "responder": "responder_00",
+      "index": 0,
+      "null_count": 279,
+      "min": 0.00030537531711161137,
+      "max": 0.9999722838401794,
+      "sign_class": "unit_interval"
+    },
+    {
+      "responder": "responder_01",
+      "index": 1,
+      "null_count": 9,
+      "min": -0.0,
+      "max": 1.0,
+      "sign_class": "unit_interval"
+    },
+    {
+      "responder": "responder_02",
+      "index": 2,
+      "null_count": 1,
+      "min": -0.0,
+      "max": 1.0,
+      "sign_class": "unit_interval"
+    },
+    {
+      "responder": "responder_03",
+      "index": 3,
+      "null_count": 0,
+      "min": -0.0,
+      "max": 1.0,
+      "sign_class": "unit_interval"
+    },
+    {
+      "responder": "responder_04",
+      "index": 4,
+      "null_count": 422,
+      "min": -0.0,
+      "max": 1.0,
+      "sign_class": "unit_interval"
+    },
+    {
+      "responder": "responder_05",
+      "index": 5,
+      "null_count": 934,
+      "min": -0.0,
+      "max": 1.0,
+      "sign_class": "unit_interval"
+    },
+    {
+      "responder": "responder_06",
+      "index": 6,
+      "null_count": 2397,
+      "min": -0.0,
+      "max": 1.0,
+      "sign_class": "unit_interval"
+    },
+    {
+      "responder": "responder_07",
+      "index": 7,
+      "null_count": 0,
+      "min": -0.07584527134895325,
+      "max": 0.0,
+      "sign_class": "nonpositive"
+    },
+    {
+      "responder": "responder_08",
+      "index": 8,
+      "null_count": 0,
+      "min": -0.1679680496454239,
+      "max": 0.0,
+      "sign_class": "nonpositive"
+    },
+    {
+      "responder": "responder_09",
+      "index": 9,
+      "null_count": 0,
+      "min": -0.1679680496454239,
+      "max": 0.0,
+      "sign_class": "nonpositive"
+    },
+    {
+      "responder": "responder_10",
+      "index": 10,
+      "null_count": 0,
+      "min": -0.19892878830432892,
+      "max": 0.0,
+      "sign_class": "nonpositive"
+    },
+    {
+      "responder": "responder_11",
+      "index": 11,
+      "null_count": 422,
+      "min": -0.20526845753192902,
+      "max": 0.0,
+      "sign_class": "nonpositive"
+    },
+    {
+      "responder": "responder_12",
+      "index": 12,
+      "null_count": 934,
+      "min": -0.21215273439884186,
+      "max": 0.0,
+      "sign_class": "nonpositive"
+    },
+    {
+      "responder": "responder_13",
+      "index": 13,
+      "null_count": 2397,
+      "min": -0.24494987726211548,
+      "max": 0.0,
+      "sign_class": "nonpositive"
+    },
+    {
+      "responder": "responder_14",
+      "index": 14,
+      "null_count": 0,
+      "min": -0.0,
+      "max": 0.09728103876113892,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_15",
+      "index": 15,
+      "null_count": 0,
+      "min": -0.0,
+      "max": 0.09728103876113892,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_16",
+      "index": 16,
+      "null_count": 0,
+      "min": -0.0,
+      "max": 0.09728103876113892,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_17",
+      "index": 17,
+      "null_count": 0,
+      "min": -0.0,
+      "max": 0.10177615284919739,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_18",
+      "index": 18,
+      "null_count": 422,
+      "min": -0.0,
+      "max": 0.11445349454879761,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_19",
+      "index": 19,
+      "null_count": 934,
+      "min": -0.0,
+      "max": 0.1256198287010193,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_20",
+      "index": 20,
+      "null_count": 2397,
+      "min": -0.0,
+      "max": 0.13400898873806,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_21",
+      "index": 21,
+      "null_count": 0,
+      "min": -0.0,
+      "max": 0.17171110212802887,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_22",
+      "index": 22,
+      "null_count": 0,
+      "min": -0.0,
+      "max": 0.26060765981674194,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_23",
+      "index": 23,
+      "null_count": 0,
+      "min": -0.0,
+      "max": 0.30405858159065247,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_24",
+      "index": 24,
+      "null_count": 0,
+      "min": 6.846557516837493e-05,
+      "max": 0.3978434205055237,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_25",
+      "index": 25,
+      "null_count": 422,
+      "min": 0.0005172080709598958,
+      "max": 0.5261090993881226,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_26",
+      "index": 26,
+      "null_count": 934,
+      "min": 0.0008792352746240795,
+      "max": 0.576650857925415,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_27",
+      "index": 27,
+      "null_count": 2397,
+      "min": 0.00240972894243896,
+      "max": 0.8709947466850281,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_28",
+      "index": 28,
+      "null_count": 526,
+      "min": -3.0631768703460693,
+      "max": 3.1233272552490234,
+      "sign_class": "bidirectional"
+    },
+    {
+      "responder": "responder_29",
+      "index": 29,
+      "null_count": 1035,
+      "min": -3.584010362625122,
+      "max": 3.5679173469543457,
+      "sign_class": "bidirectional"
+    },
+    {
+      "responder": "responder_30",
+      "index": 30,
+      "null_count": 2490,
+      "min": -4.08714485168457,
+      "max": 4.28925895690918,
+      "sign_class": "bidirectional"
+    },
+    {
+      "responder": "responder_31",
+      "index": 31,
+      "null_count": 0,
+      "min": 1.354987830382015e-06,
+      "max": 0.010176390409469604,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_32",
+      "index": 32,
+      "null_count": 0,
+      "min": 1.3551733673011768e-06,
+      "max": 0.005422822665423155,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_33",
+      "index": 33,
+      "null_count": 0,
+      "min": 1.355781364509312e-06,
+      "max": 0.0037919559981673956,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_34",
+      "index": 34,
+      "null_count": 0,
+      "min": 1.3559218814407359e-06,
+      "max": 0.0024718635249882936,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_35",
+      "index": 35,
+      "null_count": 4,
+      "min": 1.356159941678925e-06,
+      "max": 0.0013923178194090724,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_36",
+      "index": 36,
+      "null_count": 9,
+      "min": 1.3569225529863616e-06,
+      "max": 0.001076514134183526,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_37",
+      "index": 37,
+      "null_count": 24,
+      "min": 1.3582809970102971e-06,
+      "max": 0.0006447327905334532,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_38",
+      "index": 38,
+      "null_count": 0,
+      "min": 1.3563018228524015e-06,
+      "max": 0.010176390409469604,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_39",
+      "index": 39,
+      "null_count": 0,
+      "min": 1.356877874059137e-06,
+      "max": 0.010176390409469604,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_40",
+      "index": 40,
+      "null_count": 4,
+      "min": 1.3573014712164877e-06,
+      "max": 0.010176390409469604,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_41",
+      "index": 41,
+      "null_count": 9,
+      "min": 1.3593328276328975e-06,
+      "max": 0.010176390409469604,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_42",
+      "index": 42,
+      "null_count": 24,
+      "min": 1.3616576097774669e-06,
+      "max": 0.010176390409469604,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_43",
+      "index": 43,
+      "null_count": 0,
+      "min": 3.841192665277049e-06,
+      "max": 0.12208719551563263,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_44",
+      "index": 44,
+      "null_count": 526,
+      "min": 3.50061382050626e-05,
+      "max": 0.12519894540309906,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_45",
+      "index": 45,
+      "null_count": 1035,
+      "min": 6.66678388370201e-05,
+      "max": 0.12556548416614532,
+      "sign_class": "nonnegative"
+    },
+    {
+      "responder": "responder_46",
+      "index": 46,
+      "null_count": 2490,
+      "min": 0.00018565406207926571,
+      "max": 0.12653784453868866,
+      "sign_class": "nonnegative"
+    }
+  ],
+  "families": [
+    {
+      "family": "a",
+      "members": [
+        "responder_00",
+        "responder_01",
+        "responder_02",
+        "responder_03",
+        "responder_04",
+        "responder_05",
+        "responder_06"
+      ],
+      "sign_class": "unit_interval",
+      "value_range": [
+        -0.0,
+        1.0
+      ],
+      "null_ladder": [
+        279,
+        9,
+        1,
+        0,
+        422,
+        934,
+        2397
+      ],
+      "truncation_rungs": [
+        422,
+        934,
+        2397
+      ],
+      "reading": "上界饱和到 1 ⟹ 概率 / CDF 类"
+    },
+    {
+      "family": "b",
+      "members": [
+        "responder_07",
+        "responder_08",
+        "responder_09",
+        "responder_10",
+        "responder_11",
+        "responder_12",
+        "responder_13"
+      ],
+      "sign_class": "nonpositive",
+      "value_range": [
+        -0.24494987726211548,
+        0.0
+      ],
+      "null_ladder": [
+        0,
+        0,
+        0,
+        0,
+        422,
+        934,
+        2397
+      ],
+      "truncation_rungs": [
+        422,
+        934,
+        2397
+      ],
+      "reading": "非正 ⟹ 下行 / 回撤类"
+    },
+    {
+      "family": "c",
+      "members": [
+        "responder_14",
+        "responder_15",
+        "responder_16",
+        "responder_17",
+        "responder_18",
+        "responder_19",
+        "responder_20"
+      ],
+      "sign_class": "nonnegative",
+      "value_range": [
+        -0.0,
+        0.13400898873806
+      ],
+      "null_ladder": [
+        0,
+        0,
+        0,
+        0,
+        422,
+        934,
+        2397
+      ],
+      "truncation_rungs": [
+        422,
+        934,
+        2397
+      ],
+      "reading": "非负，量级 ~1e-01（上行 / 路径 / 摩擦之一，**本表判不出是哪个**）"
+    },
+    {
+      "family": "d",
+      "members": [
+        "responder_21",
+        "responder_22",
+        "responder_23",
+        "responder_24",
+        "responder_25",
+        "responder_26",
+        "responder_27"
+      ],
+      "sign_class": "nonnegative",
+      "value_range": [
+        -0.0,
+        0.8709947466850281
+      ],
+      "null_ladder": [
+        0,
+        0,
+        0,
+        0,
+        422,
+        934,
+        2397
+      ],
+      "truncation_rungs": [
+        422,
+        934,
+        2397
+      ],
+      "reading": "非负，量级 ~9e-01（上行 / 路径 / 摩擦之一，**本表判不出是哪个**）"
+    },
+    {
+      "family": "e",
+      "members": [
+        "responder_28",
+        "responder_29",
+        "responder_30"
+      ],
+      "sign_class": "bidirectional",
+      "value_range": [
+        -4.08714485168457,
+        4.28925895690918
+      ],
+      "null_ladder": [
+        526,
+        1035,
+        2490
+      ],
+      "truncation_rungs": [
+        526,
+        1035,
+        2490
+      ],
+      "reading": "双向、与 target 同量级（±2.23）⟹ 收益类"
+    },
+    {
+      "family": "f",
+      "members": [
+        "responder_31",
+        "responder_32",
+        "responder_33",
+        "responder_34",
+        "responder_35",
+        "responder_36",
+        "responder_37"
+      ],
+      "sign_class": "nonnegative",
+      "value_range": [
+        1.354987830382015e-06,
+        0.010176390409469604
+      ],
+      "null_ladder": [
+        0,
+        0,
+        0,
+        0,
+        4,
+        9,
+        24
+      ],
+      "truncation_rungs": [
+        4,
+        9,
+        24
+      ],
+      "reading": "非负，量级 ~1e-02（上行 / 路径 / 摩擦之一，**本表判不出是哪个**）"
+    },
+    {
+      "family": "g",
+      "members": [
+        "responder_38",
+        "responder_39",
+        "responder_40",
+        "responder_41",
+        "responder_42"
+      ],
+      "sign_class": "nonnegative",
+      "value_range": [
+        1.3563018228524015e-06,
+        0.010176390409469604
+      ],
+      "null_ladder": [
+        0,
+        0,
+        4,
+        9,
+        24
+      ],
+      "truncation_rungs": [
+        4,
+        9,
+        24
+      ],
+      "reading": "非负，量级 ~1e-02（上行 / 路径 / 摩擦之一，**本表判不出是哪个**）"
+    },
+    {
+      "family": "h",
+      "members": [
+        "responder_43",
+        "responder_44",
+        "responder_45",
+        "responder_46"
+      ],
+      "sign_class": "nonnegative",
+      "value_range": [
+        3.841192665277049e-06,
+        0.12653784453868866
+      ],
+      "null_ladder": [
+        0,
+        526,
+        1035,
+        2490
+      ],
+      "truncation_rungs": [
+        526,
+        1035,
+        2490
+      ],
+      "reading": "非负，量级 ~1e-01（上行 / 路径 / 摩擦之一，**本表判不出是哪个**）"
+    }
+  ],
+  "shared_ladders": {
+    "422,934,2397": [
+      "a",
+      "b",
+      "c",
+      "d"
+    ],
+    "526,1035,2490": [
+      "e",
+      "h"
+    ],
+    "4,9,24": [
+      "f",
+      "g"
+    ]
+  },
+  "stage_c_gap": {
+    "source": "/home/mainsub/Documents/Quant_trade/outputs/experiments/responder_predictability_reaudit_phasebal_prodwindow.json",
+    "clusters_total": 24,
+    "clusters_passed": 8,
+    "clusters_blocked_by_heuristic_only": 16,
+    "clusters_failed_on_evidence": [],
+    "blocked_members": [
+      "responder_00",
+      "responder_01",
+      "responder_02",
+      "responder_03",
+      "responder_04",
+      "responder_05",
+      "responder_06",
+      "responder_10",
+      "responder_13",
+      "responder_17",
+      "responder_20",
+      "responder_28",
+      "responder_29",
+      "responder_30",
+      "responder_42",
+      "responder_43"
+    ],
+    "already_probed": [
+      "responder_00",
+      "responder_02"
+    ],
+    "untested": [
+      "responder_01",
+      "responder_03",
+      "responder_04",
+      "responder_05",
+      "responder_06",
+      "responder_10",
+      "responder_13",
+      "responder_17",
+      "responder_20",
+      "responder_28",
+      "responder_29",
+      "responder_30",
+      "responder_42",
+      "responder_43"
+    ]
+  },
+  "scope": "测量 + 一条写死的分族规则；「像什么」是解读不是主办方语义。不得据此按「与 target 相关高」挑臂 —— 该论证形式已被 responder_targets_stage1 证伪。"
+}
