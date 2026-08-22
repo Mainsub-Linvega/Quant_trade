@@ -861,6 +861,13 @@ def stream_p4_fold_history_blocks(
     if kept != total_rows:
         raise RuntimeError(f"P4 history stream wrote {kept} rows; expected {total_rows}")
     return train_blocks, valid_blocks
+
+
+def _p4_rss_mb() -> float:
+    """Return current resident memory in MiB without an optional dependency."""
+    import resource
+
+    return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
 def spill_p4_features(
     data: dict[str, np.ndarray], path: str | Path,
 ) -> np.memmap:
@@ -874,6 +881,31 @@ def spill_p4_features(
     del loaded_features
     return mapped
 
+
+
+def build_p4_task_design(
+    task: str,
+    transformed: np.ndarray,
+    time_ids: np.ndarray,
+    asset_ids: np.ndarray,
+    selected: np.ndarray,
+    history_blocks: list[np.ndarray],
+) -> np.ndarray:
+    """Build one tree matrix at a time to bound P4 fold memory."""
+    from strategies.v1_ridge.features import cross_sectional_deviation
+
+    values = np.asarray(transformed, dtype=np.float32)
+    indices = np.asarray(selected, dtype=np.int64)
+    assets = np.asarray(asset_ids, dtype=np.float32)
+    raw = values[:, indices]
+    deviation = cross_sectional_deviation(raw.copy(), np.asarray(time_ids, dtype=np.int64))
+    if task == "xs":
+        columns = [deviation, *history_blocks, assets]
+    elif task == "market":
+        columns = [raw, deviation, *history_blocks, assets]
+    else:
+        raise ValueError(f"unknown P4 tree task: {task}")
+    return np.ascontiguousarray(np.column_stack(columns), dtype=np.float32)
     """Run the registered paired P4 screen or confirmation experiment."""
 def run_p4(args: argparse.Namespace) -> dict[str, object]:
     validate_frozen_protocol(args.mode, {
@@ -887,17 +919,14 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
             sys.path.insert(0, path)
 
     from experiments.v3_production_oof import (
-        build_task_lgbm_designs,
         fit_predict_lgbm,
         row_slice,
     )
     from experiments.history_peak import fit_ridge, ridge_designs
     from src.io import FEATURE_COLUMNS
     from src.validation import rolling_time_folds
-    from strategies.v3_hybrid.train import stream_history_blocks
     from train import robust_transform_fit
     from experiments.v3_interaction_oof import compose_hybrid_raw
-    from features import cross_sectional_deviation
 
     data_root = Path(args.data_root)
     if not data_root.is_absolute():
@@ -961,11 +990,13 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
     }
 
     for fold_index, (train_ids, valid_ids) in enumerate(folds):
+        print(f"fold {fold_index} start: rss={_p4_rss_mb():.0f} MiB", flush=True)
         fold_started = time.perf_counter()
         tr = row_slice(time_ids, train_ids)
         va = row_slice(time_ids, valid_ids)
         transformed_train = np.array(features[tr], dtype=np.float32, copy=True)
         transformed_train, stats = robust_transform_fit(transformed_train)
+        print(f"fold {fold_index} transformed: rss={_p4_rss_mb():.0f} MiB", flush=True)
         y_tr, y_va = target[tr], target[va]
         w_tr, w_va = weight[tr], weight[va]
         tid_tr, tid_va = time_ids[tr], time_ids[va]
@@ -975,6 +1006,7 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
             transformed_train, y_tr, cross_target, tid_tr, aid_tr,
             weights=w_tr, counts=P4_COUNTS,
         )
+        print(f"fold {fold_index} selections: rss={_p4_rss_mb():.0f} MiB", flush=True)
         transformed_valid = np.asarray(features[va]).copy()
         from features import apply_robust_transform
         apply_robust_transform(
@@ -1012,41 +1044,41 @@ def run_p4(args: argparse.Namespace) -> dict[str, object]:
             tasks: tuple[str, ...] = ("xs", "market"),
         ) -> tuple[np.ndarray, np.ndarray]:
             history_tr, history_va = get_history(selection)
-            designs_tr = build_task_lgbm_designs(
-                transformed_train, tid_tr, aid_tr,
-                xs_indices=selection["xs"], market_indices=selection["market"],
-                history_blocks=history_tr,
-            )
-            designs_va = build_task_lgbm_designs(
-                transformed_valid, tid_va, aid_va,
-                xs_indices=selection["xs"], market_indices=selection["market"],
-                history_blocks=history_va,
-            )
-            if tasks == ("market",):
-                return np.empty(0, dtype=np.float64), fit_predict_lgbm(
-                    designs_tr["market"], y_tr, None, designs_va["market"],
-                    args, f"fold {fold_index} {name} Market", {
-                        "num_leaves": 15, "learning_rate": 0.02,
-                        "feature_fraction": 0.4, "lambda_l2": 30.0,
-                    }, min_data_scale=25.0 / 3.0, num_iteration=args.num_iteration,
+            def fit_task(task: str) -> np.ndarray:
+                selected = selection["xs"] if task == "xs" else selection["market"]
+                design_tr = build_p4_task_design(
+                    task, transformed_train, tid_tr, aid_tr, selected, history_tr,
                 )
-            xs_prediction = fit_predict_lgbm(
-                designs_tr["xs"], cross_target, w_tr, designs_va["xs"],
-                args, f"fold {fold_index} {name} XS", {
-                    "num_leaves": 63, "learning_rate": 0.03,
-                    "feature_fraction": 0.7, "lambda_l2": 1.0,
-                }, num_iteration=args.num_iteration,
-            )
+                design_va = build_p4_task_design(
+                    task, transformed_valid, tid_va, aid_va, selected, history_va,
+                )
+                if task == "xs":
+                    prediction = fit_predict_lgbm(
+                        design_tr, cross_target, w_tr, design_va,
+                        args, f"fold {fold_index} {name} XS", {
+                            "num_leaves": 63, "learning_rate": 0.03,
+                            "feature_fraction": 0.7, "lambda_l2": 1.0,
+                        }, num_iteration=args.num_iteration,
+                    )
+                elif task == "market":
+                    prediction = fit_predict_lgbm(
+                        design_tr, y_tr, None, design_va,
+                        args, f"fold {fold_index} {name} Market", {
+                            "num_leaves": 15, "learning_rate": 0.02,
+                            "feature_fraction": 0.4, "lambda_l2": 30.0,
+                        }, min_data_scale=25.0 / 3.0, num_iteration=args.num_iteration,
+                    )
+                else:
+                    raise ValueError(f"unknown P4 tree task: {task}")
+                del design_tr, design_va
+                gc.collect()
+                return prediction
+            if tasks == ("market",):
+                return np.empty(0, dtype=np.float64), fit_task("market")
+            xs_prediction = fit_task("xs")
             if tasks == ("xs",):
                 return xs_prediction, np.empty(0, dtype=np.float64)
-            market_prediction = fit_predict_lgbm(
-                designs_tr["market"], y_tr, None, designs_va["market"],
-                args, f"fold {fold_index} {name} Market", {
-                    "num_leaves": 15, "learning_rate": 0.02,
-                    "feature_fraction": 0.4, "lambda_l2": 30.0,
-                }, min_data_scale=25.0 / 3.0, num_iteration=args.num_iteration,
-            )
-            return xs_prediction, market_prediction
+            return xs_prediction, fit_task("market")
 
         def get_components(arm: str, selection: Mapping[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
             if arm in component_cache:

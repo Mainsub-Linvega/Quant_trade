@@ -23,6 +23,7 @@ from experiments.v3_task_aligned_reselection import runner_import_paths
 from experiments.v3_task_aligned_reselection import spill_p4_features
 from experiments.v3_task_aligned_reselection import reuse_p4_feature_memmap
 from experiments.v3_task_aligned_reselection import _validate_panel
+from experiments.v3_task_aligned_reselection import build_p4_task_design
 from experiments.v3_task_aligned_reselection import allocate_p4_arrays
 
 
@@ -332,3 +333,22 @@ def test_validate_panel_preserves_float32_feature_storage():
 
     assert values.dtype == np.float32
     assert np.shares_memory(values, features)
+
+
+def test_build_p4_task_design_keeps_asset_column_last():
+    transformed = np.arange(24, dtype=np.float32).reshape(6, 4)
+    time_ids = np.repeat(np.arange(3), 2)
+    asset_ids = np.tile(np.arange(2), 3)
+    history = [np.ones((6, 1), dtype=np.float32) * value for value in range(4)]
+
+    xs = build_p4_task_design(
+        "xs", transformed, time_ids, asset_ids, np.array([0, 2]), history,
+    )
+    market = build_p4_task_design(
+        "market", transformed, time_ids, asset_ids, np.array([0, 2]), history,
+    )
+
+    assert xs.shape == (6, 2 + 4 + 1)
+    assert market.shape == (6, 2 + 2 + 4 + 1)
+    np.testing.assert_array_equal(xs[:, -1], asset_ids)
+    np.testing.assert_array_equal(market[:, -1], asset_ids)
