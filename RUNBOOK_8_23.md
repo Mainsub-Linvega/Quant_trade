@@ -194,6 +194,18 @@ done
    现在这些项由 `production_structure()` 从生产 `hybrid_meta.json` 派生，并与 `PUBLIC_BASELINE`
    逐键对拍，对不上就**拒绝生成计划**。
    ⟹ **dry-run 的输出里现在有一段 `production_structure`，先看它再 `--execute`。**
+4. ✅ **计划此前不带 `--long-window`**（2026-08-23 补，与坑 3 完全同型）：
+   `strategies/v3_hybrid/train.py:335` 的 `--long-window` **默认 0 = 关闭**，而
+   `retrain_extended.py` 从未传过它，`production_structure()` 与 `BASELINE_CHECKED_KEYS`
+   也都没有这个键 ⟹ D1 会训出一个**没有长窗**的候选，而长窗是 08-21 转正、
+   公榜实测 **+1.662%** 的那块结构。转正门禁最终会拦下（`PUBLIC_BASELINE` 含
+   `long_window: 512`），但那是在**几小时训练之后**。三处都已补上，值从生产 meta 派生。
+   ⟹ **dry-run 的 v3_hybrid 命令里必须能看到 `--long-window 512`**，看不到就停下来。
+   ⚠️ 选命令时别用「字符串里含 `v3_hybrid`」来挑 —— 候选目录名
+   `v3_hybrid_extended_fixed` 里也含它，会挑中岭回归那条（本轮实测踩到）。
+   ⚠️ 该类漏键已发生四次（08-18 slow/fast → 08-19 结构开关 → 08-21 `PUBLIC_BASELINE`
+   → 08-23 重训计划），现由 `tests/test_model_identity_key_coverage.py` 机械把关：
+   往 `PUBLIC_BASELINE` 加键而任一消费者没跟上，测试当场红。
 
 ## D2：用**校准后的尺子**比较重训 vs 当前生产
 

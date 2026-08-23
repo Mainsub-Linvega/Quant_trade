@@ -190,6 +190,317 @@ ROADMAP 历史记录的 `112 passed / 22 subtests` 是 pytest 的数；本文件
 > 按 CLAUDE.md §7「旧结论不删除」，引用原样保留以说明当时的推理来源；
 > 可核验的**实验证据**一律仍以 `outputs/experiments/` 与 `experiments/ledger.csv` 为准。
 
+### 2026-08-23 — `INCIDENT`（未爆）：重训计划漏掉 `long_window`，这是同型事故的第四次
+
+**日期**：2026-08-23
+**标签**：`INCIDENT`（未造成损失，8/23 之前拦下）
+
+**怎么发现的**：用户问「标签回补会不会改变现在的模型」。回答这个问题要核「重训到底会动什么」，
+于是去读 `scripts/retrain_extended.py` —— 结果不是回答问题，而是撞见一个缺口。
+
+**缺口**：
+
+```text
+strategies/v3_hybrid/train.py:335   --long-window   default=0   ⟹ 不传 = 关闭
+scripts/retrain_extended.py         全文件 0 处命中 "--long-window"
+production_structure()              派生 8 个键，没有 long_window
+BASELINE_CHECKED_KEYS               列 7 个键，没有 long_window
+```
+
+⟹ 8/23 跑 D1，产出的是一个**没有长窗**的候选 —— 而长窗是 08-21 转正、公榜实测
+**+1.662%** 的那块结构。`promote_v3_candidate` 最终会拦下（`PUBLIC_BASELINE` 含
+`long_window: 512`），但那是在**几小时训练之后**；而 `BASELINE_CHECKED_KEYS` 上面那行
+注释写的恰恰是「8/23 之前就要红，而不是训练几小时之后才红」——
+**该守卫在 08-21 长窗转正后没有同步**。8/23→8/31 只有 8 天，几小时不便宜。
+
+**⚠️⚠️ 这是同一类事故的第四次**，每次都是「往模型身份里加了一个键，某个消费者没跟上」：
+
+| 日期 | 漏在哪 | 后果 |
+|---|---|---|
+| 08-18 | `slow_fast_*` 不在 `PUBLIC_BASELINE` | 丢键静默交出低 2.93% 的旧模型 |
+| 08-19 | 重训计划缺 `--weighted-cross-section` / `--market-model` | 训出低 21.99% 的 08-11 架构 |
+| 08-21 | `long_window` 漏进 `PUBLIC_BASELINE` | 缺键静默关掉长窗，低 1.66% |
+| **08-23** | **`long_window` 漏进重训计划** | **训出没有长窗的候选** |
+
+**⟹ 逐次补洞已被证明不够。** 除了补这一处，新增
+`tests/test_model_identity_key_coverage.py`：遍历 `PUBLIC_BASELINE` 全部 13 个键，
+断言四个消费者都覆盖 —— `audit_submission_zip.public_baseline_drift`、
+`retrain_extended.{production_structure, BASELINE_CHECKED_KEYS}`、
+`verify_delivery_runtime.model_identity`，覆盖不了的必须写进**显式豁免表并附理由**
+（沿用 `make_submission.EXCLUDED_MODULES` 的「偏离必须是按下去的，不是漏掉的」）。
+正当豁免只有 5 个：`slow_fast_*` 三键（`train.py` 无此概念，由 staging 写入）与
+`blend_weight` / `prediction_scale`（候选 meta 落的是本地占位，由 staging 覆写）。
+
+⭐ **验收方式是先让门禁红**：打补丁**前**实测
+`AssertionError: ['long_window'] != []`，补丁后转绿。这一步是必须的 ——
+不先红一次，写出来的可能是个恒真断言。
+顺带确认交付报告那一路 08-21 已补过（该臂本就是绿的），缺口确实只在重训计划一处。
+
+**修法**（3 处，值一律从生产 meta 派生，不写常量）：`production_structure()` 加
+`"long_window": meta.get("long_window")`（**取原值不做 `int()` 兜底** —— `None`/`0`/`512`
+必须可区分，与 `audit_submission_zip` 对该键「不走 `as_float`」同口径）；
+`BASELINE_CHECKED_KEYS` 加该键；v3 命令补 `--long-window`（条件式，与紧邻的
+`if structure["market_model_count"]` 同型）。
+
+**dry-run 走真实 CLI 复核**（合成一份 `changed=true` 的审计，放 scratchpad，不 `--execute`）：
+v3 命令现含 `--long-window 512`，与 `--weighted-cross-section` / `--market-model` /
+`--market-lambda 0.5` / `--market-spec {num_leaves:15,...}` / `--market-min-data-scale 8.333`
+并列，未产生任何候选目录。
+
+⚠️ **过程中踩到并已写进 RUNBOOK 的小坑**：挑 v3 命令不能用「字符串里含 `v3_hybrid`」——
+候选目录名 `v3_hybrid_extended_fixed` 里也含它，会挑中岭回归那条，于是所有结构开关都显示
+「缺失」。现有单测没踩到只是因为它用的 `candidate_dir` 是 `outputs/candidates/probe`。
+
+⚠️ **一条自查**：我最初还写了一个「长窗被关掉时不该硬塞 `--long-window 0`」的用例，
+跑出来是红的 —— 因为 `command_plan` **无条件**调 `assert_matches_public_baseline`，
+那个结构根本传不进去。**是我的测试在测一个不可达状态**，不是代码有问题。已删除，
+把这个事实写进漂移用例的注释（那句 `if structure.get("long_window")` 是与
+`market_model_count` 同型的防御性写法，留着以备长窗日后真被撤下）。
+
+**顺带记一个未修的观察（不在本轮范围）**：v3 命令里的 `--history-window 5` 与
+`--history-count 40` 是**硬编码常量**，而 `production_structure()` 同时派生了
+`history_window` / `history_positions_count`。当前不是活 bug（两者不一致时
+`assert_matches_public_baseline` 会先炸），但属同一类「在多处手工维护同一个数字」
+（CLAUDE.md §7）。**8/31 之后再改**，本轮不动重训参数。
+
+**产物**：`tests/test_model_identity_key_coverage.py`（6 用例）、
+`tests/test_retrain_planning.py`（+1 用例、漂移子测试 4→6）。
+全量 **261 passed / 28 subtests**（改动前 254/26）。
+生产目录与模型身份**一字节未动**，未执行任何重训。
+
+### 2026-08-23 — ⭐ `INCONCLUSIVE`：peer 对轴的「重新开放条件」定价完毕 —— 载体只剩两成
+
+**日期**：2026-08-23
+**标签**：`INCONCLUSIVE`（缓存探针裁决）／`RESULT`（前置测量与产物补齐）
+
+**问的问题**：同日 `xs_peer_pair_confirm_3s480` 在 3s480 上拿到 pooled **+3.29% / 5-of-5 折 /
+去最好折 +2.93% / `2ΔA>ΔB` / CI 下界 +2.30%**，六道过五道，只差检出下限 —— 与长窗 w512
+当年 confirm 档同一个桶。但特征 `peer_e_lag1` 由**真实 target** 反推，推理端被 `forbidden`
+剥掉。ROADMAP §5 因此留了一条重新开放条件：「换成模型自身对搭档的历史预测值」。
+**那句话至今没有数字。** 本轮补上。
+
+**前置只读测量（不训练）**：OOF cache 里同时有真实 `e` 与模型自己的 `e_lgbm`：
+
+| i←j | ① oracle 滞后 `e_j` | ② 可部署 滞后 `ê_j` | ③ 可部署 当期 `ê_j` |
+|---|---:|---:|---:|
+| 0←6 | +0.02414 | +0.00656 | +0.00370 |
+| 6←0 | +0.01716 | −0.00085 | −0.00120 |
+| 2←14 | +0.01354 | +0.00230 | −0.00249 |
+| 14←2 | +0.00775 | +0.00460 | +0.00693 |
+| 1←13 | +0.01601 | +0.00155 | −0.00179 |
+| 13←1 | +0.02122 | −0.00819 | −0.00295 |
+| **\|均值\|** | **0.01664** | **0.00401**（存活 24.1%）| **0.00318**（存活 19.1%）|
+| **同号数** | **6/6** | **4/6** | **2/6** |
+
+根因：`corr(e_j, ê_j)` 逐资产只有 **0.023~0.098** ⟹ `ê_j` 是 `e_j` 的极弱代理。
+
+⭐ **还有一层更根本的**：诊断里那个 `(0,6) +0.183` 是**当期**共动（零和基线 −0.0687，
+偏离 +0.25）。当期共动**天然不可利用** —— 要用它就得知道 `e_j(t)`，那与 `e_i(t)` 同样是
+未知量。探针只能退到滞后一期，相关立刻从 0.18 掉到 0.017。那 +3.29% 就是靠这 0.017 挣的。
+
+**⚠️⚠️ 「换列重跑 6 分钟」这条捷径经查不成立。** `e_lgbm` 只在 `fold>=0` 行有值，
+按 `xs_peer_pair_probe` 自己的 fold 版图，**训练段**覆盖率实测：
+
+```text
+fold0 0.0%   fold1 25%   fold2 50%   fold3 75%   fold4 100%
+```
+
+fold 0 的 peer 列恒为零（两臂等价），fold 1–3 的覆盖率**与时间强相关** ⟹ 树可以学到
+「peer 列非零 ⟹ 处在较晚时期」这个伪时间信号。**直接换列不是有效实验。**
+要让它有效得在训练段也生成 `ê`，等于重跑扩展 fold 版图的 OOF（小时级）。
+
+**改用缓存探针**（`experiments/xs_peer_deployable_probe.py`，2.7 秒）：只在验证段评估
+（`ê` 覆盖 **100%**，无时间混淆），复用 08-22 抽出的 `evaluate_arm`。⭐ 逐有向对拆
+**6 列**喂进 `auxes`，`solve` 自然给出 7 个系数（base + 6 个方向）= 逐对系数
+⟹ **既有函数一行未改**。
+
+| 臂 | 搭档量 | 相对 | 正折 | 减阴性对照 | 判定 |
+|---|---|--:|--:|--:|:--:|
+| `oracle_lag1` | 真实 `e_j(t−1)` | **+0.69%** | 3/4 | **+2.45pp** | ❌ |
+| `deployable_lag1` | `ê_j(t−1)` | **−3.21%** | 0/4 | −1.45pp | ❌ |
+| `deployable_now` | `ê_j(t)` | **−2.41%** | 1/4 | −0.65pp | ❌ |
+| `shuffled_lag1`（阴性对照）| 非搭档 `ê(t−1)` | −1.76% | 1/4 | +0.00pp | ❌ |
+
+**⚠️ 自查：预注册与实现不一致，而实测恰好落在缝里。** 预注册写的是「oracle **过门禁**」，
+初版代码写成「oracle **为正**」。实测 oracle 为正（+0.69%、3/4 折、bootstrap CI 下界为正）
+但**未过门禁**（去最好折翻负、只有 0.44× 检出下限、达不到 3%）。⟹ 按**严格的那条**判
+`INCONCLUSIVE_NO_DETECTION_POWER`，并把代码对齐预注册 —— **不是**改判据迁就结果。
+读法：这把线性尺子对该机制检出力不足，两个可部署臂的阴性结果**不得**升级为「没效果」。
+
+⭐ **事后旁证（不在预注册里，只作旁证）**：对零比大小会把「多加 6 列」的代价算到臂头上，
+对**阴性对照**比才干净。oracle 高出对照 **+2.45pp**，两个可部署臂落在对照**同侧或更低**
+（−1.45pp / −0.65pp）⟹ 尺子能把 oracle 与噪声列分开，而可部署量带来的不是 peer 信息。
+⟹ **实操结论：不推进。**
+
+**顺带补两个缺口**：
+1. `asset_grouping_diagnostic.py` 此前**只 print 不落盘**（ROADMAP §5 自己标着「无产物文件」）
+   —— 已加 JSON/MD 产物与第 5 项（上面那张 oracle vs 可部署表），并加一道与 ROADMAP 记录的
+   `(0,6) 0.183 / (2,14) 0.125 / (1,13) 0.119` 的**对拍断言**（差超 0.005 当场失败）。
+   现有 4 项计算一行未动；脚本化后的第 5 项与临时算的数**逐位一致**。
+2. **订正一处弱论证**：此前把「`e` 与残差两个相关矩阵几乎逐位相同」读成「生产模型完全没碰
+   这部分结构」。那个不动是**算术必然** —— 模型只解释约 0.4% 方差，拿掉 0.4% 看不出矩阵变化。
+   该结论另有独立支撑（`asset_id` categorical 分裂看不到别的资产当刻的值，是代码事实），
+   ⟹ 结论成立、论证换掉。
+
+**产物**：`outputs/experiments/xs_peer_deployable_{plan,probe}.json`、`xs_peer_deployable_probe.md`、
+`asset_grouping_diagnostic.{json,md}`；`tests/test_xs_peer_deployable_probe.py`（9 用例）。
+全量 **254 passed / 26 subtests**（改动前 245）。生产目录与模型身份**一字节未动**。
+
+### 2026-08-23 — ⭐ `RESULT/INCIDENT`：交付链路从来没量过内存，而峰值是 12 GB 上限的 95.6%
+
+**日期**：2026-08-23
+**标签**：`RESULT`（内存归属与状态增长）／`INCIDENT`（未爆：门禁缺口 + manifest 比错对象）
+
+**为什么查这个**：用户问「模型定型后为什么涨不动」，顺带问到「私榜环境有没有 lightgbm、
+版本是什么」。查证时核出 `docs/competition_description.md:158-159` 写着评测环境是
+**4 核 / 12 GB / 无 GPU / 无外网**，而 `scripts/verify_delivery_runtime.py` 产出的 JSON
+里**一个内存字段都没有** —— 唯一那个 RSS 数字（NumPy 兜底 4.56 GB）只写在本文件正文里、
+不是产物，还是在 32 核 30 GB 开发机上量的。私榜 8/31 截止后无法改代码、实盘出错按填 0
+处理（`docs/competition_description.md:199`）⟹ 内存是唯一一个能让整个提交归零、
+而我们从未测量过的量。
+
+**做法**：给 `verify_delivery_runtime.py` 加峰值 RSS 采集与两道门禁，然后在
+`systemd-run --user --scope -p MemoryMax=12G -p MemorySwapMax=0 -p AllowedCPUs=0-3`
+下走官方 runner 全量 3,217,458 行。**这是本项目第一次在评测环境的真实约束下跑交付验证**
+（此前 4 核那两次只钉了线程数，机器仍是 32 核 30 GB、内存无上限）。
+
+**结果一：峰值 11.47 GB / 12 GB = 占用率 95.6%，没被 OOM 杀掉但余量只剩 4.4%。**
+cgroup `memory.events` 记到 **`max 990`** —— 进程 990 次顶到上限被迫回收，`oom_kill 0`。
+
+**结果二（本轮最重要的一条）：那 11.47 GB 里 96.7% 不是我们的。**
+新写 `scripts/measure_harness_memory.py`，用一个 predict 恒返回 0 的桩模型走**完全相同**的
+`run_loaded_model` 路径做对照臂：
+
+| 臂 | 峰值 RSS | 占 12 GB | predict_total |
+|---|---:|---:|---:|
+| 主办方 harness 单独（零预测桩，3 次） | **11.09 / 11.47 / 11.35 GB** | 92–96% | 0.06 分钟 |
+| 生产模型 LightGBM 主路径 | **11.47 GB** | 95.6% | 5.40 分钟 |
+| 生产模型 NumPy 兜底 | **11.55 GB** | 96.2% | 10.90 分钟 |
+
+⚠️ **诚实读法**：harness 臂**自己**跑三次就摆动 **11.09–11.47 GB**（0.38 GB），与「模型净增」
+同量级 ⟹ 只能说**模型贡献 ≤ 约 0.5 GB、与跑间波动不可分辨**，不能报成精确的 +0.38 GB。
+结论方向不变而且更强 —— 能省的那部分连测都测不出来。
+
+峰值来自 `timeseries_api/runner.py` 自己：`iter_test_slices` 逐分区 `pd.read_parquet`
+（`test_partition_000.parquet` 有 1.68 GB）。⟹ **不要为内存改模型**：
+`timeseries_api/` 是主办方原文、只读（CLAUDE.md §1.3），我们改不了。
+
+**结果二补充（1 秒间隔追踪）：峰值在加载段，不随运行长度增长。**
+峰值于 **18.0s / 36.8s = 49% 处**达到；后半程（遍历 214,538 个 time_id + 最后那次
+`pd.concat`）`VmHWM` 一点没涨，`VmRSS` 反落到 3~4 GB：
+
+```text
+ t= 1.0s  VmHWM  4.34G                ← 开始读 partition_000
+ t=16.3s  VmHWM  8.50G
+ t=17.3s  VmHWM 11.47G                ← 峰值
+ t=36.0s  VmHWM 11.47G   VmRSS 3.00G  ← 已含最后的 concat，无新峰值
+```
+
+⟹ **峰值由分区大小决定，不由 time_id 数量决定** ⟹ 9 月更长的实盘期不会推高它。
+旁证：只喂最小那个分区（`test_partition_002.parquet`，398 MB）时峰值只有 **1.32 GB**
+（接线烟测，非正式产物，行数门禁按设计不过）。
+⚠️⚠️ 我最初根据**单次中途采样**断言「峰值在第一个分区加载时就到顶」—— 那是误读，
+兜底那次我在 6.24 GB 时采样、最终却是 11.55 GB。**一个中途读数定位不了峰值相位**，
+必须连续追踪。顺带修掉追踪汇总自己的一个 bug：`run_seconds` 记的是 `perf_counter()` 的
+**绝对**值而 `elapsed` 相对 sampler 原点，两者相除得出「0% 处」这种无意义读数。
+
+**结果三：唯一无界增长的跨 predict 状态实测是安全的。**
+`AssetLongWindow` 是**固定**环形缓冲 `(15, 513, 40)` float64 = 2.46 MB，不随长度增长。
+`main.PredictionTrail` 才是唯一无界的（`_append` 只做几何扩容、`_head` 只前移指针、从不截断）。
+合成实测（15 资产、40 万 time_id）：
+
+```text
+  50,000 time_id →  15.0 MB   (315.0 B/time_id)
+ 100,000 time_id →  30.0 MB   (314.8 B/time_id)
+ 200,000 time_id →  60.0 MB   (314.7 B/time_id)
+ 400,000 time_id → 120.0 MB   (314.6 B/time_id)     ⟹ 完全线性
+```
+
+公榜期 214,538 个 time_id 只占 **64 MB**；剩余 0.53 GB 余量还能再吃 **1,808,783** 个
+time_id = 公榜期的 **8.4 倍**。⟹ 9 月一整月实盘要比公榜期长 8.4 倍才会成为问题，不成立。
+
+**结果四（`INCIDENT`，未爆）：两份交付报告长期判 FAIL，红的原因是「比错了对象」。**
+`verify_delivery_runtime.py:67` 把 `--manifest` 默认值**写死**成 `v3_hybrid_slowfast`，
+而 08-21 长窗 w512 转正后生产已经是 `v3_hybrid_long512`
+⟹ `delivery_local_py313_4t` 与 `delivery_cloud_py311_4t` 两份都判 `model_matches_promotion_manifest: False`。
+实测核对：生产目录与 `long512` 的 manifest **8 个文件逐字节全中**、与 `slowfast` 差的正好是
+long512 重训过的那 4 个（`hybrid_meta.json` + 3 片截面森林），与「只重训截面森林、
+市场森林和冻结岭回归逐字节复用」的记录完全一致 ⟹ **装的是对的，比的是错的**。
+写死候选名必然随每次转正过期，已改成 `--manifest auto`：扫描 `outputs/promotions/*`
+挑逐字节相同的那一份，并把扫描过程本身写进 JSON 留证（实测唯一命中 long512）。
+
+⚠️ 但 auto 匹配只回答「生产目录是不是来自一次有记录的 staging」，**不回答「是不是榜上那份」**。
+后者另加一道 `model_matches_public_baseline`，直接复用
+`audit_submission_zip.public_baseline_drift`（**不另抄取值表** —— 两张表分头维护正是
+08-18 slow/fast 丢键与 08-21 long_window 丢键两次「静默降级」事故的形状）。实测偏离为空。
+
+**结果五：4 核 CPU 约束几乎不花钱。** `predict_total` 5.40 分钟（32 核钉 4 线程那次是
+5.26 分钟，**只慢 2.7%**）；单步最大 0.688 s、0 超时 / 0 非有限值 / 0 触 clip、
+`max|pred|` 0.402099，与 08-21 那次逐位一致。
+
+**顺带订正一个实现缺陷**：`VmHWM` 在本机内核上**不是严格单调的**（实测 221.49 → 220.94 MB）——
+内核报的是 `max(记录的 hiwater, 当前 RSS)`，记录值更新滞后，当前 RSS 一跌回记录值以下读数就
+回落。`ru_maxrss` 才是真单调但会低几百 KB。`peak_rss_bytes()` 取两者大者并叠一层模块级
+高水位，保证无论何时调用都不低报。单测钉住这条（先按「高水位必单调」写断言，被实测打脸后
+才查出内核行为 —— 断言写在前面是对的）。
+
+**云端环境（回答用户的库版本问题，证据是 08-21 已有的产物）**：
+`outputs/cloud/delivery_cloud_py311_4t.json` 跑在主办方 JupyterHub（`/home/jovyan/Quant_trade`）：
+Python 3.11.15 / **lightgbm 4.3.0（与本地同版本）** / numpy 1.24.3 / 128 核。
+⟹ 模型文本是 `version=v4`（LightGBM 4.x 格式），评测端若是 3.3.x 会「import 成功但结果不对」
+—— 实测同版本，这个雷不存在；且 `main.py.__init__` 无条件建 numpy 森林对拍
+（`_BACKEND_SELFCHECK_ATOL=1e-10`），对不上自动降级，是双保险。
+两次运行 `predictions_sha256` 不同（`fe527e41…` vs `75e05e05…`）、`max|pred|` 差 2.3e-8
+⟹ 浮点栈差异（numpy 版本），传到 Score 约 1e-8，**可忽略，非模型身份问题**。
+⚠️ 但云端 `predict_total` **12.13 分钟**是本地 5.28 的 **2.3×**、单步最大 2.80 s 是 4.3×。
+
+**⭐ 同日补测：云端 NumPy 兜底也跑完了（用户执行），四条组合齐了。**
+`FACT`（用户实测）：**该机器超过 12 GB 即 OOM** ⟹ 官方那条 12 GB 是硬限。
+
+| 环境 | 后端 | 峰值 RSS | predict_total | wall | 单步最大 | 单步平均 |
+|---|---|---:|---:|---:|---:|---:|
+| 本地 4 核 / 12 GB cgroup | LightGBM | 11.47 GB | 5.40 分钟 | 6.35 分钟 | 0.688 s | 1.51 ms |
+| 本地 4 核 / 12 GB cgroup | NumPy 兜底 | 11.55 GB | 10.90 分钟 | 11.76 分钟 | 0.684 s | 3.05 ms |
+| 云端 JupyterHub | LightGBM | 未记录（旧版脚本）| 12.13 分钟 | 14.00 分钟 | **2.802 s** | 3.39 ms |
+| **云端 JupyterHub** | **NumPy 兜底** | **10.93 GB** | **33.78 分钟** | **36.28 分钟** | **0.050 s** | 9.45 ms |
+
+**⭐ 单步耗时把风险排序反了过来**：兜底总耗时是主路径的 2.78×，**单步最大却只有 0.050 s、
+是主路径 2.802 s 的 1/56** ⟹「按单步超时」这条风险**在主路径上，不在兜底**。
+主路径那 2.802 s 是四次跑里最高的（本地两条都约 0.68 s），平均只有 3.39 ms
+⟹ 像首调用或环境抖动的单点离群，但**只有一次云端主路径观测**，暂标「已知的单点异常」。
+
+**⭐ 浮点差异分解成两条独立轴，量级差 7 个数量级**：
+同机器换后端 `max|pred|` 相对差 **1.4e-15**（0.4020987595067208 vs 0.40209875950672025，
+求和顺序）；同后端换机器 **2.3e-8**（numpy 1.24.3 vs 2.5.1）。跨机器那条**主导**，
+但传到 Score 仍约 1e-8 ⟹ 可忽略，且证明兜底在真实机器上产出的是同一组预测。
+
+兜底在真实机器上 `peak_rss_under_limit` ✅、3,217,458 行 ✅、0 超时 / 0 非有限 / 0 触 clip ✅、
+模型身份两道 ✅，只差 20% 余量线 ⟹ **lightgbm 万一不可用，兜底不会 OOM，只会慢**。
+⭐ 云端峰值 **10.93 GB 比本地的 11.55 GB 还低 0.62 GB** —— numpy 1.24.3 vs 2.5.1、
+pyarrow/pandas 版本不同，parquet 加载路径的内存就不同。真实评测机比开发机宽裕。
+
+**⚠️⚠️ 我跑前的外推错了 35%，机制值得单独记一条。** 我按「本地兜底/主路径 = 2.02×」
+外推云端约 **25 分钟**，实测 **33.78 分钟**。原因是**兜底是单核绑定**（纯 numpy 树遍历不并行，
+08-18 已记录）而主路径吃 4 线程 —— 两者对「云端单核更慢」的敏感性根本不同：
+
+```text
+云端/本地   主路径 2.25×      兜底 3.10×
+兜底/主路径  本地 2.02×       云端 2.78×
+```
+
+⟹ CLAUDE.md §5.7「代理量不可跨结构搬用」在**跨环境**上同样成立。这条此前只在换模型族上
+写过，本次是跨机器的实证。
+
+**两条执行路径本地均已走完全量**（4 核 / 12 GB），除 `peak_rss_has_headroom` 外门禁全过。
+两后端预测差在第 15 位有效数字（`max|pred|` 0.40209875023052816 vs 0.4020987502305287，
+相对 5.4e-16）—— 即 `main.py` docstring 已记的求和顺序差异，非模型身份问题。
+
+**产物**：`outputs/experiments/delivery_4c12g_{lightgbm,numpy_fallback}.{json,md}`、
+`harness_memory_harness_4t.{json,md}`、`harness_memory_trace_4t.{json,md}`；
+`scripts/measure_harness_memory.py`；
+`tests/test_verify_delivery_runtime.py`（14 用例）。全量测试 **241 passed / 26 subtests**
+（改动前 227）。生产目录与模型身份**一字节未动**。
+
 ### 2026-08-22 — `REJECTED`：responder 的三种用法全部走完 —— 这条轴现在由**证据**关闭
 
 **日期**：2026-08-22

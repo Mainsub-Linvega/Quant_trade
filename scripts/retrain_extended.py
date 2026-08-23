@@ -38,7 +38,13 @@ MARKET_MIN_DATA_SCALE = 8.333
 # 与 PUBLIC_BASELINE 逐项对齐的结构键（8/23 之前就要红，而不是训练几小时之后才红）
 BASELINE_CHECKED_KEYS = ("market_lambda", "market_model_count", "cross_section_weighted",
                          "num_iteration", "n_seeds", "history_window",
-                         "history_positions_count")
+                         "history_positions_count",
+                         # ⚠️ 2026-08-23 补：长窗块 08-21 转正（公榜 +1.662%），但这张表
+                         # 与 production_structure() 都没跟上 ⟹ 重训计划不传 --long-window，
+                         # 而 train.py 的默认是 0（＝关闭）⟹ D1 会训出一个没有长窗的候选。
+                         # 转正门禁最终会拦下，但那是在几小时训练之后。
+                         # 覆盖由 tests/test_model_identity_key_coverage.py 机械保证。
+                         "long_window")
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,6 +93,10 @@ def production_structure(meta_path: Path = PRODUCTION_META) -> dict:
         "history_window": meta.get("history_window"),
         "history_positions_count": len(meta.get("history_positions") or []),
         "n_seeds": len(meta.get("lgbm_model_files") or []),
+        # 取**原值**、不做 int() 兜底 —— None / 0 / 512 必须可区分：
+        # `main.py` 缺键或 0 都是「关掉长窗」，而 512 是榜上那份。
+        # 与 audit_submission_zip.public_baseline_drift 对该键「不走 as_float」同口径。
+        "long_window": meta.get("long_window"),
     }
 
 
@@ -127,6 +137,9 @@ def command_plan(args: argparse.Namespace, structure: dict | None = None) -> lis
     structure_flags: list[str] = []
     if structure["cross_section_weighted"]:
         structure_flags.append("--weighted-cross-section")
+    if structure.get("long_window"):
+        # 值从生产 meta 派生，不在这里写常量（CLAUDE.md §7「不在多处手工维护同一个数字」）
+        structure_flags += ["--long-window", str(int(structure["long_window"]))]
     if structure["market_model_count"]:
         structure_flags += [
             "--market-model",
