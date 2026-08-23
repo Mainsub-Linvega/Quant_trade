@@ -1,0 +1,55 @@
+{
+  "experiment": "xs_market_state_probe",
+  "plan_sha256": "e0c61ceae943ecbbb22740e982cb5affb41dcbae9efcba3cece48d13757fd1d9",
+  "stage1_only": true,
+  "baseline_cache": "v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+  "folds": [
+    {
+      "fold": 0,
+      "n_valid": 296059,
+      "ic_e_lgbm": 0.050965280582188396,
+      "arms": {
+        "tree_base": {
+          "ic": 0.05107150693638806,
+          "A": 678.9095539912864,
+          "B": 635.9796956703877,
+          "D": 277858.217368709,
+          "r_vs_prod": 1.0020842886173924,
+          "seconds": 34.35291290200257
+        },
+        "tree_market_pred": {
+          "ic": 0.05183140809937393,
+          "A": 689.9767389955967,
+          "B": 637.7634692376854,
+          "D": 277858.217368709,
+          "r_vs_prod": 1.0169944618628908,
+          "seconds": 35.17372174200136
+        }
+      }
+    }
+  ],
+  "summary": {
+    "pooled_gain": 0.01487916078004825,
+    "fold_gains": [
+      0.01487916078004825
+    ],
+    "positive_folds": 1,
+    "n_folds": 1,
+    "drop_best_gain": NaN,
+    "bootstrap_ci_lower": NaN,
+    "delta_A": 0.016301412963253714,
+    "delta_B": 0.0028047649625313475,
+    "gates": {
+      "1_pooled_relative_gain_at_least_3pct": false,
+      "2_at_least_4_of_5_folds_positive": true,
+      "3_survives_drop_best_fold": null,
+      "4_two_delta_A_exceeds_delta_B": true,
+      "5_paired_bootstrap_ci_lower_bound_positive": null,
+      "6_exceeds_detection_floor": false
+    },
+    "passed": false,
+    "detection_floor": 0.061
+  },
+  "verdict": "REJECTED",
+  "elapsed_seconds": 234.35119155600114
+}

@@ -1,0 +1,44 @@
+{
+  "experiment": "xs_market_state_interaction",
+  "date": "2026-08-23",
+  "question": "截面块（XS LGBM）的设计矩阵目前对市场态完全不可见——喂给它市场态特征（market_pred_t 和/或原始特征的截面聚合摘要），让树自己学 asset_id × market 的交互分裂，能否提升截面块 IC？",
+  "why_now": {
+    "gap": "代码核实（strategies/v3_hybrid/train.py:434-461, features.py:45-82）：截面设计矩阵 = [cross_sectional_deviation(raw) || history || long_window块 || asset_id]，不含市场块预测值、市场收益、市场波动率等任何聚合量。市场森林预测 y 本身，截面森林预测 e = y - group_mean(y)（解析定义，与市场模型拟合值无关），两者训练时互不依赖，推理时才相加——是纯加性并行结构，不是残差学习。",
+    "why_not_redundant_with_asset_panel_and_market_set": "structural_signal_screen_market_asset_panel/market_set 两个实验测的是反方向——把跨资产结构喂给**市场块**（REJECTED，方差膨胀/-16.02%）。本实验是给**截面块**看市场态，从未测过。",
+    "prior_art_and_honest_difference": "research_history/v3-residual-signal-search-2026-08-14.md 的 'asset × observable regime' 已经测过高度相关的机制：训练完成后在残差上打一个 2-bin 手工线性 adapter，regime 用模型自己预测的截面 RMS 定义，结果 5 个 meta fold 里 3 个 PASS（+0.84%~+3.01%）但 2 个 FAIL（含 meta4 -0.95%），判定'跨时期不稳定'而 REJECTED。本实验三处不同：① 是训练时的输入列，容量由 480 轮树自己决定，不是后验 2-bin adapter；② regime 用 market_pred_t（市场块自身预测，不依赖 XS 模型输出，没有自指）；③ 架构基准已经过 history40/长窗 w512/slow-fast 三次结构升级，不是同一个模型。但 08-14 的核心失败模式——跨折时变不稳定——对新设计同样是风险，门禁必须覆盖，不能只看 pooled。"
+  },
+  "design": {
+    "base_arm": "与生产截面块逐列相同的 [cross_sectional_deviation(raw) || history40 || asset_id]（不含 long window，保持筛选档轻量，若 PASS 再在确认档补上 w512）",
+    "market_state_arm": "base + market_pred_t（市场块 Ridge+LGBM 混合当期预测值，训练/推理顺序一致，无标签泄漏）",
+    "market_state_arm_extended": "market_state_arm + xs_feature_mean_t + xs_feature_std_t（raw200 特征的逐 time_id 截面均值/标准差，不含 target/weight，纯特征级聚合，无泄漏）——仅在 market_state_arm 有信号时才加，避免同时改两个变量",
+    "no_explicit_product_columns": "不手工构造 asset_id × market_pred 的乘积列；只加市场态列本身，让树通过分裂自行组合 asset_id categorical 与市场态列，这是本实验能验证'树能否学到交互'而不是'我们手工设计的交互对不对'的关键设计选择",
+    "label": "e = y - group_mean(y)（逐 time_id 无权解析截面去均值），与生产同口径",
+    "weighting": "weighted，与生产截面块同口径",
+    "evaluator": "必须用树（LightGBM），不用线性/RFF 探测器——假设的机制本身是树对 asset_id×market 列的非线性分裂，线性探测器结构性看不到这种交互，用它会把真实效应误判为不存在。这与 long_history_probe 里'线性是有效探测器'的论证方向相反，需要单独立此为本实验的评价器选择理由",
+    "folds": "rolling_time_folds(5, 78960, embargo 6)，modulo 5，phase_balanced，逐折训练段内部拟合统计量与选列，禁止跨折信息",
+    "stage": "先 1s160 筛选档（单种子/160轮，便宜），过闸门再上 3s480 确认档（沿用生产 3 seed×480 轮），两阶段节奏与 long_history_probe → long_history_ladder 相同"
+  },
+  "arms": [
+    {"name": "tree_base", "role": "配对基准：当前生产截面设计（无市场态列）"},
+    {"name": "tree_market_pred", "role": "主臂：base + market_pred_t"},
+    {"name": "tree_market_pred_agg", "role": "条件次臂：仅在主臂 PASS 后才跑，base + market_pred_t + xs_feature_mean/std"}
+  ],
+  "primary_metric": "配对增量 IC(arm)/IC(base) - 1，逐折 + pooled，走 experiments/feature_screen_compare.py",
+  "gates": [
+    {"id": 1, "name": "pooled_relative_gain_at_least_3pct", "rule": "pooled IC(tree_market_pred)/IC(tree_base) - 1 >= 0.03"},
+    {"id": 2, "name": "at_least_4_of_5_folds_positive", "rule": "count(fold gain > 0) >= 4 —— 这一道是本实验的重点，直接针对 08-14 的失败模式"},
+    {"id": 3, "name": "survives_drop_best_fold", "rule": "去掉增益最大的一折后，pooled 增益仍 > 0"},
+    {"id": 4, "name": "two_delta_A_exceeds_delta_B", "rule": "2*dA > dB —— 增益必须来自加信号(A)而不是减方差(B)"},
+    {"id": 5, "name": "paired_bootstrap_ci_lower_bound_positive", "rule": "逐折配对 block bootstrap（每折 200 块、重抽 4000 次、seed 2026、95%）下界 > 0"},
+    {"id": 6, "name": "exceeds_detection_floor", "rule": "pooled 增益需超过对应规模的检出下限（1s160 实测 6.1%，3s480 实测 8.7%）——低于下限判'测不出'，不是'没有效果'"}
+  ],
+  "verdict_rule": "tree_market_pred 六道全过 ⟹ 1s160 PASS，上 3s480 确认档（沿用 long_history_probe 的两阶段惯例，筛选档 PASS 不代表可晋级，只代表值得花确认档的算力）。任一不过 ⟹ REJECTED，'截面块看不到市场态'这条缺口判定已被证据关闭，不再重开除非模型架构本身再变（比如换掉当前的市场/截面双森林结构）。",
+  "stop_conditions": [
+    "不加 asset_id × market_pred 的显式乘积列",
+    "不搜第二个 regime 定义（比如换成波动率、换成分位数）",
+    "不调 LGBM 超参数去凑门槛",
+    "筛选档任一门槛不过即停，不上 3s480",
+    "tree_market_pred_agg 只在 tree_market_pred 六道全过后才跑，不能同时改两个变量"
+  ],
+  "honest_prior": "中等偏低。正面：market_pred_t 是当前唯一能量化市场态的因果量，且训练时从未喂给过 XS 树；08-14 用相近机制（后验 2-bin regime adapter）在更弱的旧架构上还测出过 3/5 折 PASS，说明信号方向不是空的。反面：①市场块样本外 R² 仅 0.0018，market_pred_t 本身携带的信息稀薄；②08-14 的核心失败模式就是这个机制的跨期不稳定，新设计只是把'谁来学交互'从人工 2-bin 换成树，不能保证解决稳定性问题；③当前 market:cross 占分 41.2%:58.8%、收割率与兑换率乘积≈1，两块目前分工干净，若真有交互增量，此前 asset_panel/asset_regime 两次尝试大概率会露出苗头，但都没有。"
+}
