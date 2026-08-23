@@ -152,6 +152,25 @@ def validate_meta(meta: dict[str, Any], *, scale: float, n_seeds: int, blend_wei
         **{f"{key}_matches": _float_matches(meta.get(key), PUBLIC_BASELINE[key])
            for key in ("slow_fast_window", "slow_fast_slow_relative",
                        "slow_fast_fast_relative")},
+        # ⚠️ 2026-08-23 补：`long_window` 是身份表里**唯一一个 train.py 会产出、
+        # 但默认值就是「关闭」**的键。`train.py:335` 的 `--long-window` 默认 0
+        # ⟹ `train.py:593` 往 meta 里写的是 `None`；而 `main.py:207` 是
+        # `if long_window and ...` ⟹ **静默关掉长窗**，交出低 1.662% 的旧模型。
+        #
+        # ⚠️ 与 slow/fast 三键的关键区别（决定了这里只校验、不覆写）：
+        # 那三个是纯后处理，staging 补写是安全的；而 long_window 决定**截面设计矩阵
+        # 的宽度**（441 vs 361 列，多出的 80 列 = 40 长窗均值 + 40 偏离），
+        # 是训练进森林里的。给一个 361 列的森林盖上「有长窗」的章，好的情况是推理期
+        # 撞上 `lgbm_numpy.py:283` 的列宽 ValueError，坏的情况是交出一个错模型。
+        # ⟹ **绝不在 `stage_candidate` 里覆写它**（见那里的对应注释）。
+        #
+        # ⚠️ 补上之前这个洞是**零参数可达**的：脚本自己的默认候选
+        # `outputs/candidates/v3_hybrid_mkt_shrunk` 正是 long_window=None / 361 列，
+        # 实测 baseline drift、validate_meta、双后端烟测**三道全过**。
+        # 教训：内部自洽的旧架构候选骗不过身份校验，但骗得过一致性校验 ——
+        # 列宽断言只抓「meta 与森林打架」，抓不到「两边一致地错」。
+        "long_window_matches": _float_matches(meta.get("long_window"),
+                                              PUBLIC_BASELINE["long_window"]),
     }
     failed = [name for name, passed in checks.items() if not passed]
     if failed and not off_baseline:
@@ -218,6 +237,10 @@ def stage_candidate(candidate: Path, destination: Path, *, scale: float, n_seeds
     meta["slow_fast_window"] = int(slow_fast["slow_fast_window"])
     meta["slow_fast_slow_relative"] = float(slow_fast["slow_fast_slow_relative"])
     meta["slow_fast_fast_relative"] = float(slow_fast["slow_fast_fast_relative"])
+    # ⚠️ 2026-08-23：**故意不在这里写 `long_window`。** 上面三个 slow/fast 键可以补写，
+    # 是因为它们是纯后处理；long_window 决定截面森林的特征空间（441 vs 361 列），
+    # 覆写它只会让 meta 和森林对不上。缺键/None 的候选应当在 `validate_meta` 处
+    # 被判 `long_window_matches` 失败并**停下来重训**，而不是在这里被「修好」。
     meta.setdefault("slow_fast_note",
                     "由 scripts/promote_v3_candidate.py 在 staging 时写入；"
                     "train.py 不产出这三个键。默认值 = PUBLIC_BASELINE（公榜 0.0041150085 那份）")

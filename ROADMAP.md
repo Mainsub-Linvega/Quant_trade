@@ -33,7 +33,7 @@
 | 后处理 | `prediction_scale=1.16`，clip=0.5；**slow/fast 分离**（逐 asset 自身预测的因果滚动均值，K=2000 真实 time_id 步）| `hybrid_meta.json` |
 | 训练采样 | `sample_modulo=5`，`phase_balanced` | `hybrid_meta.json` |
 | promotion 校验 | 双后端最大差 `1.388e-16`，结构敏感性门禁通过 | `outputs/promotions/v3_hybrid_long512/promotion_manifest.json` |
-| train/inference 一致性 | **`4.019e-09`**（两后端同值，2026-08-18 P0 重测，默认 `--partition-index 8 --n-time-ids 50`）。⚠️ 本表此前记的是 `8.111e-09`，同参数复测对不上 —— 两个数都远低于 1e-6 门槛，未去追因，以本次实测为准。⚠️ `check_consistency.py` 已改为 **slow/fast-aware** —— 训练端没有该后处理的概念，不补上会永久报红 9.4e-02 | `scripts/check_consistency.py` |
+| train/inference 一致性 | **`1.098e-08`**（两后端同值，2026-08-23 实测，**新默认** `--partition-index 8 --n-time-ids 2100`）。⭐ 旧默认 50 太窄：每 asset 只有 50 个观测 ⟹ 长窗 512 的环形缓冲只填到 **9.8%、从未回绕**，slow/fast 的 2000 步窗只填到 **2.5%、左端从未移动** ⟹ 测的是「还没热起来的模型」，而榜上跑的是热的那个。见 §4 P12。⚠️ 本表此前那条「记 `8.111e-09`、同参数复测对不上、**未去追因**」**已追因**：`max\|Δ\|` 随 `--n-time-ids` **单调增长**（50→4.019e-09、200→7.603e-09、600→**8.117e-09**、1000→8.770e-09、1500/2100→1.098e-08、3000→1.630e-08），而同参数重复跑**逐位相同**（n=50 / n=600 各验两次）⟹ 那两个数的差别是**当时用了不同的窗口**（8.111e-09 对应约 600），**不是不确定性**。⚠️ `check_consistency.py` 是 **slow/fast-aware** 的 —— 训练端没有该后处理的概念，不补上会永久报红 9.4e-02 | `scripts/check_consistency.py` |
 
 ⚠️ `experiments/ledger.csv` 里 08-11、08-13 两行注释中的 `0.00520002` 是**当时**的榜首真值，
 按 CLAUDE.md §7 不回写历史；以本表为当前值。
@@ -125,6 +125,54 @@
     连续触发 24.8–26.1GB cgroup OOM；正式实验需 chunked design writer 或 64GB+ CPU 服务器。
 
 ## 4. 行动面板
+
+### P12 — 转正门禁补 `long_window` + 一致性窗口扩宽 —— `INCIDENT`（未爆）/ `RESULT`（2026-08-23）
+
+- **状态**：`CLOSED`。生产预测**一位未变**，生产目录与 long512 manifest 8 文件逐字节相同。
+- **⭐ 这是同型事故的第五个现场，也是第一个「零参数可达」的。** 前四次（08-18 slow/fast →
+  08-19 结构开关 → 08-21 `PUBLIC_BASELINE` → 08-23 重训计划）都需要某个特定动作才触发；
+  这一次不需要：`promote_v3_candidate.py` 的**默认** `--candidate`
+  就是 `outputs/candidates/v3_hybrid_mkt_shrunk`（`long_window=None`、截面森林 361 列、
+  公榜低 **1.662%**），实测 `check_against_public_baseline` / `validate_meta` /
+  双后端烟测**三道门全过**并写出 staging。
+- **根因（值得单独记，因为它反直觉）**：`long_window` 在 `PUBLIC_BASELINE` 里躺了两天
+  （08-21 加入），但 `validate_meta()` 的 `checks` 字典**一条都没查它**。
+  而推理侧**确实**有一道硬校验（`lgbm_numpy.py:283` 的列宽 ValueError）——
+  它只抓「meta 与森林**打架**」（meta 说有长窗、森林是 361 列），
+  **抓不到「两边一致地错」**。盘上 13 个旧候选全是后者 ⟹ 一致性校验对它们完全无感。
+  ⟹ **一致性校验不能替代身份校验**，两者抓的是正交的两类错误。
+- **⚠️ 修法与 slow/fast 相反，不能照抄**：`slow_fast_*` 是纯后处理，`train.py` 不产出，
+  由 staging 补写；而 `long_window` 决定**截面设计矩阵的宽度**（441 = 361 + 80，
+  多出的 80 列 = 40 长窗均值 + 40 偏离），是**训练进森林里的**（`train.py:593` 会写它，
+  默认 `--long-window 0` ⟹ 写 `None`）。给 361 列的森林盖上「有长窗」的章，
+  好的情况是推理期撞列宽错，坏的情况是交出一个错模型。
+  ⟹ 最终实现是**只校验、绝不覆写**，也不加 CLI 出口；有意偏离走已有的 `--off-baseline`。
+- **⭐ 一致性门禁此前几乎没测到当前生产结构**：默认 `--n-time-ids 50` 下每 asset 只有 50 个
+  观测 ⟹ 长窗 512 缓冲填到 9.8%、**从未回绕**；slow/fast 的 2000 真实步窗填到 2.5%、
+  **左端从未移动**。而这两块正是 08-18 与 08-21 转正、公榜合计 **+4.6%** 的结构。
+  默认已提到 **2100**（长窗满且回绕 4.1 次、slow/fast 窗满且左端开始移动），
+  实测代价只有 **2.7s → 5.9s**（lightgbm），不值得做成可选档。
+- **一致性报告此前不记模型身份**：只记 `baseline_model.json`（冻结岭回归）一个文件的 hash，
+  六片森林和 `hybrid_meta.json` 一个都不记 ⟹ 能证明「两条口径一致」，
+  却不能证明「一致的是哪个模型」。现复用 `verify_delivery_runtime.model_identity`
+  （**不另造第二份取值表**，CLAUDE.md §7），报告里现有 8 个文件 hash +
+  13 个身份键 + `public_baseline_drift` + manifest 逐字节对拍。
+- **四道新门禁都做了变异测试**（证明会咬，不是摆设）：退回改动前的 promote ⟹
+  `test_dropping_any_identity_key_is_rejected` 当场红；往 `PUBLIC_BASELINE` 塞第 14 个键 ⟹
+  `test_every_baseline_key_is_mapped_or_exempt` 当场红；把默认窗口调回 50 ⟹
+  长窗回绕与 slow/fast 左端两条断言当场红。
+- **⚠️ 两处副作用**：
+  1. 盘上 **13 个长窗转正前的旧候选现在需要 `--off-baseline` 才能 staging**。这是有意的
+     （它们确实是旧架构），且**不影响 RUNBOOK D0.4** —— 那步走 `sealed_period_eval.py`，
+     不经过 promote。
+  2. `v1_ridge` 在新窗口下 `max|Δ|` = **1.192e-07**，仍低于 `atol=1e-6` 但余量收到 **8.4×**
+     （v3_hybrid 是 1.098e-08，91×）。v1_ridge 非生产策略，不改；记在这里以免下次被当成回归。
+- **证据**：`scripts/promote_v3_candidate.py`（`validate_meta` 的 `long_window_matches`）、
+  `scripts/check_consistency.py`、`tests/test_model_identity_key_coverage.py`
+  （新增 `PromoteGateCoverageTest`，把**转正**接进消费者表 —— 此前只有 audit / retrain /
+  verify_delivery 三家）、`tests/test_promote_v3_candidate.py`（新增 `LongWindowIdentityTest`）、
+  `tests/test_check_consistency_window.py`（新文件）。
+  全量 **273 passed / 41 subtests**（本次 +12 用例）。生产目录**一字节未动**。
 
 ### P11 — 评测环境资源门禁 —— `RESULT`（2026-08-23，首次实测，结论是「别改模型」）
 
@@ -405,7 +453,7 @@ P4 已测（CLOSED）  滑动窗 78,960 → 扩展窗，往训练段**前端**�
 
 - **状态**：`RESOURCE_SMOKE_PASS / FORMAL_OOF_DEFERRED`（2026-08-19）。
 - **当前数据验证顺序**：
-  1. 完整 unittest（当前基线 **73 passed / 18 subtests**）；
+  1. 完整 unittest（当前基线 **273 passed / 41 subtests**，2026-08-23 P12 后）；
   2. 用 2026-08-18 audit 做 metadata 对比；8/23 到包后再做完整 hash；
   3. 重跑 v3 LightGBM/NumPy train-inference consistency；
   4. 必要时重跑 4 核官方 runner，不因实验代码变化自动替换生产。

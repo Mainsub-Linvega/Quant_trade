@@ -36,10 +36,69 @@ def make_candidate(root: Path, **overrides) -> tuple[Path, list[str], list[str]]
         "slow_fast_window": PUBLIC_BASELINE["slow_fast_window"],
         "slow_fast_slow_relative": PUBLIC_BASELINE["slow_fast_slow_relative"],
         "slow_fast_fast_relative": PUBLIC_BASELINE["slow_fast_fast_relative"],
+        # ⚠️ 2026-08-23：`long_window` 与上面三个键**不同类**，别照抄它们的心智模型。
+        # slow/fast 是纯后处理，train.py 不产出、由 staging 补写；
+        # 而 long_window 决定截面设计矩阵的宽度（441 vs 361 列）—— 它是**训练进森林里的**，
+        # train.py:593 会写它，staging **绝不覆写**。夹具里给它基线值，是因为夹具扮演的是
+        # 「一个用 --long-window 512 训出来的合格候选」。缺键的情形由下面的回归用例单独覆盖。
+        "long_window": PUBLIC_BASELINE["long_window"],
     }
     meta.update(overrides)
     (source / "hybrid_meta.json").write_text(json.dumps(meta))
     return source, models, market
+
+
+class LongWindowIdentityTest(unittest.TestCase):
+    """2026-08-23 的回归：`long_window` 是第 14 个身份键，此前 validate_meta 一条都没查它。
+
+    实测过的后果：脚本**默认**候选 `outputs/candidates/v3_hybrid_mkt_shrunk`
+    （long_window=None、截面森林 361 列、公榜低 1.662%）零参数就能把
+    baseline drift / validate_meta / 双后端烟测三道门全部走过。
+    """
+
+    def test_missing_long_window_is_rejected(self) -> None:
+        """缺键 = 训练时没传 `--long-window`（train.py:335 默认 0 ⟹ meta 写 None）。
+
+        而 main.py:207 是 `if long_window and ...` ⟹ 缺键**静默关掉长窗、不报错**。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, _, _ = make_candidate(root, long_window=None)
+            with self.assertRaises(ValueError) as caught:
+                stage_candidate(source, root / "stage", scale=1.16, n_seeds=3, blend_weight=1.0)
+            self.assertIn("long_window_matches", str(caught.exception))
+
+    def test_wrong_long_window_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, _, _ = make_candidate(root, long_window=64)   # long_window_ladder 的另一档
+            with self.assertRaises(ValueError) as caught:
+                stage_candidate(source, root / "stage", scale=1.16, n_seeds=3, blend_weight=1.0)
+            self.assertIn("long_window_matches", str(caught.exception))
+
+    def test_off_baseline_is_the_only_way_past(self) -> None:
+        """偏离必须显式按下去 —— 留给 8/23 回补数据后有意重训不带长窗的情形。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, _, _ = make_candidate(root, long_window=None)
+            stage_candidate(source, root / "stage", scale=1.16, n_seeds=3,
+                            blend_weight=1.0, off_baseline=True)
+
+    def test_staging_never_invents_long_window(self) -> None:
+        """⭐ 与 slow/fast 相反的方向：staging **不得**替候选补上这个键。
+
+        补上等于给一个 361 列的森林盖「有长窗」的章 —— 推理期好的情况是撞上
+        `lgbm_numpy.py:283` 的列宽 ValueError，坏的情况是交出一个错模型。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, _, _ = make_candidate(root, long_window=None)
+            stage = root / "stage"
+            stage_candidate(source, stage, scale=1.16, n_seeds=3,
+                            blend_weight=1.0, off_baseline=True)
+            staged = json.loads((stage / "hybrid_meta.json").read_text())
+            self.assertIsNone(staged["long_window"],
+                              "staging 把候选的 long_window 改掉了 —— meta 会与森林宽度打架")
 
 
 class PromoteV3CandidateTest(unittest.TestCase):

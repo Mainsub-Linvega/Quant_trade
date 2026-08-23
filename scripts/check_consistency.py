@@ -34,6 +34,13 @@ if str(_REPO_ROOT) not in sys.path:
 from src.io import FEATURE_COLUMNS, train_files       # noqa: E402 —— 要先设好 sys.path
 from src.artifact import sha256_file                  # noqa: E402
 
+# ⚠️ 2026-08-23：模型身份**只有一个定义**，就是 `verify_delivery_runtime.model_identity`
+# —— 它已被 `tests/test_model_identity_key_coverage.py` 的 DeliveryReportCoverageTest
+# 管着（PUBLIC_BASELINE 加键而它漏印就当场红）。这里复用它，不再手抄一张取值表：
+# 抄第二份的下场 CLAUDE.md §7 已经写死（同一个数字不在两处维护）。
+sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+from verify_delivery_runtime import model_identity, resolve_manifest  # noqa: E402
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Assert train/inference prediction parity.")
@@ -42,7 +49,20 @@ def parse_args() -> argparse.Namespace:
                         help="v3_hybrid 专用：树推理走哪条路（默认自动选）")
     parser.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
     parser.add_argument("--partition-index", type=int, default=8)
-    parser.add_argument("--n-time-ids", type=int, default=50)
+    # ⚠️ 2026-08-23：默认由 50 提到 2100。50 个 time_id 下这道门禁**几乎没测到
+    # 当前生产结构**——每个 asset 只有 50 个观测：长窗 512 的环形缓冲只填到 9.8%、
+    # 从未回绕，slow/fast 的 2000 真实步窗只填到 2.5%、左端从未移动过。
+    # ⟹ 它证明的是「一个还没热起来的模型两侧一致」，而榜上跑的是热的那个。
+    # 2100 步下三条路径全部走到：长窗满且回绕 4.1 次、slow/fast 窗填满且左端开始移动。
+    # 代价实测只有 2.7s → 5.9s（本机、lightgbm 后端），不值得做成可选档。
+    #
+    # ⚠️ 顺带解释 ROADMAP §2 那条「此前记 8.111e-09，同参数复测对不上，未去追因」：
+    # `max|Δ|` 是**随本参数单调增长**的（实测 50→4.019e-09、200→7.603e-09、
+    # 600→8.117e-09、1000→8.770e-09、1500/2100→1.098e-08、3000→1.630e-08），
+    # 而同参数重复跑逐位相同（已实测 n=50 与 n=600 各两次）。
+    # ⟹ 那两个数的差别是**当时用了不同的 --n-time-ids**（8.111e-09 对应约 600），
+    # 不是不确定性。两者都远低于 atol=1e-6。
+    parser.add_argument("--n-time-ids", type=int, default=2100)
     parser.add_argument("--atol", type=float, default=1e-6)
     parser.add_argument("--model-path", default=None,
                         help="默认取 strategies/<strategy>/model/baseline_model.json")
@@ -174,7 +194,14 @@ def main() -> None:
                     "strategy": args.strategy,
                     "backend": getattr(model, "backend", None),
                     "model_path": str(model_path),
+                    # ⚠️ 2026-08-23 补：此前这份报告**只记冻结岭回归那一个文件的 hash**
+                    # （`baseline_model.json`），六片森林和 `hybrid_meta.json` 一个都不记。
+                    # ⟹ 报告能证明「两条口径一致」，却不能证明「一致的是哪个模型」——
+                    # 而 08-18 / 08-21 两次事故恰恰都是「校验全过，但过的是另一个模型」。
                     "model_sha256": sha256_file(model_path),
+                    **({"model_identity": model_identity(
+                        model_path.parent, resolve_manifest(model_path.parent, "auto"))}
+                       if args.strategy == "v3_hybrid" else {}),
                     "partition": files[args.partition_index].name,
                     "time_ids": int(frame["time_id"].nunique()),
                     "rows": int(len(frame)),

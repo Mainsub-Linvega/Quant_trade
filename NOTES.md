@@ -136,11 +136,14 @@ ROADMAP 历史记录的 `112 passed / 22 subtests` 是 pytest 的数；本文件
 ### 训练/推理一致性
 
 ```bash
-.venv/bin/python scripts/check_consistency.py \
-  --strategy v3_hybrid --n-time-ids 500
+# ⚠️ 2026-08-23 起默认 --n-time-ids 已是 2100（旧默认 50 只把长窗缓冲填到 9.8%、
+# slow/fast 窗填到 2.5% ⟹ 测的是「还没热起来的模型」）。**不要再手传更小的值** ——
+# 传 500 会让长窗只回绕不到一次、slow/fast 左端完全不动，等于绕过 P12 刚补的覆盖。
+.venv/bin/python scripts/check_consistency.py --strategy v3_hybrid --backend lightgbm
+.venv/bin/python scripts/check_consistency.py --strategy v3_hybrid --backend numpy
 
-.venv/bin/python scripts/check_consistency.py \
-  --strategy v3_hybrid --backend numpy --n-time-ids 500
+# 当前实测（2026-08-23，两后端同值）：max|train − infer| = 1.098e-08，atol 1e-6
+# 耗时：lightgbm 6.0s / numpy 13.2s。加 --output <路径> 才落盘（含 8 个文件 hash 的模型身份）
 ```
 
 ### 数据更新审计
@@ -189,6 +192,95 @@ ROADMAP 历史记录的 `112 passed / 22 subtests` 是 pytest 的数；本文件
 > 那是一个独立的笔记目录、不是 git 仓库，所以 `git log` 查不到 ≠ 文件不存在。
 > 按 CLAUDE.md §7「旧结论不删除」，引用原样保留以说明当时的推理来源；
 > 可核验的**实验证据**一律仍以 `outputs/experiments/` 与 `experiments/ledger.csv` 为准。
+
+### 2026-08-23 — `INCIDENT`（未爆）/ `RESULT`：同型事故的**第五个现场**，且是第一个「零参数可达」的
+
+**日期**：2026-08-23
+**标签**：`INCIDENT`（未造成损失）+ `RESULT`（一致性尺子的窗口依赖）
+
+**问题**：上一条（第四次）补的是**重训计划**漏 `--long-window`。但那次只补了
+`retrain_extended` 一侧。**转正**这条路上 `long_window` 是不是也漏了？
+
+**动机与机制**：`long_window` 于 08-21 加进 `PUBLIC_BASELINE`（`promote_v3_candidate.py:69`），
+但加键的人只接了 audit / retrain / verify_delivery 三个消费者。
+`validate_meta()` 的 `checks` 字典里**一条都没查它** —— 而转正是交付件的必经路。
+
+**实验设计与固定项**：不改任何模型产物，只做三件事：
+(1) 直接对生产模型的副本删掉 meta 里的 `long_window`，跑 `validate_staging`，看拦不拦；
+(2) 用脚本**默认参数**（默认候选 `v3_hybrid_mkt_shrunk`、scale 1.16、blend 1.0、3 seeds、
+    不加任何 flag）走完整条 staging 链，看拦不拦；
+(3) 对 `--n-time-ids` 做窗口扫描，量 `max|train − infer|` 的窗口依赖与可重复性。
+
+**结果**：
+
+1. **(1) 被拦下了，但拦它的不是身份校验**，是 `lgbm_numpy.py:283` 的
+   `设计矩阵有 361 列，模型要 441 列`。⟹ 那是**一致性**校验，只在「meta 与森林打架」时响。
+2. **(2) 三道门全过。** 零参数、零 flag，staging 目录写出来了，`long_window: None`，
+   双后端 max|Δ| = 2.082e-16。⟹ 交出去的会是长窗转正**前**那份，公榜低 **1.662%**。
+   根因：盘上 13 个旧候选是 `long_window=None` + 361 列森林，**内部自洽** ——
+   ⭐ **一致性校验抓不到「两边一致地错」，只有身份校验能抓。这两者正交，不能互相替代。**
+3. **(3) 一致性尺子本身有窗口依赖，而旧默认窗口几乎没测到当前生产结构**：
+
+   | `--n-time-ids` | 50 | 200 | 600 | 1000 | 1500 | 2100 | 3000 |
+   |---|---|---|---|---|---|---|---|
+   | `max\|train − infer\|` | 4.019e-09 | 7.603e-09 | **8.117e-09** | 8.770e-09 | 1.098e-08 | 1.098e-08 | 1.630e-08 |
+
+   同参数重复跑**逐位相同**（n=50 与 n=600 各验两次）。
+   ⭐ **顺带结掉 ROADMAP §2 一条挂了 5 天的「未去追因」**：那里记的
+   「此前 `8.111e-09`，同参数复测得 `4.019e-09`，对不上」——
+   `max|Δ|` 单调依赖窗口且同参数完全确定 ⟹ 是**当时用了不同的 `--n-time-ids`**
+   （8.111e-09 落在 n≈600 处），**不是不确定性**。
+
+   而旧默认 50 意味着每 asset 只有 50 个观测：长窗 512 的环形缓冲填到 **9.8%、从未回绕**，
+   slow/fast 的 2000 真实步窗填到 **2.5%、左端从未移动**。
+   ⟹ 这道门禁一直在证明「一个还没热起来的模型两侧一致」，
+   而榜上跑的是热的那个 —— 且这两块结构正是公榜合计 **+4.6%** 的来源。
+
+**解释与限制**：
+
+- 修法**与 slow/fast 相反**，不能照抄那次的心智模型。`slow_fast_*` 是纯后处理、
+  `train.py` 不产出、由 staging 补写是安全的；而 `long_window` 决定截面设计矩阵宽度
+  （441 = 361 + 80，多出的 80 列 = 40 长窗均值 + 40 偏离），是**训练进森林里的**。
+  在 staging 期「帮它补上」= 给 361 列的森林盖「有长窗」的章。
+  ⟹ 只校验、**绝不覆写**，也不加 CLI 出口。
+- 窗口 50→2100 的代价实测只有 **2.7s → 5.9s**（lightgbm 后端），远低于按行数线性外推的估计
+  （因为固定开销占大头），所以直接做默认、没做 `--deep` 可选档。
+- ⚠️ `v1_ridge` 在新窗口下 `max|Δ|` = **1.192e-07**，仍低于 atol 1e-6 但余量从很宽收到
+  **8.4×**（v3_hybrid 是 1.098e-08 = 91×）。v1_ridge 非生产策略，不改，但记下来
+  以免下次被误读成回归。
+
+**决策**：
+
+- `validate_meta()` 加 `long_window_matches`（复用已有的 `_float_matches`，
+  它对缺键/非数值一律判不匹配）；`stage_candidate()` 加注释写明**为什么故意不补写**。
+- `tests/test_model_identity_key_coverage.py` 把**转正**加进消费者表（此前只有三家），
+  断言是**行为式**的：逐个删掉 13 个身份键，每个都必须让 `validate_meta` 报错。
+  ⭐ 不用「名单比对」是有原因的 —— 前四次事故里有三次，键名明明在某张表里，
+  但那张表根本没被用来做判断。**只有「把键拿掉、看门禁响不响」才证明它真的接上了。**
+- `check_consistency.py` 默认窗口 50 → 2100，并复用
+  `verify_delivery_runtime.model_identity` 落盘完整模型身份
+  （此前只记冻结岭回归一个文件的 hash，六片森林与 meta 一个都不记）。
+- 新增 `tests/test_check_consistency_window.py` 钉住默认窗口必须宽到能让长窗回绕、
+  让 slow/fast 左端移动 —— 否则「顺手调小点让测试快些」会把覆盖悄悄偷走。
+- **四道门都做了变异测试**，确认会咬：退回改动前的 promote / 塞第 14 个身份键 /
+  把窗口调回 50，三种情形分别当场红。
+
+**证据**：`scripts/promote_v3_candidate.py`、`scripts/check_consistency.py`、
+`tests/test_model_identity_key_coverage.py`（`PromoteGateCoverageTest`）、
+`tests/test_promote_v3_candidate.py`（`LongWindowIdentityTest`）、
+`tests/test_check_consistency_window.py`。
+全量 **273 passed / 41 subtests**（+12 用例）。生产目录与 long512 promotion manifest
+8 文件逐字节相同，**预测一位未变**。ROADMAP §4 P12。
+
+**后续问题**：
+
+1. 身份键现在有 13 个、消费者有 4 家，靠一张手工映射表（`PROMOTE_META_KEYS`）连接。
+   第六个现场大概率出现在**下一个新增的消费者**上，而不是下一个新增的键 ——
+   coverage 测试目前无法发现「有人新写了一个读 meta 做决定的脚本却没进表」。
+2. 一致性门禁现在覆盖了长窗回绕与 slow/fast 左端移动，但仍只跑**单个分区的前 N 个
+   time_id**。跨分区边界（`AssetLongWindow` 的状态要不要跨分区延续）没有被测到。
+3. 旧默认 50 是什么时候、为什么定的？若它一开始就是「跑得快」而非「够用」，
+   那么同一类「为省时间牺牲覆盖」的选择可能还在别处。
 
 ### 2026-08-23 — `INCIDENT`（未爆）：重训计划漏掉 `long_window`，这是同型事故的第四次
 

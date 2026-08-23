@@ -288,7 +288,7 @@ resource smoke 可以在约 11.5GB RSS 完成，但它使用全局生产 stats/f
 ## D4：转正门禁全链
 
 ```bash
-.venv/bin/python -m pytest -q                     # 基线 73 passed / 18 subtests
+.venv/bin/python -m pytest -q                     # 基线 273 passed / 41 subtests（2026-08-23 P12 后）
 .venv/bin/python scripts/check_consistency.py --strategy v3_hybrid --backend lightgbm
 .venv/bin/python scripts/check_consistency.py --strategy v3_hybrid --backend numpy
 .venv/bin/python scripts/promote_v3_candidate.py --candidate outputs/candidates/<候选>

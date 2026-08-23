@@ -10,7 +10,8 @@
 | `audit_submission_zip.public_baseline_drift` | 提交包的内容身份审计 |
 | `retrain_extended.{production_structure, BASELINE_CHECKED_KEYS}` | 重训计划复现生产结构 |
 | `verify_delivery_runtime.model_identity` | 交付报告打印的 meta 身份 |
-| `make_submission` / `promote_v3_candidate` | 打包与转正 |
+| `promote_v3_candidate.validate_meta` | 转正前的 staging meta 身份校验 |
+| `make_submission` | 打包 |
 
 **同一类事故已经发生四次**，每次都是「往身份里加了一个键，但某个消费者没跟上」：
 
@@ -45,7 +46,7 @@ for _p in (str(ROOT), str(ROOT / "scripts")):
         sys.path.insert(0, _p)
 
 from audit_submission_zip import public_baseline_drift  # noqa: E402
-from promote_v3_candidate import PUBLIC_BASELINE  # noqa: E402
+from promote_v3_candidate import PUBLIC_BASELINE, validate_meta  # noqa: E402
 from retrain_extended import BASELINE_CHECKED_KEYS, production_structure  # noqa: E402
 from verify_delivery_runtime import model_identity  # noqa: E402
 
@@ -67,6 +68,35 @@ VERIFY_DELIVERY_ALIASES = {
     "n_seeds": "n_lgbm_models",
     "market_model_count": "n_market_models",
 }
+
+# ---- `promote_v3_candidate.validate_meta` 承载每个身份键的 meta 字段 ----
+# ⚠️ 2026-08-23 加这张表的理由：本文件此前只覆盖 audit / retrain / verify_delivery
+# **三家**，而对 promote 只 import 了 `PUBLIC_BASELINE` 常量本身 ——
+# 等于「转正」这条最关键的路**从来没被这道门禁看过**。
+# 实测后果：`long_window` 在 `PUBLIC_BASELINE` 里躺了两天，`validate_meta()` 却一条都没查它，
+# 而脚本自己的默认候选 `outputs/candidates/v3_hybrid_mkt_shrunk`（long_window=None、
+# 截面森林 361 列、公榜低 1.662%）**零参数就能三道门全过**。
+#
+# 表的方向是「PUBLIC_BASELINE 的键 → 它在 meta 里由哪些字段承载」。
+# 有些键名不同（`n_seeds` 在 meta 里是 `lgbm_model_files` 的长度），所以不能靠键名相等来查。
+PROMOTE_META_KEYS: dict[str, tuple[str, ...]] = {
+    "blend_weight": ("blend_weight",),
+    "num_iteration": ("num_iteration",),
+    "history_window": ("history_window",),
+    "history_positions_count": ("history_positions",),
+    "prediction_scale": ("prediction_scale",),
+    "n_seeds": ("lgbm_model_files",),
+    "market_lambda": ("market_lambda",),
+    "market_model_count": ("market_model_files",),
+    "cross_section_weighted": ("cross_section_weighted",),
+    "slow_fast_window": ("slow_fast_window",),
+    "slow_fast_slow_relative": ("slow_fast_slow_relative",),
+    "slow_fast_fast_relative": ("slow_fast_fast_relative",),
+    "long_window": ("long_window",),
+}
+
+# 确实无法由 validate_meta 把关的键必须进这里**并写理由**（空着 = 红）。
+PROMOTE_EXEMPT: dict[str, str] = {}
 
 PRODUCTION_MODEL_DIR = ROOT / "strategies" / "v3_hybrid" / "model"
 
@@ -145,6 +175,61 @@ class DeliveryReportCoverageTest(unittest.TestCase):
         for baseline_key, identity_key in VERIFY_DELIVERY_ALIASES.items():
             self.assertIn(baseline_key, PUBLIC_BASELINE)
             self.assertIn(identity_key, identity)
+
+
+class PromoteGateCoverageTest(unittest.TestCase):
+    """转正门禁（第四个消费者）—— 断言是**行为式**的：删键必须当场红。
+
+    不用「名单比对」是有原因的：前四次事故里有三次，键名明明在某张表里，
+    但那张表根本没被用来做判断。只有「把键拿掉、看门禁响不响」才证明它真的接上了。
+    """
+
+    def _baseline_kwargs(self) -> dict:
+        return {"scale": PUBLIC_BASELINE["prediction_scale"],
+                "n_seeds": PUBLIC_BASELINE["n_seeds"],
+                "blend_weight": PUBLIC_BASELINE["blend_weight"]}
+
+    def test_baseline_meta_passes(self) -> None:
+        """先证明夹具本身是干净的，否则下面的「都红了」毫无意义。"""
+        validate_meta(baseline_meta(), **self._baseline_kwargs())
+
+    def test_every_baseline_key_is_mapped_or_exempt(self) -> None:
+        """往 PUBLIC_BASELINE 加键而 promote 没跟上 —— 当场红。"""
+        missing = [key for key in PUBLIC_BASELINE
+                   if key not in PROMOTE_META_KEYS and key not in PROMOTE_EXEMPT]
+        self.assertEqual(
+            missing, [],
+            f"这些身份键没被 PROMOTE_META_KEYS 映射、也没写进 PROMOTE_EXEMPT：{missing}。"
+            f"转正是交付件的必经路 —— 要么让 validate_meta 查它，要么写明为什么查不了。")
+
+    def test_dropping_any_identity_key_is_rejected(self) -> None:
+        """⭐ 核心断言：**丢键必须失败**。
+
+        四次同型事故全部是「键没了」而不是「值错了」，而 `main.py` 对缺键一律静默降级
+        （`if long_window and ...` / `PredictionTrail(...) if window else None`）⟹
+        缺键这条路上没有任何东西会报错，除非门禁自己拦。
+        """
+        for key, meta_keys in PROMOTE_META_KEYS.items():
+            with self.subTest(key=key):
+                meta = baseline_meta()
+                for meta_key in meta_keys:
+                    meta.pop(meta_key, None)
+                with self.assertRaises(ValueError, msg=
+                        f"meta 里丢掉 {meta_keys}（身份键 {key}）竟然通过了 validate_meta —— "
+                        f"这正是 08-18 / 08-19 / 08-21 / 08-23 四次事故的形状"):
+                    validate_meta(meta, **self._baseline_kwargs())
+
+    def test_off_baseline_is_the_only_way_past(self) -> None:
+        """偏离必须是**显式按下去**的，不能是漏掉的（沿用 EXCLUDED_MODULES 那套语义）。"""
+        meta = baseline_meta()
+        meta.pop("long_window")
+        validate_meta(meta, **self._baseline_kwargs(), off_baseline=True)
+
+    def test_exemptions_all_carry_a_reason_and_are_still_real_keys(self) -> None:
+        for key, reason in PROMOTE_EXEMPT.items():
+            self.assertIn(key, PUBLIC_BASELINE,
+                          f"{key} 已不在 PUBLIC_BASELINE 里，豁免表该清理")
+            self.assertTrue(reason.strip(), f"{key} 的豁免没写理由")
 
 
 if __name__ == "__main__":
