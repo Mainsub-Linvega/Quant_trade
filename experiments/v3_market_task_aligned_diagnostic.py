@@ -192,6 +192,74 @@ def _render_markdown(payload: Mapping[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
+
+
+def scan_market_difference_scale(
+    target: np.ndarray,
+    weight: np.ndarray,
+    baseline: np.ndarray,
+    candidate: np.ndarray,
+    fold: np.ndarray,
+    *,
+    alphas: np.ndarray,
+) -> dict[str, object]:
+    """Scan candidate-minus-baseline amplitudes without retraining."""
+    from src.metric import scale_invariant_score, weighted_zero_mean_r2
+
+    y = np.asarray(target, dtype=np.float64)
+    w = np.asarray(weight, dtype=np.float64)
+    base = np.asarray(baseline, dtype=np.float64)
+    cand = np.asarray(candidate, dtype=np.float64)
+    folds = np.asarray(fold, dtype=np.int64)
+    values = np.asarray(alphas, dtype=np.float64)
+    if not (y.shape == w.shape == base.shape == cand.shape == folds.shape):
+        raise ValueError("energy scan inputs must be aligned")
+    if values.ndim != 1 or len(values) == 0 or not np.all(np.isfinite(values)):
+        raise ValueError("alphas must be a non-empty finite vector")
+    curve: list[dict[str, object]] = []
+    for alpha in values:
+        prediction = base + float(alpha) * (cand - base)
+        metric = scale_invariant_score(y, prediction, w)
+        curve.append({
+            "alpha": float(alpha),
+            "peak": float(metric["peak"]),
+            "A": float(metric["A"]),
+            "B": float(metric["B"]),
+            "score": float(weighted_zero_mean_r2(y, prediction, w)),
+        })
+    best = max(curve, key=lambda row: float(row["peak"]))
+    return {"best_alpha": float(best["alpha"]), "curve": curve}
+
+
+def write_energy_scan_bundle(
+    payload: Mapping[str, object], output_dir: str | Path, label: str,
+) -> dict[str, Path]:
+    """Atomically persist post-hoc energy-scan evidence."""
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    json_path = directory / f"{label}.json"
+    markdown_path = directory / f"{label}.md"
+    _atomic_write(
+        json_path,
+        json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default) + "\n",
+    )
+    lines = [
+        "# Market Difference Energy Scan",
+        "",
+        f"Best alpha: **{payload.get('best_alpha')}**",
+        "",
+        "| Alpha | Peak | A | B | Score |",
+        "|---:|---:|---:|---:|---:|",
+    ]
+    for row in payload.get("curve", []):
+        lines.append(
+            f"| {row.get('alpha')} | {float(row.get('peak', np.nan)):.10f} | "
+            f"{float(row.get('A', np.nan)):.10f} | {float(row.get('B', np.nan)):.10f} | "
+            f"{float(row.get('score', np.nan)):.10f} |"
+        )
+    lines.append("\nNo model was retrained and no submission CSV was generated.\n")
+    _atomic_write(markdown_path, "\n".join(lines))
+    return {"json": json_path, "markdown": markdown_path}
 def write_diagnostic_bundle(
     payload: Mapping[str, object], output_dir: str | Path, label: str,
 ) -> dict[str, Path]:

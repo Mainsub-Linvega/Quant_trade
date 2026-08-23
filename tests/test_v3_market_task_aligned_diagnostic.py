@@ -16,6 +16,8 @@ from experiments.v3_market_task_aligned_diagnostic import (
     market_overlap_summary,
     write_diagnostic_bundle,
 )
+from experiments.v3_market_task_aligned_diagnostic import scan_market_difference_scale
+from experiments.v3_market_task_aligned_diagnostic import write_energy_scan_bundle
 
 from experiments.run_market_task_aligned_diagnostic import _row_slice
 
@@ -69,3 +71,30 @@ def test_row_slice_returns_complete_contiguous_time_range():
     result = _row_slice(time_ids, np.array([1, 2]))
 
     assert result == slice(2, 6)
+
+
+def test_scan_market_difference_scale_finds_fold_specific_peak():
+    target = np.array([1.0, 2.0, 3.0, 4.0])
+    weight = np.ones(4)
+    baseline = np.array([0.0, 1.0, 2.0, 3.0])
+    candidate = np.array([0.5, 1.5, 2.5, 3.5])
+
+    result = scan_market_difference_scale(
+        target, weight, baseline, candidate, np.array([0, 0, 1, 1]),
+        alphas=np.array([0.0, 0.5, 1.0]),
+    )
+
+    assert result["best_alpha"] in {0.0, 0.5, 1.0}
+    assert len(result["curve"]) == 3
+
+
+def test_write_energy_scan_bundle_contains_curve_and_no_submission(tmp_path):
+    paths = write_energy_scan_bundle(
+        {"best_alpha": 0.5, "curve": [{"alpha": 0.5, "peak": 1.0}]},
+        tmp_path,
+        "energy_diag",
+    )
+
+    assert paths["json"].exists()
+    assert paths["markdown"].exists()
+    assert not any("submission" in path.name.lower() for path in tmp_path.iterdir())
