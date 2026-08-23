@@ -17,6 +17,15 @@ P0 动作 3 要的恰恰是「在接近私榜环境的 4 核设置下验证 Ligh
   lightgbm 不可用时的真实路径。不是传 `--backend numpy` 假装 —— 那个参数根本传不进官方
   runner（`load_model` 调的是无参 `Model()`）。
 
+## 为什么还要量内存
+
+`docs/competition_description.md:152-166` 写明评测环境是 **4 核 / 12 GB 内存 / 无 GPU / 无外网**，
+且「内存超限……严重情况下提交可能被判定为无效」。而本脚本此前**一个内存字段都没有** ——
+唯一那个 RSS 数字（NumPy 兜底 4.56 GB）只写在 `NOTES.md` 正文里，不是产物，还是在 30 GB
+开发机上量的。私榜 8/31 截止后无法修改代码、出错按填 0 处理 ⟹ 内存是唯一一个能让整个提交
+归零、而我们从未测量过的量。峰值取内核维护的高水位（`VmHWM` 与 `ru_maxrss` 取大者），
+不需要采样线程。
+
 ## 不产生任何提交文件
 
 调的是 `run_loaded_model` 而不是 `run_strategy`，后者会 `to_csv`。本脚本只在内存里对返回的
@@ -35,6 +44,7 @@ import hashlib
 import json
 import os
 import platform
+import resource
 import sys
 import tempfile
 import time
@@ -49,6 +59,9 @@ if str(_REPO_ROOT) not in sys.path:
 
 from timeseries_api.runner import load_model, run_loaded_model  # noqa: E402
 
+# docs/competition_description.md:158-159 —— 官方评测环境的硬约束。
+EVAL_CPU_CORES = 4
+EVAL_MEMORY_GB = 12.0
 EXPECTED_ROWS = 3_217_458
 EXPECTED_CALLS = 214_538
 THREAD_ENV = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
@@ -64,8 +77,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--backend", required=True, choices=["lightgbm", "numpy-fallback"])
     p.add_argument("--threads", type=int, required=True,
                    help="预期线程数；与 OMP_NUM_THREADS 不符直接退出（避免记错口径）")
-    p.add_argument("--manifest", default=str(_REPO_ROOT / "outputs" / "promotions" /
-                                             "v3_hybrid_slowfast" / "promotion_manifest.json"))
+    # ⚠️ 2026-08-23：这里原来写死 `v3_hybrid_slowfast`，而生产早在 08-21 就换成了
+    # long512 ⟹ `model_matches_promotion_manifest` 长期红着、两份报告都判 FAIL，
+    # 而红的原因是**比错了对象**不是装错了模型。写死一个候选名必然随每次转正过期，
+    # 所以默认改成 auto：扫描全部 staging，挑逐字节相同的那一份。
+    p.add_argument("--manifest", default="auto",
+                   help="promotion manifest 路径；`auto` = 扫描 outputs/promotions/* "
+                        "找与生产目录逐字节相同的那一份")
+    # ⚠️ 默认 0（关闭）：本地基线 5.40 / 10.90 分钟是在**没有**它的情况下量的，
+    # 保持默认一致，后续跑才能与那两个数直接比。云端长跑（兜底约 25 分钟）建议
+    # `--progress-every 20000` —— 否则整段是黑盒，分不清「慢」和「卡死」。
+    p.add_argument("--progress-every", type=int, default=0,
+                   help="每 N 次 predict 打一行进度（含已用时/速率/ETA/RSS）；0 = 关闭")
+    p.add_argument("--rss-limit-gb", type=float, default=EVAL_MEMORY_GB,
+                   help=f"评测环境内存上限（GB）；默认 {EVAL_MEMORY_GB} 取自官方文档")
+    p.add_argument("--rss-headroom", type=float, default=0.20,
+                   help="要求的余量比例；峰值须低于 limit×(1−headroom) 才算有余量")
     p.add_argument("--output-dir", default=str(_REPO_ROOT / "outputs" / "experiments"))
     p.add_argument("--label", default=None)
     p.add_argument("--per-step-timeout", type=float, default=None)
@@ -80,6 +107,132 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+_PEAK_RSS_SEEN = 0
+
+
+def peak_rss_bytes() -> int:
+    """本进程的峰值 RSS，单调不降。取两个来源的大者，不需要采样线程。
+
+    - `/proc/self/status` 的 `VmHWM`，单位 kB。
+    - `resource.getrusage(RUSAGE_SELF).ru_maxrss`，Linux 上也是 kB
+      （macOS 是字节；本项目只在 Linux 上交付，不为此加分支）。
+
+    ⚠️ **`VmHWM` 自己不是严格单调的**（2026-08-23 实测：221.49 → 220.94 MB）。
+    内核报的是 `max(记录的 hiwater, 当前 RSS)`，而记录值更新滞后 —— 当前 RSS 一旦
+    跌回记录值以下，读数就退回那个略低的数。`ru_maxrss` 是真单调的，但两者会差
+    零点几 MB，取大者才不低报。再叠一层模块级高水位，让本函数无论何时调用都不低报。
+
+    ⚠️ 只算本进程。官方 runner 全程在进程内跑（`run_loaded_model` 不 fork），
+    所以这个数就是评测机上要与 12 GB 比的那个数。
+    """
+    global _PEAK_RSS_SEEN
+    hwm = 0
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmHWM:"):
+                hwm = int(line.split()[1]) * 1024
+                break
+    except OSError:
+        pass
+    _PEAK_RSS_SEEN = max(_PEAK_RSS_SEEN, hwm,
+                         resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024)
+    return _PEAK_RSS_SEEN
+
+
+def rss_verdict(peak_bytes: int, limit_gb: float, headroom: float) -> dict[str, Any]:
+    """把峰值 RSS 折成可审计的资源块 + 两道门禁。纯函数，便于单测。
+
+    两道分开判：`under_limit` 是「会不会被判无效」的硬线；`has_headroom` 是
+    「私榜一整个月都不能改代码」所以要留的安全边际。只过前者不过后者 ⟹ 能跑，
+    但没有余量吸收任何环境差异（云端实测就比本地慢 2.3×）。
+    """
+    gb = peak_bytes / (1 << 30)
+    threshold = limit_gb * (1.0 - headroom)
+    return {
+        "peak_rss_bytes": int(peak_bytes),
+        "peak_rss_gb": gb,
+        "limit_gb": float(limit_gb),
+        "headroom_fraction": float(headroom),
+        "headroom_threshold_gb": threshold,
+        "utilization": gb / limit_gb if limit_gb else None,
+        "under_limit": gb < limit_gb,
+        "has_headroom": gb < threshold,
+        "eval_env_note": ("docs/competition_description.md:158-159 —— "
+                          f"官方评测环境 {EVAL_CPU_CORES} 核 / {EVAL_MEMORY_GB} GB"),
+    }
+
+
+def resolve_manifest(model_dir: Path, spec: str) -> dict[str, Any]:
+    """把 `--manifest` 解析成一个具体路径，并留下解析过程本身当证据。
+
+    `auto` 扫描 `outputs/promotions/*/promotion_manifest.json`，挑出 staged 文件与生产目录
+    **逐字节相同**的那一份。这不是循环论证 —— 它回答的是 CLAUDE.md §1.5/§6 真正在意的
+    那个问题：「生产目录里的东西，是不是来自一次有记录的 staging」。手改过生产 meta、
+    或装了一个从没进过 staging 的模型，都不会有任何 manifest 匹配。
+    模型身份是否**等于榜上那份**由 `model_matches_public_baseline` 单独把关。
+    """
+    files = {q.name: sha256_file(q) for q in sorted(model_dir.iterdir()) if q.is_file()}
+    if spec != "auto":
+        return {"spec": spec, "resolved": spec, "scanned": [], "matched": []}
+
+    promo_root = _REPO_ROOT / "outputs" / "promotions"
+    scanned, matched = [], []
+    for mp in sorted(promo_root.glob("*/promotion_manifest.json")):
+        try:
+            manifest = json.loads(mp.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        staged = manifest.get("staged_files") or manifest.get("source_files") or {}
+        same = bool(files and len(staged) == len(files)
+                    and all(staged.get(n) == h for n, h in files.items()))
+        scanned.append({"name": mp.parent.name, "created_at": manifest.get("created_at"),
+                        "identical": same})
+        if same:
+            matched.append(str(mp))
+    return {"spec": spec, "resolved": matched[0] if matched else None,
+            "scanned": scanned, "matched": matched}
+
+
+class ProgressProxy:
+    """夹在 model 与官方 runner 之间，数 predict 次数并定期打点。
+
+    存在的理由：`run_loaded_model` 是主办方原文（只读），循环里不打任何进度，
+    而云端兜底要跑约 25 分钟 —— 没有进度就分不清「慢」「卡死」「被 OOM 杀」。
+    2026-08-23 云端实测正是栽在这一点上。
+
+    ⚠️ 只在显式传 `--progress-every` 时才套上。每次调用只多一个整数自增与取模
+    （相对 1.5~3 ms 的 predict 可忽略），但默认关闭以保证与既有基线同口径。
+    ⚠️ `__getattr__` 透传其余属性 —— runner 只调 `predict`，但 `backend` 等字段
+    要能被外部读到，不然身份检查会看错对象。
+    """
+
+    __slots__ = ("_model", "_every", "_expected", "_n", "_t0")
+
+    def __init__(self, model: Any, every: int, expected: int) -> None:
+        self._model = model
+        self._every = int(every)
+        self._expected = int(expected)
+        self._n = 0
+        self._t0 = time.perf_counter()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._model, name)
+
+    def predict(self, test: Any) -> Any:
+        out = self._model.predict(test)
+        self._n += 1
+        if self._every > 0 and self._n % self._every == 0:
+            elapsed = time.perf_counter() - self._t0
+            rate = self._n / elapsed if elapsed > 0 else 0.0
+            remaining = max(self._expected - self._n, 0)
+            eta = remaining / rate if rate > 0 else float("nan")
+            print(f"  [进度] {self._n:,}/{self._expected:,} "
+                  f"({self._n / self._expected:5.1%})  "
+                  f"已用 {elapsed/60:5.1f} 分  ETA {eta/60:5.1f} 分  "
+                  f"{rate:,.0f} 次/秒  RSS {peak_rss_bytes()/(1<<30):.2f} GB", flush=True)
+        return out
 
 
 def install_lightgbm_shim(stack: list) -> Path:
@@ -99,7 +252,26 @@ def install_lightgbm_shim(stack: list) -> Path:
     raise SystemExit("shim 未生效：lightgbm 仍可 import ⟹ 这一跑不是真兜底路径")
 
 
-def model_identity(model_dir: Path, manifest_path: Path) -> dict[str, Any]:
+def public_baseline_drift(meta: dict[str, Any]) -> list[str]:
+    """meta 与「榜上那份模型」的逐键差异（空列表 = 完全一致）。
+
+    直接复用 `scripts/audit_submission_zip.public_baseline_drift` —— 它已经维护着
+    PUBLIC_BASELINE 全表的取值映射，并且在漏键时硬失败。**不要**在这里另抄一份取值表：
+    两张表分头维护正是 08-18 与 08-21 两次「丢键静默降级」事故的形状。
+    """
+    scripts_dir = str(_REPO_ROOT / "scripts")
+    inserted = scripts_dir not in sys.path
+    if inserted:
+        sys.path.insert(0, scripts_dir)
+    try:
+        from audit_submission_zip import public_baseline_drift as _drift
+        return _drift(meta)
+    finally:
+        if inserted and scripts_dir in sys.path:
+            sys.path.remove(scripts_dir)
+
+
+def model_identity(model_dir: Path, resolution: dict[str, Any]) -> dict[str, Any]:
     files = {p.name: sha256_file(p) for p in sorted(model_dir.iterdir()) if p.is_file()}
     meta = json.loads((model_dir / "hybrid_meta.json").read_text(encoding="utf-8"))
     identity = {k: meta.get(k) for k in (
@@ -116,8 +288,11 @@ def model_identity(model_dir: Path, manifest_path: Path) -> dict[str, Any]:
     identity["n_history_positions"] = len(meta.get("history_positions", []))
 
     out: dict[str, Any] = {"model_dir": str(model_dir), "file_sha256": files,
-                           "meta_identity": identity}
-    if manifest_path.exists():
+                           "meta_identity": identity,
+                           "public_baseline_drift": public_baseline_drift(meta)}
+    resolved = resolution.get("resolved")
+    manifest_path = Path(resolved) if resolved else None
+    if manifest_path is not None and manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         staged = manifest.get("staged_files") or manifest.get("source_files") or {}
         mismatch = {n: {"model_dir": h, "manifest": staged.get(n)}
@@ -130,8 +305,13 @@ def model_identity(model_dir: Path, manifest_path: Path) -> dict[str, Any]:
             "identical": bool(files and not mismatch and len(staged) == len(files)),
         }
     else:
-        out["manifest"] = {"path": str(manifest_path), "identical": None,
-                           "note": "manifest 不存在，跳过比对"}
+        out["manifest"] = {
+            "path": resolved,
+            "identical": False,
+            "note": ("auto 扫描未找到与生产目录逐字节相同的 staging"
+                     if resolution.get("spec") == "auto" else "manifest 不存在"),
+        }
+    out["manifest"]["resolution"] = resolution
     return out
 
 
@@ -159,9 +339,13 @@ def main() -> None:
         lgb_version = lgb.__version__
 
     strategy_dir = Path(args.strategy_dir)
-    identity = model_identity(strategy_dir / "model", Path(args.manifest))
-    print(f"模型身份：{identity['manifest'].get('identical')} "
-          f"（{len(identity['file_sha256'])} 个文件）", flush=True)
+    resolution = resolve_manifest(strategy_dir / "model", args.manifest)
+    identity = model_identity(strategy_dir / "model", resolution)
+    drift = identity["public_baseline_drift"]
+    print(f"模型身份：manifest={identity['manifest'].get('identical')} "
+          f"（{len(identity['file_sha256'])} 个文件，"
+          f"来自 {identity['manifest'].get('path')}）\n"
+          f"公榜基线偏离：{drift or '无'}", flush=True)
 
     started = time.perf_counter()
     init_start = time.perf_counter()
@@ -174,10 +358,19 @@ def main() -> None:
     print(f"后端 = {selected}；model_init = {model_init_seconds:.2f}s；开始全量推理…",
           flush=True)
 
+    runner_model = (ProgressProxy(model, args.progress_every, EXPECTED_CALLS)
+                    if args.progress_every > 0 else model)
     submission, messages, timing = run_loaded_model(
-        model=model, data_root=args.data_root, strategy_dir=strategy_dir,
+        model=runner_model, data_root=args.data_root, strategy_dir=strategy_dir,
         split=args.split, per_step_timeout_seconds=args.per_step_timeout,
         total_timeout_seconds=None, timeout_policy="zero_step")
+
+    resources = rss_verdict(peak_rss_bytes(), args.rss_limit_gb, args.rss_headroom)
+    rss_gb = resources["peak_rss_gb"]
+    rss_limit = resources["limit_gb"]
+    rss_headroom_gb = resources["headroom_threshold_gb"]
+    print(f"峰值 RSS = {rss_gb:.2f} GB（上限 {rss_limit} GB，"
+          f"余量线 {rss_headroom_gb:.2f} GB）", flush=True)
 
     pred = submission["target"].to_numpy(dtype=np.float64)
     clip = float(identity["meta_identity"]["prediction_clip"] or 0.0)
@@ -203,6 +396,11 @@ def main() -> None:
 
     checks = {
         "model_matches_promotion_manifest": identity["manifest"].get("identical") is True,
+        # 非循环的那一道：PUBLIC_BASELINE 是手工维护的「榜上那份长什么样」，
+        # 与「来自某次 staging」是两件独立的事，必须分开判。
+        "model_matches_public_baseline": not drift,
+        "peak_rss_under_limit": resources["under_limit"],
+        "peak_rss_has_headroom": resources["has_headroom"],
         "backend_as_requested": selected == expected_backend,
         "row_count_correct": health["rows_match"],
         "zero_non_finite": health["non_finite"] == 0,
@@ -219,11 +417,13 @@ def main() -> None:
         "backend_mode": args.backend,
         "environment": {
             "threads_declared": args.threads, "thread_env": env,
+            "progress_every": args.progress_every,
             "os_cpu_count": os.cpu_count(), "python": platform.python_version(),
             "platform": platform.platform(), "lightgbm": lgb_version,
             "numpy": np.__version__,
         },
         "model_identity": identity,
+        "resources": resources,
         "timing": timing_d,
         "prediction_health": health,
         "runner_messages": [m.as_dict() for m in messages],
@@ -241,10 +441,21 @@ def main() -> None:
              f"- 声明线程数 **{args.threads}**；`OMP_NUM_THREADS={env['OMP_NUM_THREADS']}`、"
              f"`OPENBLAS_NUM_THREADS={env['OPENBLAS_NUM_THREADS']}`；机器 {os.cpu_count()} 核",
              f"- lightgbm：`{lgb_version}`；numpy `{np.__version__}`；Python {platform.python_version()}",
+             f"- 对照：官方评测环境 **{EVAL_CPU_CORES} 核 / {EVAL_MEMORY_GB} GB**"
+             f"（`docs/competition_description.md:158-159`）",
+             "", "## 资源", "",
+             "| 项 | 值 |", "|---|---:|",
+             f"| **峰值 RSS** | **{resources['peak_rss_gb']:.2f} GB** |",
+             f"| 上限 | {rss_limit:.1f} GB |",
+             f"| 余量线（{args.rss_headroom:.0%} 余量）| {rss_headroom_gb:.2f} GB |",
+             f"| 占用率 | {resources['utilization']:.1%} |",
              "", "## 模型身份", "",
              f"- 与 promotion manifest 逐文件 sha256 比对："
              f"**{identity['manifest'].get('identical')}**"
              f"（{identity['manifest'].get('files_compared')} 个文件）",
+             f"- manifest 来源：`{identity['manifest'].get('path')}`"
+             f"（`--manifest {args.manifest}`）",
+             f"- 公榜基线偏离：{('**' + '；'.join(drift) + '**') if drift else '无'}",
              f"- meta 身份：{json.dumps(identity['meta_identity'], ensure_ascii=False)}",
              "", "## 计时", "",
              "| 项 | 值 |", "|---|---:|",

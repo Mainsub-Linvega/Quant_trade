@@ -1,0 +1,41 @@
+{
+  "experiment": "harness_vs_model_memory_attribution",
+  "purpose": "把全量推理的峰值 RSS 拆成主办方 harness 的和我们模型的两块 —— 12 GB 上限下，只有后者是我们能买回余量的部分",
+  "arm": "harness",
+  "environment": {
+    "threads_declared": 4,
+    "os_cpu_count": 32,
+    "python": "3.13.5",
+    "numpy": "2.5.1",
+    "platform": "Linux-6.12.101+deb13-amd64-x86_64-with-glibc2.41"
+  },
+  "resources": {
+    "peak_rss_bytes": 11910262784,
+    "peak_rss_gb": 11.092296600341797,
+    "limit_gb": 12.0,
+    "headroom_fraction": 0.2,
+    "headroom_threshold_gb": 9.600000000000001,
+    "utilization": 0.924358050028483,
+    "under_limit": true,
+    "has_headroom": false,
+    "eval_env_note": "docs/competition_description.md:158-159 —— 官方评测环境 4 核 / 12.0 GB",
+    "rss_before_model_load_bytes": 110620672,
+    "rss_after_model_load_bytes": 110624768,
+    "model_load_delta_bytes": 4096
+  },
+  "timing": {
+    "model_init_seconds": 0.0,
+    "predict_total_seconds": 3.8171654799371026,
+    "predict_calls": 214538,
+    "predict_timeout_count": 0,
+    "max_predict_seconds": 0.004055785000673495,
+    "mean_predict_seconds": 1.779249121338459e-05,
+    "total_seconds": 50.899791363990516,
+    "aborted_after_timeout": false,
+    "wall_clock_seconds": 58.134380549003254,
+    "predict_total_minutes": 0.06361942466561837
+  },
+  "rows": 3217458,
+  "runner_messages": [],
+  "note": "不写任何 CSV；桩模型只用于隔离 harness 自身开销"
+}
