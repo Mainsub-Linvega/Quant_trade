@@ -1,0 +1,396 @@
+{
+  "experiment": "xs_peer_deployable_probe",
+  "plan_sha256": "6d8fd172b30afef63ba1339a4072dbc2a15b221e8687b76b357b9c92e445c1da",
+  "cache": {
+    "path": "/home/mainsub/Documents/Quant_trade/outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+    "sha256": "310272cccc7f74285e0246a5191d5c90982e5feb19c92a3958f85b47a60f4e7d",
+    "rows_total": 2645530,
+    "rows_eval": 1461732,
+    "groups": 98697,
+    "folds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "ehat_coverage_eval": 1.0
+  },
+  "baseline": {
+    "name": "e_lgbm",
+    "evaluate_arm_bname": "pure_e",
+    "max_abs_deviation_from_zero_mean": 1.3877787807814457e-17
+  },
+  "pairs": {
+    "0": 6,
+    "6": 0,
+    "2": 14,
+    "14": 2,
+    "1": 13,
+    "13": 1
+  },
+  "negative_control_pairs": {
+    "0": 3,
+    "6": 4,
+    "2": 5,
+    "14": 7,
+    "1": 8,
+    "13": 9
+  },
+  "arms": {
+    "oracle_lag1": {
+      "mean_delta": 7.2889553671974235e-06,
+      "relative": 0.0068872008054490464,
+      "mean_delta_drop_best": -4.707896603058678e-06,
+      "mean_delta_vs_frozen_baseline": 3.4181384395175646e-05,
+      "per_fold_delta": [
+        -4.8047991356668044e-05,
+        4.327951127796573e-05,
+        2.327617278587114e-05,
+        1.064812876162087e-05
+      ],
+      "baseline_peak_mean": 0.0010583335048733463,
+      "positive_folds": 3,
+      "n_folds": 4,
+      "sign_test_p": 0.625,
+      "delta_A_relative": 0.02484393666393978,
+      "delta_B_relative": 0.016767997323483646,
+      "corr_with_baseline": -0.0017282570933400175,
+      "frozen_coefficients": {
+        "1": [
+          0.865671275195798,
+          0.01099703703944016,
+          0.02163925952403853,
+          -0.00019688466625556668,
+          0.024843451922783616,
+          0.0015556289691744715,
+          0.009883351930630675
+        ],
+        "2": [
+          0.9666083024519582,
+          0.008132850341101235,
+          0.01712946807628647,
+          0.007524898012054779,
+          0.02396605467368358,
+          0.004907707644177336,
+          0.008165968587100184
+        ],
+        "3": [
+          0.9703785706642598,
+          0.010622303802304922,
+          0.02339480828413851,
+          0.011523950968219109,
+          0.025831791722079975,
+          0.016494941249447493,
+          0.010903342632683076
+        ],
+        "4": [
+          0.9171466945273645,
+          0.006434940484835441,
+          0.031565067654351756,
+          0.016529780217803908,
+          0.027714209500966626,
+          0.021057890861025903,
+          0.009878010629100452
+        ]
+      },
+      "paired_bootstrap": {
+        "p2.5": 2.5949157067264317e-05,
+        "p50": 4.2155846730969945e-05,
+        "p97.5": 5.908159308525657e-05,
+        "half_width": 1.6566218008996127e-05,
+        "block_size_effective": 500,
+        "eval_groups": 78958
+      },
+      "checks": {
+        "1_mean_delta_positive": true,
+        "2_at_least_3_of_4_folds_positive": true,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_3pct": false,
+        "5_two_delta_A_exceeds_delta_B": true,
+        "6_paired_bootstrap_ci_lower_bound_positive": true,
+        "7_exceeds_detection_floor": false
+      },
+      "pass": false,
+      "nonzero_row_fraction": 0.4009312240547515,
+      "source": "e_true",
+      "lag": 1,
+      "pairs": {
+        "0": 6,
+        "6": 0,
+        "2": 14,
+        "14": 2,
+        "1": 13,
+        "13": 1
+      },
+      "posthoc_contrast_vs_negative_control_pp": 2.4484955448028454
+    },
+    "deployable_lag1": {
+      "mean_delta": -3.395360717067312e-05,
+      "relative": -0.03208214330768678,
+      "mean_delta_drop_best": -4.445870065884598e-05,
+      "mean_delta_vs_frozen_baseline": -7.0611781426948965e-06,
+      "per_fold_delta": [
+        -6.133059055507192e-05,
+        -2.373357425113228e-05,
+        -4.831193717033373e-05,
+        -2.4383267061545404e-06
+      ],
+      "baseline_peak_mean": 0.0010583335048733463,
+      "positive_folds": 0,
+      "n_folds": 4,
+      "sign_test_p": 0.125,
+      "delta_A_relative": 0.0022524234987534647,
+      "delta_B_relative": 0.011322573530143803,
+      "corr_with_baseline": 0.022230643866142104,
+      "frozen_coefficients": {
+        "1": [
+          0.8611646294659372,
+          -0.08307442155517449,
+          -0.25768000857896267,
+          -0.32459223151385896,
+          -0.06360822688593165,
+          0.524607264465462,
+          0.0859643353019085
+        ],
+        "2": [
+          0.963780018279179,
+          -0.35272737575388324,
+          -0.20018701784885165,
+          -0.2721169907209204,
+          -0.07226778078352894,
+          0.34373095161841766,
+          0.20006463567110588
+        ],
+        "3": [
+          0.966813579249311,
+          -0.1972807823649893,
+          -0.1670401429751672,
+          -0.24420022463348612,
+          0.003939299039797367,
+          0.07688985291210282,
+          0.20242644344162555
+        ],
+        "4": [
+          0.9132546620704953,
+          -0.19061962660909065,
+          -0.174807893750463,
+          -0.16785798771297436,
+          0.02839907908786942,
+          0.08328382589080635,
+          0.12993312709383964
+        ]
+      },
+      "paired_bootstrap": {
+        "p2.5": -6.285170747041949e-06,
+        "p50": 3.5571418740426314e-07,
+        "p97.5": 6.139242748269424e-06,
+        "half_width": 6.212206747655687e-06,
+        "block_size_effective": 500,
+        "eval_groups": 78958
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_3_of_4_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_3pct": false,
+        "5_two_delta_A_exceeds_delta_B": false,
+        "6_paired_bootstrap_ci_lower_bound_positive": false,
+        "7_exceeds_detection_floor": false
+      },
+      "pass": false,
+      "nonzero_row_fraction": 0.4009271193351449,
+      "source": "e_lgbm",
+      "lag": 1,
+      "pairs": {
+        "0": 6,
+        "6": 0,
+        "2": 14,
+        "14": 2,
+        "1": 13,
+        "13": 1
+      },
+      "posthoc_contrast_vs_negative_control_pp": -1.4484388665107373
+    },
+    "deployable_now": {
+      "mean_delta": -2.54933299589407e-05,
+      "relative": -0.024088181883641258,
+      "mean_delta_drop_best": -3.5729444361527036e-05,
+      "mean_delta_vs_frozen_baseline": 1.3990990690375242e-06,
+      "per_fold_delta": [
+        -6.127739906373973e-05,
+        -3.3284229557480408e-06,
+        -4.258251106509334e-05,
+        5.215013248818312e-06
+      ],
+      "baseline_peak_mean": 0.0010583335048733463,
+      "positive_folds": 1,
+      "n_folds": 4,
+      "sign_test_p": 0.625,
+      "delta_A_relative": 0.006248911455742551,
+      "delta_B_relative": 0.010534079517263845,
+      "corr_with_baseline": 0.023611431070326015,
+      "frozen_coefficients": {
+        "1": [
+          0.859845511462158,
+          -0.0034324451973510722,
+          -0.1819644332532806,
+          -0.38635915308509755,
+          -0.006108528419569766,
+          0.39363081904605346,
+          0.09310062641627712
+        ],
+        "2": [
+          0.964837789529084,
+          -0.4330535328054815,
+          -0.15389615427907663,
+          -0.3869575735320547,
+          -0.08139272775934611,
+          0.124004701816346,
+          0.17191736701335383
+        ],
+        "3": [
+          0.9692851276850195,
+          -0.35327721916167515,
+          -0.22697689002982052,
+          -0.3412255881991717,
+          -0.038971297212941916,
+          -0.10201021725193785,
+          0.2392798716605417
+        ],
+        "4": [
+          0.9148497961377221,
+          -0.36590057256516406,
+          -0.21390380909817827,
+          -0.2630526294836409,
+          -0.014569107167537374,
+          -0.11438026755557511,
+          0.25844352593441755
+        ]
+      },
+      "paired_bootstrap": {
+        "p2.5": 1.8688947939718687e-06,
+        "p50": 1.121707341286064e-05,
+        "p97.5": 2.09262401437468e-05,
+        "half_width": 9.528672674887466e-06,
+        "block_size_effective": 500,
+        "eval_groups": 78958
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_3_of_4_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_3pct": false,
+        "5_two_delta_A_exceeds_delta_B": true,
+        "6_paired_bootstrap_ci_lower_bound_positive": true,
+        "7_exceeds_detection_floor": false
+      },
+      "pass": false,
+      "nonzero_row_fraction": 0.4009339605344892,
+      "source": "e_lgbm",
+      "lag": 0,
+      "pairs": {
+        "0": 6,
+        "6": 0,
+        "2": 14,
+        "14": 2,
+        "1": 13,
+        "13": 1
+      },
+      "posthoc_contrast_vs_negative_control_pp": -0.6490427241061851
+    },
+    "shuffled_lag1": {
+      "mean_delta": -1.8624293348782267e-05,
+      "relative": -0.017597754642579407,
+      "mean_delta_drop_best": -3.366294754181059e-05,
+      "mean_delta_vs_frozen_baseline": 8.268135679195956e-06,
+      "per_fold_delta": [
+        -4.805206199336425e-05,
+        2.64916692303027e-05,
+        -5.226041876493369e-05,
+        -6.763618671338243e-07
+      ],
+      "baseline_peak_mean": 0.0010583335048733463,
+      "positive_folds": 1,
+      "n_folds": 4,
+      "sign_test_p": 0.625,
+      "delta_A_relative": 0.016145667365897766,
+      "delta_B_relative": 0.024488615273061794,
+      "corr_with_baseline": -0.0009279562610163646,
+      "frozen_coefficients": {
+        "1": [
+          0.8629537693153229,
+          0.5404228750827651,
+          0.002746426791739685,
+          0.037345608896074065,
+          -0.19651915676194617,
+          -0.06181092512292639,
+          -0.45866266602647193
+        ],
+        "2": [
+          0.9592024052636638,
+          0.6423852368901236,
+          -0.051344101818156206,
+          -0.07866232145083576,
+          -0.32125039095038865,
+          -0.40542587454305773,
+          -0.16381906627019513
+        ],
+        "3": [
+          0.9622461014261677,
+          0.730049578363559,
+          -0.01609107911820719,
+          -0.09787479168993768,
+          -0.3331996618289505,
+          -0.4126566124132603,
+          -0.011313794110002037
+        ],
+        "4": [
+          0.908650999223371,
+          0.7012346065707118,
+          0.0012308434844444075,
+          -0.07530110324761004,
+          -0.1510826401534132,
+          -0.34583142183914006,
+          0.1505559605248146
+        ]
+      },
+      "paired_bootstrap": {
+        "p2.5": 5.359446371781498e-06,
+        "p50": 1.8256209287162493e-05,
+        "p97.5": 3.0304540826969593e-05,
+        "half_width": 1.2472547227594048e-05,
+        "block_size_effective": 500,
+        "eval_groups": 78958
+      },
+      "checks": {
+        "1_mean_delta_positive": false,
+        "2_at_least_3_of_4_folds_positive": false,
+        "3_survives_drop_best_fold": false,
+        "4_relative_gain_at_least_3pct": false,
+        "5_two_delta_A_exceeds_delta_B": true,
+        "6_paired_bootstrap_ci_lower_bound_positive": true,
+        "7_exceeds_detection_floor": false
+      },
+      "pass": false,
+      "nonzero_row_fraction": 0.40159208391141465,
+      "source": "e_lgbm",
+      "lag": 1,
+      "pairs": {
+        "0": 3,
+        "6": 4,
+        "2": 5,
+        "14": 7,
+        "1": 8,
+        "13": 9
+      },
+      "posthoc_contrast_vs_negative_control_pp": 0.0
+    }
+  },
+  "verdict": "INCONCLUSIVE_NO_DETECTION_POWER",
+  "reading": "按预注册：阳性对照 `oracle_lag1` **没有过门禁** ⟹ **这把线性尺子对该机制检出力不足**，因此两个可部署臂的阴性结果不能升级为「没效果」。⭐ oracle 仍为正（+0.69%，3/4 折，bootstrap CI 下界为正），说明尺子并非全无分辨力，只是分辨不到 3% 门槛。 实操结论仍是不推进：见事后旁证与 2026-08-23 的前置测量。",
+  "oracle_positive_but_not_passing": true,
+  "posthoc_note": "`posthoc_contrast_vs_negative_control_pp` 不在预注册里，只作旁证。读法：oracle 高出阴性对照才说明尺子有分辨力；可部署臂若落在对照同侧或更低，则它带来的不是 peer 信息。",
+  "limitation": "缓存探针是线性配比、逐有向对 6 列只覆盖一阶交互；树是非线性用这个特征的 ⟹ 本探针的阴性结果弱于树的阴性结果。oracle_lag1 就是用来定量这条局限的。",
+  "elapsed_seconds": 2.6582667519978713
+}

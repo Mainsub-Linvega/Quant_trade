@@ -1,0 +1,78 @@
+{
+  "experiment": "xs_peer_deployable_probe",
+  "date": "2026-08-23",
+  "status": "PREREGISTERED",
+  "question": "ROADMAP §5 给 8/23 peer 对轴留的重新开放条件是「把 oracle 的 peer_e_lag1 换成模型自身对搭档的预测值」。本探针给这句待办一个数字：换成可部署量之后，那 +3.29% 还剩多少？",
+  "why_cache_probe_not_tree": {
+    "blocker": "e_lgbm 只在 OOF cache 的 fold>=0 行有值；按 xs_peer_pair_probe 的 fold 版图，训练段覆盖率是 fold0 0.0% / fold1 25% / fold2 50% / fold3 75% / fold4 100%",
+    "consequence": "fold 0 的 peer 列恒为零（两臂等价），fold 1-3 的覆盖率与时间强相关 ⟹ 树可以学到「peer 列非零 ⟹ 较晚时期」这个伪时间信号。直接换列不是有效实验。",
+    "resolution": "只在验证段评估（ê 覆盖 100%，无时间混淆），零训练，复用 horizon_auxiliary_cache_probe.evaluate_arm",
+    "limitation_stated_upfront": "缓存探针是线性配比，树是非线性用这个特征。逐有向对拆 6 列只覆盖到 asset_id×peer 的一阶交互。因此本探针的阴性结果**弱于**树的阴性结果，这一点由 oracle 阳性对照来定量。"
+  },
+  "pre_measurement_that_motivated_this": {
+    "note": "2026-08-23 只读测量，未训练。corr(e_i(t), <搭档量>)，6 个有向对。",
+    "oracle_lag_e_abs_mean": 0.01664,
+    "deployable_lag_ehat_abs_mean": 0.00401,
+    "deployable_now_ehat_abs_mean": 0.00318,
+    "survival_lag": 0.241,
+    "survival_now": 0.191,
+    "sign_agreement": {"oracle_lag": "6/6", "deployable_lag": "4/6", "deployable_now": "2/6"},
+    "root_cause": "corr(e_j, e_lgbm_j) 逐资产只有 0.023~0.098 ⟹ ê_j 是 e_j 的极弱代理",
+    "deeper_point": "诊断里那个 +0.18 是**当期**共动，天然不可利用（要用它就得知道 e_j(t)，与 e_i(t) 同样未知）；探针只能退到滞后一期，相关立刻从 0.18 掉到 0.017"
+  },
+  "data": {
+    "cache": "outputs/cache/v3_production_oof_confirm_3s480_phasebal_prodwindow.npz",
+    "rows_used": "fold >= 0 的 1,461,732 行 / 98,697 采样 time_id / 15 资产",
+    "guard": "src.oof_cache.assert_reproducible_cache",
+    "baseline": "e_lgbm（生产截面预测；与 xs_peer_pair_confirm_3s480 的 ic_e_lgbm 同一列）",
+    "baseline_name_for_evaluate_arm": "pure_e",
+    "lag_grid_note": "pivot 建在**全部** 177,663 个采样 time_id 上再 shift，使「上一个采样 time_id」与 xs_peer_pair_probe.build_peer_feature 同语义；之后才切到 fold>=0 行评估"
+  },
+  "pairs": {
+    "source": "从 experiments/xs_peer_pair_probe.PAIRS 原样 import，不重新挑选",
+    "expected": {"0": 6, "6": 0, "2": 14, "14": 2, "1": 13, "13": 1}
+  },
+  "arms": [
+    {"name": "oracle_lag1", "source": "真实 e_j", "lag": 1,
+     "role": "阳性对照 —— 本设计成败的关键。它测的是「这把线性尺子能不能看见树看见的东西」"},
+    {"name": "deployable_lag1", "source": "e_lgbm_j（模型自身预测）", "lag": 1,
+     "role": "主问题：ROADMAP 写的那个重新开放条件"},
+    {"name": "deployable_now", "source": "e_lgbm_j", "lag": 0,
+     "role": "两阶段变体 —— 同一次 predict() 内先算全部 15 个 ê 再互相引用，同样合法"},
+    {"name": "shuffled_lag1", "source": "**非搭档**资产的 e_lgbm", "lag": 1,
+     "role": "阴性对照 —— 防「多加一列就变好」。目标资产集合与 PAIRS 相同，只换搭档"}
+  ],
+  "aux_layout": "每个臂拆成 6 列：第 k 列只在有向对 k 的**目标**资产行上非零、其余为 0。evaluate_arm 对 [base, *auxes] 一起解系数 ⟹ 自然得到 7 个系数（base + 6 个方向），即逐对系数。既有函数一行不改。",
+  "gates": {
+    "source": "沿用 horizon_auxiliary_cache_probe 原值，不放松",
+    "MIN_RELATIVE_GAIN": 0.03,
+    "MIN_POSITIVE_FOLDS": 3,
+    "n_eval_folds": 4,
+    "note": "fold 0 被系数拟合消耗；七道门禁由 evaluate_arm 内部给出，含 2ΔA>ΔB 与检出下限"
+  },
+  "predictions": {
+    "oracle_lag1": "明确为正。若它也不过，说明这把尺子没有检出力，不是信号不存在。",
+    "deployable_lag1": "远低于 3% 门槛。机制：载体只剩 24.1% 幅度、同号 6/6→4/6。",
+    "deployable_now": "更低。机制：存活 19.1%、同号 2/6（近乎随机）。",
+    "shuffled_lag1": "约等于 0。"
+  },
+  "adjudication_rules": [
+    "oracle 过 且 两个 deployable 都不过 ⟹ REJECTED：peer 轴由证据关闭",
+    "oracle 也不过 ⟹ INCONCLUSIVE：记为「尺子无检出力」，按前置测量关闭，并写明树版被 ê 覆盖率挡住；**不得**写成「没效果」",
+    "任一 deployable 过 且 阴性对照干净 ⟹ 才谈树版；而树版需先解决训练段 ê 覆盖（扩展 fold 版图的 OOF，小时级）",
+    "阴性对照若也过 ⟹ 整份作废，先查是不是多一列就变好"
+  ],
+  "stopping_conditions": [
+    "不重挑对子、不调窗口、不换聚类 k",
+    "不因为某一臂差一点就加臂或放松门槛",
+    "不改 select_features / evaluate_arm 等被多处调用的既有函数",
+    "不改 train.py、不建候选、不碰公榜、不动生产"
+  ],
+  "self_checks": [
+    "验证段 ê 覆盖率必须 = 100%，否则报错退出（不静默算下去）",
+    "PAIRS 与 import 来源一致，否则报错",
+    "阴性对照的配对与 PAIRS 交集必须为空",
+    "缓存 sha256 记进结果 JSON",
+    "本文件的 sha256 记进结果 JSON ⟹ 判据先于结果可核验"
+  ]
+}
