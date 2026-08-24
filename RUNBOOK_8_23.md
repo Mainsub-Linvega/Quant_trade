@@ -325,7 +325,7 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 |---|---|
 | D4.5 全部门禁通过 | 全量重训件 |
 | D4.5 任一门禁不过 | **决策期那份**（训练止于 1,045,889，被密封期评过分） |
-| 决策期那份也不过 | **当前生产 `v3_hybrid_slowfast`**（`outputs/v3_hybrid_submission_20260819.zip`） |
+| 决策期那份也不过 | **当前生产**（⚠️ 2026-08-24 订正：是 `outputs/v3_hybrid_submission_20260822.zip`，**不是** `..._20260819.zip`）|
 
 ⟹ 任何时候都有一份可交的东西；**时间不够就直接跳到 D5 交当前生产**。
 
@@ -353,8 +353,19 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 ⚠️ slow/fast 转正**前**的旧模型包已于 08-19 改名封存为
 `outputs/v3_hybrid_submission_20260813.PRE-SLOWFAST.zip`（旧审计八项全 PASS，
 加 `--expect-public-baseline` 才被拦下）。**改名就是防呆措施本身——不要改回去、不要提交它。**
-当前唯一通过全部门禁的包是 `outputs/v3_hybrid_submission_20260819.zip`
-（审计记录 `outputs/experiments/submission_audit_v3_hybrid_20260819.json`）。
+⚠️⚠️ **2026-08-24 订正（本文件写于 08-18，此后生产换过一次）**：
+本行原文说「当前唯一通过全部门禁的包是 `outputs/v3_hybrid_submission_20260819.zip`」，
+**这句话现在是错的，而且是会误导 8/31 收尾的那一类错**。08-21 长窗 w512 转正后
+`PUBLIC_BASELINE["long_window"]` 由 `None` 改成 `512`，而 20260819 那份包缺这个键：
+
+| 包 | `--expect-public-baseline` 实测（2026-08-24 复跑） |
+|---|---|
+| `v3_hybrid_submission_20260819.zip` | **FAIL** —— `long_window: None != 公榜基线 512`（= 低 1.66% 的旧模型）|
+| `v3_hybrid_submission_20260822.zip` | **PASS**，十一项全过（含 08-24 新增的 `frozen_ridge_matches`）|
+
+⟹ **三层回退的最后一层是 `outputs/v3_hybrid_submission_20260822.zip`**
+（审计记录 `outputs/experiments/submission_audit_20260822.json`）。
+ROADMAP §P0-B 早已记下这件事，是本文件没跟上 —— 按 CLAUDE.md §7 不删原文，在此订正。
 
 ## D6+：缓冲与收尾顺序
 
