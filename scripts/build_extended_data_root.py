@@ -61,7 +61,13 @@ SEALED_PLAN = _REPO_ROOT / "outputs" / "experiments" / "sealed_period_plan.json"
 
 ROLE_FULL = "extended_full"
 ROLE_DECISION = "decision"
-ROLES = (ROLE_FULL, ROLE_DECISION)
+# ⚠️ 2026-08-24 补：`original` 只含主公开包的 train（time_id 0–888,479），**一行回补数据都不收**。
+# 它是「本地公榜」协议的训练根 —— 这样训出来的模型在整个公榜窗口
+# （888,480–1,105,919）上都是样本外，打出来的分与「当年真的提交上去」逐位可比
+# （21 份历史 CSV 已验证）。做成一个带 root_identity.json 的正式 role，
+# 而不是直接传 `--data-root data`，是为了让 retrain_extended 的边界门禁照常生效。
+ROLE_ORIGINAL = "original"
+ROLES = (ROLE_FULL, ROLE_DECISION, ROLE_ORIGINAL)
 
 # 截断时按批过滤再写，避免把 861k × 375 列 float32（约 1.3 GB）一次性拉进内存。
 _BATCH_ROWS = 100_000
@@ -149,6 +155,8 @@ def plan_members(data_root: Path, backfill: Path, role: str, cutoff: int) -> lis
         raise SystemExit(f"{backfill}/train 里没有 parquet —— 回补包路径对吗？")
 
     members = [{"name": path.name, "source": path, "truncate_at": None} for path in local]
+    if role == ROLE_ORIGINAL:
+        return members                      # 一行回补数据都不收
     index = len(local)
     for path in extra:
         info = probe(path)

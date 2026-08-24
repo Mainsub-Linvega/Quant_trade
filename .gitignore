@@ -107,3 +107,9 @@ outputs/cloud/
 
 # Claude Code 的个人级项目配置（含仓库级权限规则），不进版本控制
 .claude/settings.local.json
+
+# 2026-08-25：B1（种子 3→10）已 REJECTED，20 片森林（43 MB）无后续用途 ——
+# 结论证据在 outputs/experiments/b1_search.json 与 ROADMAP §P-B1，
+# staging 的 promotion_manifest.json 也记着每片森林的 sha256。
+/outputs/candidates/v3_seeds10_original/*.txt
+/outputs/candidates/v3_seeds10_original/baseline_model.json

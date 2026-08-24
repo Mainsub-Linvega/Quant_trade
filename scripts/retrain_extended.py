@@ -55,6 +55,8 @@ SEALED_PLAN = ROOT / "outputs" / "experiments" / "sealed_period_plan.json"
 #   extended_full 用满 100% 数据，只用于 D4.5 最终交付件（那一份**不参与任何比较**）
 ROLE_DECISION = "decision"
 ROLE_FULL = "extended_full"
+# 本地公榜协议的训练根：止于 888,479 ⟹ 整个公榜窗口对它都是样本外
+ROLE_ORIGINAL = "original"
 
 # 市场块超参里只有这四项由 --market-spec 传；min_data_in_leaf 走倍数（见下）。
 MARKET_SPEC_KEYS = ("num_leaves", "learning_rate", "feature_fraction", "lambda_l2")
@@ -84,9 +86,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audit", required=True, help="Updated audit JSON containing comparison to baseline.")
     parser.add_argument("--data-root", required=True,
                         help="必须是 build_extended_data_root.py 产出的派生根（带 root_identity.json）")
-    parser.add_argument("--role", required=True, choices=(ROLE_DECISION, ROLE_FULL),
+    parser.add_argument("--role", required=True, choices=(ROLE_DECISION, ROLE_FULL, ROLE_ORIGINAL),
                         help=f"{ROLE_DECISION}=决策期（止于密封段前，用于 D1/D2 比较）；"
-                             f"{ROLE_FULL}=100% 数据（只用于 D4.5 最终交付件）")
+                             f"{ROLE_FULL}=100% 数据（只用于 D4.5 最终交付件）；"
+                             f"{ROLE_ORIGINAL}=止于 888,479（本地公榜协议，公榜窗口全样本外）")
     parser.add_argument("--candidate-dir", default=str(ROOT / "outputs" / "candidates" /
                                                         "v3_hybrid_extended_fixed"))
     parser.add_argument("--lgbm-feature-count", type=int, default=200)
