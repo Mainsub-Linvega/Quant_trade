@@ -1,0 +1,87 @@
+{
+  "created_at": "2026-08-24T05:26:09.435919+00:00",
+  "source": "/home/mainsub/Documents/Quant_trade/outputs/candidates/v3_hybrid_extended_fixed",
+  "destination": "/home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_extended_fixed_20260824",
+  "configuration": {
+    "prediction_scale": 1.16,
+    "blend_weight": 1.0,
+    "num_iteration": 480,
+    "n_seeds": 3,
+    "slow_fast_window": 2000,
+    "slow_fast_slow_relative": 0.387609649122807,
+    "slow_fast_fast_relative": 1.0801809210526316
+  },
+  "public_baseline": {
+    "blend_weight": 1.0,
+    "num_iteration": 480,
+    "history_window": 5,
+    "history_positions_count": 40,
+    "prediction_scale": 1.16,
+    "n_seeds": 3,
+    "market_lambda": 0.5,
+    "market_model_count": 3,
+    "cross_section_weighted": true,
+    "slow_fast_window": 2000,
+    "slow_fast_slow_relative": 0.387609649122807,
+    "slow_fast_fast_relative": 1.0801809210526316,
+    "long_window": 512
+  },
+  "source_meta": {
+    "blend_weight": 0.5,
+    "prediction_scale": 1.16,
+    "num_iteration": 480
+  },
+  "source_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "fcf4024308406b5749a56761e66339d23e1311df6cfbdb67fd024edbe53f359e",
+    "lgbm_market_seed2026.txt": "dfa372f42fc0ece702ffbf62ff3e054430820ba98b5bbe2dc5b50b05b65b20cf",
+    "lgbm_market_seed2027.txt": "d7c04fbd871e2e7baa2c7d5c7f23f0df9372abc5b7c734b756c75742ac937acd",
+    "lgbm_market_seed2028.txt": "01a5ab0e6f7b0cf0c470ce8370e84f3a3c996152432271b17bb97d6544cbeb14",
+    "lgbm_seed2026.txt": "c4c79451caea71ccf9c62115c81371d0c4ba4947b7d0f5737e7752d927d223ba",
+    "lgbm_seed2027.txt": "0d57840aa15517a8deb8803f2f06d4dca8039b93d4b1ff040ea5ba24c78e0f43",
+    "lgbm_seed2028.txt": "3933eb0c0096fb95d6c1e2ba05da1a462fe803ab08de4f140100fda0a8e074f3"
+  },
+  "staged_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "70898efb73cd39e3fc7357fb611ec35adbb3774112c18dfd2592d4d49796742e",
+    "lgbm_market_seed2026.txt": "dfa372f42fc0ece702ffbf62ff3e054430820ba98b5bbe2dc5b50b05b65b20cf",
+    "lgbm_market_seed2027.txt": "d7c04fbd871e2e7baa2c7d5c7f23f0df9372abc5b7c734b756c75742ac937acd",
+    "lgbm_market_seed2028.txt": "01a5ab0e6f7b0cf0c470ce8370e84f3a3c996152432271b17bb97d6544cbeb14",
+    "lgbm_seed2026.txt": "c4c79451caea71ccf9c62115c81371d0c4ba4947b7d0f5737e7752d927d223ba",
+    "lgbm_seed2027.txt": "0d57840aa15517a8deb8803f2f06d4dca8039b93d4b1ff040ea5ba24c78e0f43",
+    "lgbm_seed2028.txt": "3933eb0c0096fb95d6c1e2ba05da1a462fe803ab08de4f140100fda0a8e074f3"
+  },
+  "validation": {
+    "passed": true,
+    "backends": {
+      "numpy": {
+        "rows": 30,
+        "max_abs": 0.10037593259593415,
+        "mean": 0.00916200526999424,
+        "std": 0.03140108533378652
+      },
+      "lightgbm": {
+        "rows": 30,
+        "max_abs": 0.10037593259593408,
+        "mean": 0.00916200526999424,
+        "std": 0.03140108533378651
+      }
+    },
+    "numpy_vs_lightgbm_max_abs": 7.632783294297951e-17,
+    "blend_weight": 1.0,
+    "blend_weight_sensitivity_max_abs": 0.06578628917831106,
+    "market_lambda": 0.5,
+    "market_lambda_sensitivity_max_abs": 0.017867284535971403,
+    "cross_section_weighted": true,
+    "files": {
+      "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+      "hybrid_meta.json": "70898efb73cd39e3fc7357fb611ec35adbb3774112c18dfd2592d4d49796742e",
+      "lgbm_market_seed2026.txt": "dfa372f42fc0ece702ffbf62ff3e054430820ba98b5bbe2dc5b50b05b65b20cf",
+      "lgbm_market_seed2027.txt": "d7c04fbd871e2e7baa2c7d5c7f23f0df9372abc5b7c734b756c75742ac937acd",
+      "lgbm_market_seed2028.txt": "01a5ab0e6f7b0cf0c470ce8370e84f3a3c996152432271b17bb97d6544cbeb14",
+      "lgbm_seed2026.txt": "c4c79451caea71ccf9c62115c81371d0c4ba4947b7d0f5737e7752d927d223ba",
+      "lgbm_seed2027.txt": "0d57840aa15517a8deb8803f2f06d4dca8039b93d4b1ff040ea5ba24c78e0f43",
+      "lgbm_seed2028.txt": "3933eb0c0096fb95d6c1e2ba05da1a462fe803ab08de4f140100fda0a8e074f3"
+    }
+  }
+}

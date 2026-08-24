@@ -1,0 +1,166 @@
+{
+  "experiment": "sealed_period_eval",
+  "adjudication_valid": true,
+  "synthetic_labels": false,
+  "plan_sha256": "395f89adf555192928c07386ba3b4f6197c9523b60cf3a1396f0ef4a5358809d",
+  "geometry": {
+    "test_time_id_min": 888480,
+    "test_time_id_max": 1105919,
+    "test_span_time_ids": 217440,
+    "seal_time_ids": 60000,
+    "seal_time_id_min": 1045920,
+    "seal_time_id_max": 1105919,
+    "embargo_real_time_ids": 30,
+    "decision_train_time_id_max": 1045889,
+    "n_blocks": 4,
+    "block_time_ids": 15000,
+    "blocks": [
+      {
+        "block": 0,
+        "time_id_min": 1045920,
+        "time_id_max": 1060919
+      },
+      {
+        "block": 1,
+        "time_id_min": 1060920,
+        "time_id_max": 1075919
+      },
+      {
+        "block": 2,
+        "time_id_min": 1075920,
+        "time_id_max": 1090919
+      },
+      {
+        "block": 3,
+        "time_id_min": 1090920,
+        "time_id_max": 1105919
+      }
+    ]
+  },
+  "baseline": {
+    "cache_label": "seal_production_slowfast",
+    "pooled": {
+      "A": 0.005473469868575883,
+      "B": 0.00456759363340061,
+      "peak": 0.006559005639891716,
+      "optimal_scale": 1.1983268013491912,
+      "score_at_unit_scale": 0.006379346103751156,
+      "denominator": 1495270.7539689308
+    },
+    "blocks": [
+      {
+        "block": 0,
+        "rows": 203176,
+        "time_id_range": [
+          1045920,
+          1060919
+        ],
+        "A": 0.006446621801109661,
+        "B": 0.004692248172029782,
+        "peak": 0.00885693405866142,
+        "optimal_scale": 1.373887647191723
+      },
+      {
+        "block": 1,
+        "rows": 224970,
+        "time_id_range": [
+          1060920,
+          1075919
+        ],
+        "A": 0.005302870558066286,
+        "B": 0.004551561769678709,
+        "peak": 0.006178194997360487,
+        "optimal_scale": 1.1650661523243728
+      },
+      {
+        "block": 2,
+        "rows": 203264,
+        "time_id_range": [
+          1075920,
+          1090919
+        ],
+        "A": 0.0056599216250170755,
+        "B": 0.004610271325150775,
+        "peak": 0.0069485525996212955,
+        "optimal_scale": 1.227676469742694
+      },
+      {
+        "block": 3,
+        "rows": 224909,
+        "time_id_range": [
+          1090920,
+          1105919
+        ],
+        "A": 0.004576212981197754,
+        "B": 0.0044287164816704605,
+        "peak": 0.004728621788266712,
+        "optimal_scale": 1.033304570328164
+      }
+    ]
+  },
+  "arms": [
+    {
+      "per_block": [
+        {
+          "block": 0,
+          "rows": 203176,
+          "baseline_peak": 0.00885693405866142,
+          "arm_peak": 0.009299751787984449,
+          "relative": 0.04999672870884542
+        },
+        {
+          "block": 1,
+          "rows": 224970,
+          "baseline_peak": 0.006178194997360487,
+          "arm_peak": 0.0065263912014946685,
+          "relative": 0.05635888868560168
+        },
+        {
+          "block": 2,
+          "rows": 203264,
+          "baseline_peak": 0.0069485525996212955,
+          "arm_peak": 0.007638485671387468,
+          "relative": 0.09929162395687618
+        },
+        {
+          "block": 3,
+          "rows": 224909,
+          "baseline_peak": 0.004728621788266712,
+          "arm_peak": 0.004896807407848947,
+          "relative": 0.035567577005113815
+        }
+      ],
+      "block_mean_relative": 0.060303704589109275,
+      "pooled_relative": 0.060612527793532545,
+      "positive_blocks": 4,
+      "n_blocks": 4,
+      "drop_best_block_relative": 0.04730773146652031,
+      "delta_A": 0.07445455868238104,
+      "delta_B": 0.08847724161342874,
+      "bootstrap": {
+        "samples": 2000,
+        "chunks": 100,
+        "ci_low": 0.021509221081277802,
+        "ci_high": 0.10489464285293755,
+        "median": 0.05994499142160792
+      },
+      "detection_floor": 0.0968,
+      "gates": {
+        "1_block_mean_positive": true,
+        "2_positive_blocks_at_least": true,
+        "3_survives_drop_best_block": true,
+        "4_relative_gain_at_least": true,
+        "5_two_delta_a_gt_delta_b": true,
+        "6_paired_ci_lower_positive": true,
+        "7_above_detection_floor": false
+      },
+      "pending_gates": [],
+      "passes": false,
+      "verdict": "FAIL",
+      "name": "extended",
+      "cache_label": "seal_extended_fixed",
+      "model_dir": "outputs/candidates/v3_hybrid_extended_fixed"
+    }
+  ],
+  "sealed_rows": 856319
+}

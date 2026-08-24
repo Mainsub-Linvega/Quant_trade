@@ -1,0 +1,87 @@
+{
+  "created_at": "2026-08-24T07:09:18.557329+00:00",
+  "source": "/home/mainsub/Documents/Quant_trade/outputs/candidates/v3_hybrid_extended_full",
+  "destination": "/home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_extended_full_20260824",
+  "configuration": {
+    "prediction_scale": 1.16,
+    "blend_weight": 1.0,
+    "num_iteration": 480,
+    "n_seeds": 3,
+    "slow_fast_window": 2000,
+    "slow_fast_slow_relative": 0.387609649122807,
+    "slow_fast_fast_relative": 1.0801809210526316
+  },
+  "public_baseline": {
+    "blend_weight": 1.0,
+    "num_iteration": 480,
+    "history_window": 5,
+    "history_positions_count": 40,
+    "prediction_scale": 1.16,
+    "n_seeds": 3,
+    "market_lambda": 0.5,
+    "market_model_count": 3,
+    "cross_section_weighted": true,
+    "slow_fast_window": 2000,
+    "slow_fast_slow_relative": 0.387609649122807,
+    "slow_fast_fast_relative": 1.0801809210526316,
+    "long_window": 512
+  },
+  "source_meta": {
+    "blend_weight": 0.5,
+    "prediction_scale": 1.16,
+    "num_iteration": 480
+  },
+  "source_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "3290cf4359c30722f5f5419ceaf2e424d055f9583984d7180d1679c1bc4d27b3",
+    "lgbm_market_seed2026.txt": "c9a7eb0e627520574bab690bc43880321f71c886ea880923a0d88e7192ff5488",
+    "lgbm_market_seed2027.txt": "52595ce47f3166ae616c36d7f2a1258af7f5be6da029026687260b1d1b2d496d",
+    "lgbm_market_seed2028.txt": "6ecd19beb779f9077e1535d2773e55b1fb547246ead7cf0ee7c6e8971cd20108",
+    "lgbm_seed2026.txt": "f51946abaab0f50ad98b747d12ab2816077de752669c04d7722ecfe901cc4d98",
+    "lgbm_seed2027.txt": "ee404395164de9e2351c2993f555b38bebed6a41d466ab872dbd81e1af3558be",
+    "lgbm_seed2028.txt": "be6a44445b6c4ee8b04dfb69609b401ebaa2e58a280fbf27c42248d3a188e325"
+  },
+  "staged_files": {
+    "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+    "hybrid_meta.json": "b948b8f882c37f1c8b1f2d050ceaa7ae429ffd9a446326144961147e5a11b3a1",
+    "lgbm_market_seed2026.txt": "c9a7eb0e627520574bab690bc43880321f71c886ea880923a0d88e7192ff5488",
+    "lgbm_market_seed2027.txt": "52595ce47f3166ae616c36d7f2a1258af7f5be6da029026687260b1d1b2d496d",
+    "lgbm_market_seed2028.txt": "6ecd19beb779f9077e1535d2773e55b1fb547246ead7cf0ee7c6e8971cd20108",
+    "lgbm_seed2026.txt": "f51946abaab0f50ad98b747d12ab2816077de752669c04d7722ecfe901cc4d98",
+    "lgbm_seed2027.txt": "ee404395164de9e2351c2993f555b38bebed6a41d466ab872dbd81e1af3558be",
+    "lgbm_seed2028.txt": "be6a44445b6c4ee8b04dfb69609b401ebaa2e58a280fbf27c42248d3a188e325"
+  },
+  "validation": {
+    "passed": true,
+    "backends": {
+      "numpy": {
+        "rows": 30,
+        "max_abs": 0.06106476225437341,
+        "mean": 0.0026579207396411203,
+        "std": 0.024475003177624292
+      },
+      "lightgbm": {
+        "rows": 30,
+        "max_abs": 0.06106476225437345,
+        "mean": 0.0026579207396411164,
+        "std": 0.024475003177624303
+      }
+    },
+    "numpy_vs_lightgbm_max_abs": 8.326672684688674e-17,
+    "blend_weight": 1.0,
+    "blend_weight_sensitivity_max_abs": 0.06815646063714684,
+    "market_lambda": 0.5,
+    "market_lambda_sensitivity_max_abs": 0.014549193811885373,
+    "cross_section_weighted": true,
+    "files": {
+      "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+      "hybrid_meta.json": "b948b8f882c37f1c8b1f2d050ceaa7ae429ffd9a446326144961147e5a11b3a1",
+      "lgbm_market_seed2026.txt": "c9a7eb0e627520574bab690bc43880321f71c886ea880923a0d88e7192ff5488",
+      "lgbm_market_seed2027.txt": "52595ce47f3166ae616c36d7f2a1258af7f5be6da029026687260b1d1b2d496d",
+      "lgbm_market_seed2028.txt": "6ecd19beb779f9077e1535d2773e55b1fb547246ead7cf0ee7c6e8971cd20108",
+      "lgbm_seed2026.txt": "f51946abaab0f50ad98b747d12ab2816077de752669c04d7722ecfe901cc4d98",
+      "lgbm_seed2027.txt": "ee404395164de9e2351c2993f555b38bebed6a41d466ab872dbd81e1af3558be",
+      "lgbm_seed2028.txt": "be6a44445b6c4ee8b04dfb69609b401ebaa2e58a280fbf27c42248d3a188e325"
+    }
+  }
+}

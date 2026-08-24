@@ -1,0 +1,67 @@
+{
+  "experiment": "feature_screen_compare",
+  "question": "把 323→200 的线性单变量筛子拆掉，树会不会变好？",
+  "why_never_tested": "ab_featsweep 测过 feat323 但那是线性 Ridge 时代（+4.4%、7/10、未晋级）；joint_recalibration_plan 里 Ridge 有 200/323 两档、LGBM 那 9 格只变容量和轮数，没有 feature_count 档",
+  "cut_is_arbitrary": "partition_008 实测 |corr(feature,e)| 200th=0.00299 / 201st=0.00295，落差 1.33%，无断崖",
+  "baseline_note": "基准由**当前代码**现跑。outputs/cache 里的 v3_production_oof_phasebal_prodwindow_exact.npz 时间戳 08-14 11:12，早于该脚本首次提交 08-15 11:18 ⟹ 出自已不存在的代码版本，与当前输出差 max|Δ(market_ridge)|=3.37e-05，不可用作配对基准",
+  "single_variable_guarantee": "history 列名与基准逐折相同（已断言）—— top-200 的 top-40 == 全 323 的 top-40，所以换宽度不动 history 块",
+  "gates": {
+    "min_relative_gain": 0.03,
+    "min_positive_folds": 4,
+    "note": "1s160/5 折的检出下限历史实测为基准 peak 的 6.1%，故门槛取 3% 并另加第 7 道「超过本次实测检出下限」"
+  },
+  "baseline": {
+    "cache": "oof_d2b_capped_20260824",
+    "per_fold_peak": {
+      "0": 0.0017199885101900545,
+      "1": 0.0037989694528807127,
+      "2": 0.003970242679373674,
+      "3": 0.0017590259799209313
+    },
+    "mean_peak": 0.002812056655591343
+  },
+  "arms": {
+    "extended": {
+      "arm_cache": "oof_d2b_extended_20260824",
+      "history_identical_to_baseline": "报告缺 history_names_per_fold，无法核对",
+      "per_fold_delta": [
+        0.0,
+        0.000142578945112127,
+        -1.930147458035266e-05,
+        0.00035247885384337213
+      ],
+      "mean_delta": 0.00011893908109378661,
+      "relative": 0.042296118343595424,
+      "mean_delta_drop_best": 4.109249017725811e-05,
+      "relative_drop_best": 0.014612966668204212,
+      "positive_folds": 2,
+      "n_folds": 4,
+      "sign_test_p": 1.0,
+      "mechanism": {
+        "relative_delta_A": 0.04094766469588719,
+        "relative_delta_B": 0.03830827769715256
+      },
+      "paired_bootstrap": {
+        "p2.5": -2.5526621678151394e-05,
+        "p50": 0.00010769357343307084,
+        "p97.5": 0.0002628934004803022
+      },
+      "detection_floor": 0.00014421001107922679,
+      "checks": {
+        "1_mean_delta_positive": true,
+        "2_at_least_4_of_5_folds_positive": false,
+        "3_survives_drop_best_fold": true,
+        "4_relative_gain_at_least_0.03": true,
+        "5_two_delta_A_exceeds_delta_B": true,
+        "6_paired_bootstrap_ci_lower_bound_positive": false,
+        "7_exceeds_detection_floor": false
+      },
+      "pass": false
+    }
+  },
+  "verdict": {
+    "passed": [],
+    "decision": "REJECT"
+  },
+  "elapsed_seconds": 0.24529770799563266
+}

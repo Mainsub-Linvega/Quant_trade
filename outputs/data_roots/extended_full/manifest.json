@@ -1,0 +1,30 @@
+{
+  "competition": "quantcontest2026",
+  "version": "extended_extended_full_20260824",
+  "description": "派生数据根（role=extended_full）：主公开包 train + 8/23 标签回补包。由 scripts/build_extended_data_root.py 生成，data/ 只读未改。",
+  "files": {
+    "train": [
+      "train/train_partition_000.parquet",
+      "train/train_partition_001.parquet",
+      "train/train_partition_002.parquet",
+      "train/train_partition_003.parquet",
+      "train/train_partition_004.parquet",
+      "train/train_partition_005.parquet",
+      "train/train_partition_006.parquet",
+      "train/train_partition_007.parquet",
+      "train/train_partition_008.parquet",
+      "train/train_partition_009.parquet",
+      "train/train_partition_010.parquet",
+      "train/train_partition_011.parquet"
+    ],
+    "test": [
+      "test/test_partition_000.parquet",
+      "test/test_partition_001.parquet",
+      "test/test_partition_002.parquet"
+    ],
+    "sample_submission": "sample_submission.csv"
+  },
+  "rows": {
+    "train": 16445150
+  }
+}

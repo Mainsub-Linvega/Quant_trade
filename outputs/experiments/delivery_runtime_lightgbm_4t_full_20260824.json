@@ -1,0 +1,155 @@
+{
+  "experiment": "delivery_runtime_verification",
+  "purpose": "P0 交付闭环：在钉死线程数下走官方 runner 全量推理，把此前只写在 ROADMAP 的耗时数字变成可审计产物",
+  "backend_mode": "lightgbm",
+  "environment": {
+    "threads_declared": 4,
+    "thread_env": {
+      "OMP_NUM_THREADS": "4",
+      "OPENBLAS_NUM_THREADS": "4",
+      "MKL_NUM_THREADS": null,
+      "NUMEXPR_NUM_THREADS": null
+    },
+    "progress_every": 0,
+    "os_cpu_count": 32,
+    "python": "3.13.5",
+    "platform": "Linux-6.12.101+deb13-amd64-x86_64-with-glibc2.41",
+    "lightgbm": "4.3.0",
+    "numpy": "2.5.1"
+  },
+  "model_identity": {
+    "model_dir": "/tmp/claude-1000/-home-mainsub-Documents-Quant-trade/f0680a57-f2a7-4d67-abf2-06c25a25e6e1/scratchpad/deliv_full/v3_hybrid/model",
+    "file_sha256": {
+      "baseline_model.json": "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd",
+      "hybrid_meta.json": "b948b8f882c37f1c8b1f2d050ceaa7ae429ffd9a446326144961147e5a11b3a1",
+      "lgbm_market_seed2026.txt": "c9a7eb0e627520574bab690bc43880321f71c886ea880923a0d88e7192ff5488",
+      "lgbm_market_seed2027.txt": "52595ce47f3166ae616c36d7f2a1258af7f5be6da029026687260b1d1b2d496d",
+      "lgbm_market_seed2028.txt": "6ecd19beb779f9077e1535d2773e55b1fb547246ead7cf0ee7c6e8971cd20108",
+      "lgbm_seed2026.txt": "f51946abaab0f50ad98b747d12ab2816077de752669c04d7722ecfe901cc4d98",
+      "lgbm_seed2027.txt": "ee404395164de9e2351c2993f555b38bebed6a41d466ab872dbd81e1af3558be",
+      "lgbm_seed2028.txt": "be6a44445b6c4ee8b04dfb69609b401ebaa2e58a280fbf27c42248d3a188e325"
+    },
+    "meta_identity": {
+      "blend_weight": 1.0,
+      "num_iteration": 480,
+      "prediction_scale": 1.16,
+      "prediction_clip": 0.5,
+      "market_lambda": 0.5,
+      "history_window": 5,
+      "sample_modulo": 5,
+      "sampling": "phase_balanced",
+      "cross_section_weighted": true,
+      "slow_fast_window": 2000,
+      "slow_fast_slow_relative": 0.387609649122807,
+      "slow_fast_fast_relative": 1.0801809210526316,
+      "long_window": 512,
+      "n_lgbm_models": 3,
+      "n_market_models": 3,
+      "n_features": 200,
+      "n_history_positions": 40
+    },
+    "public_baseline_drift": [],
+    "manifest": {
+      "path": "/home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_extended_full_20260824/promotion_manifest.json",
+      "files_compared": 8,
+      "files_in_manifest": 8,
+      "mismatches": {},
+      "identical": true,
+      "resolution": {
+        "spec": "auto",
+        "resolved": "/home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_extended_full_20260824/promotion_manifest.json",
+        "scanned": [
+          {
+            "name": "v3_hybrid_extended_fixed_20260824",
+            "created_at": "2026-08-24T05:26:09.435919+00:00",
+            "identical": false
+          },
+          {
+            "name": "v3_hybrid_extended_full_20260824",
+            "created_at": "2026-08-24T06:44:16.572775+00:00",
+            "identical": true
+          },
+          {
+            "name": "v3_hybrid_long512",
+            "created_at": "2026-08-21T06:27:47.385758+00:00",
+            "identical": false
+          },
+          {
+            "name": "v3_hybrid_s1.16_2seed",
+            "created_at": "2026-08-12T15:36:43.159253+00:00",
+            "identical": false
+          },
+          {
+            "name": "v3_hybrid_s1.16_3seed",
+            "created_at": "2026-08-12T14:36:31.500262+00:00",
+            "identical": false
+          },
+          {
+            "name": "v3_hybrid_s1.16_w1_3seed",
+            "created_at": "2026-08-13T08:38:46.654516+00:00",
+            "identical": false
+          },
+          {
+            "name": "v3_hybrid_slowfast",
+            "created_at": "2026-08-18T02:43:52.672789+00:00",
+            "identical": false
+          }
+        ],
+        "matched": [
+          "/home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_extended_full_20260824/promotion_manifest.json"
+        ]
+      }
+    }
+  },
+  "resources": {
+    "peak_rss_bytes": 12157972480,
+    "peak_rss_gb": 11.322994232177734,
+    "limit_gb": 12.0,
+    "headroom_fraction": 0.2,
+    "headroom_threshold_gb": 9.600000000000001,
+    "utilization": 0.9435828526814779,
+    "under_limit": true,
+    "has_headroom": false,
+    "eval_env_note": "docs/competition_description.md:158-159 —— 官方评测环境 4 核 / 12.0 GB"
+  },
+  "timing": {
+    "model_init_seconds": 0.39305857400177047,
+    "predict_total_seconds": 361.769235815038,
+    "predict_calls": 214538,
+    "predict_timeout_count": 0,
+    "max_predict_seconds": 0.7947249079879839,
+    "mean_predict_seconds": 0.0016862711305924264,
+    "total_seconds": 417.5037237420038,
+    "aborted_after_timeout": false,
+    "wall_clock_seconds": 421.9564347229898,
+    "predict_total_minutes": 6.029487263583966,
+    "wall_clock_minutes": 7.032607245383163
+  },
+  "prediction_health": {
+    "rows": 3217458,
+    "rows_expected": 3217458,
+    "rows_match": true,
+    "non_finite": 0,
+    "max_abs_prediction": 0.42607126828524244,
+    "clip_hit_rows": 0,
+    "all_zero": false,
+    "predictions_sha256": "524e14e0a41288e487ae0cef5ebd2e02342acda3316c1d3a3ea522fa81d05691"
+  },
+  "runner_messages": [],
+  "checks": {
+    "model_matches_promotion_manifest": true,
+    "model_matches_public_baseline": true,
+    "peak_rss_under_limit": true,
+    "peak_rss_has_headroom": false,
+    "backend_as_requested": true,
+    "row_count_correct": true,
+    "zero_non_finite": true,
+    "zero_clip_rows": true,
+    "zero_timeouts": true,
+    "not_aborted": true,
+    "predict_calls_expected": true,
+    "no_error_messages": true
+  },
+  "pass": false,
+  "note": "调 run_loaded_model 而非 run_strategy ⟹ 全程不写任何 CSV；提交文件只能由用户执行 scripts/make_submission.py 生成"
+}

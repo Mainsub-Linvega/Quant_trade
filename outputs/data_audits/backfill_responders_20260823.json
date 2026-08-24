@@ -1,0 +1,44 @@
+{
+  "experiment": "check_backfill_responders",
+  "audit": "outputs/data_audits/data_release_20260823.json",
+  "train_files_total": 12,
+  "train_added_or_modified": [
+    "train/train_partition_009.parquet",
+    "train/train_partition_010.parquet",
+    "train/train_partition_011.parquet"
+  ],
+  "paths_in_comparison_but_absent": [],
+  "per_file": [
+    {
+      "path": "train/train_partition_009.parquet",
+      "n_columns": 375,
+      "n_responders": 47,
+      "has_target": true,
+      "has_weight": true
+    },
+    {
+      "path": "train/train_partition_010.parquet",
+      "n_columns": 375,
+      "n_responders": 47,
+      "has_target": true,
+      "has_weight": true
+    },
+    {
+      "path": "train/train_partition_011.parquet",
+      "n_columns": 375,
+      "n_responders": 47,
+      "has_target": true,
+      "has_weight": true
+    }
+  ],
+  "n_with_responders": 3,
+  "verdict": "backfill_has_responders",
+  "reopens_responder_line": true,
+  "reopen_targets": [
+    "responder_stage_c_fill",
+    "responder_selection_probe",
+    "nn_capacity_ladder_respsel",
+    "responder_reaudit_20260814"
+  ],
+  "source_of_ambiguity": "docs/data_description.md:173 只说「标签回补 / 扩展训练数据」，未逐字列出字段清单 ⟹ 只能实测"
+}

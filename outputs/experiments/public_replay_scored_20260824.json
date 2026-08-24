@@ -1,0 +1,1672 @@
+{
+  "experiment": "public_replay",
+  "mode": "scored",
+  "question": "把每一份历史公榜提交在回补标签上离线复算，回答本地↔公榜量反的机制",
+  "self_check_note": "第一个产出必须是「离线复算 == 公布分数」。对不上先修复算器，不解释现象 —— 否则后面的拆解是在解释 bug",
+  "counts": {
+    "csv_on_disk": 23,
+    "attributed": 21,
+    "by_confidence": {
+      "sha256": 4,
+      "ledger_text": 2,
+      "inferred": 15,
+      "unattributed": 2
+    },
+    "ledger_rows_with_public_score": 33,
+    "ledger_rows_uncovered": 12,
+    "fingerprint_only_lost_csv": 14,
+    "permanently_unrecoverable": 8
+  },
+  "entries": [
+    {
+      "file": "submission_asset_cross.csv",
+      "bytes": 65748617,
+      "sha256": "2363199db0ea153c2198a075943bae540a5cc560ae82c8f28a198cfa65b4b39e",
+      "attribution": "inferred",
+      "ledger_row": 29,
+      "ledger_date": "2026-08-17",
+      "published_public_score": 0.0039908352,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.41472184,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.003990835217994149,
+      "offline_minus_published": 1.799414870579108e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.003146196351677677
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0036897495108999534
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0032495681385847908
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.004415958877121762
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.0058480745846626325
+        }
+      ]
+    },
+    {
+      "file": "submission_hist_c80_s116.csv",
+      "bytes": 65724066,
+      "sha256": "da09ee12bb4486f772dcb96620487841029e41abea9c0185f5384c1d1db0fe15",
+      "attribution": "inferred",
+      "ledger_row": 20,
+      "ledger_date": "2026-08-11",
+      "published_public_score": 0.003252246,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.37121691,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.0032522459723665076,
+      "offline_minus_published": -2.76334922826027e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0023551629474037883
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0030795328271578937
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0023400367633605867
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.003642053930440259
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.005260850740776868
+        }
+      ]
+    },
+    {
+      "file": "submission_hist_r160_s116.csv",
+      "bytes": 65698853,
+      "sha256": "7ca58a80e0bdfd3b6b9c3ba795cd4c1aeb1b11f7298debf6e91b7c371c217fdd",
+      "attribution": "inferred",
+      "ledger_row": 19,
+      "ledger_date": "2026-08-11",
+      "published_public_score": 0.0029039065,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.37094352,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.0029039064693173744,
+      "offline_minus_published": -3.068262571098712e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.00194535283417141
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.002827038789686376
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0021034644021242777
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.003343742951282924
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.004682948410422938
+        }
+      ]
+    },
+    {
+      "file": "submission_hist_r320_s116.csv",
+      "bytes": 65718511,
+      "sha256": "c47cdb574af8b0f3ff4ede3dedc196483922572685f2deb8cbecc7fc1885d901",
+      "attribution": "inferred",
+      "ledger_row": 21,
+      "ledger_date": "2026-08-11",
+      "published_public_score": 0.0031385676,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.38659545,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.0031385675827980686,
+      "offline_minus_published": -1.720193128565417e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0022325873411489505
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0030037576548243017
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0022631900997350796
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.003538898411209579
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.005056048105464894
+        }
+      ]
+    },
+    {
+      "file": "submission_hist_r480_s090.csv",
+      "bytes": 65725091,
+      "sha256": "41d6ae92b011ccc0b0c544262f9237ab61206ece10691b8b8eadb98c840a3ff2",
+      "attribution": "inferred",
+      "ledger_row": 18,
+      "ledger_date": "2026-08-11",
+      "published_public_score": 0.003056081,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.30176098,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.0030560810247315384,
+      "offline_minus_published": 2.473153843177145e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.002302657340419345
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.002896285476040261
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0024210174829583098
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.003386660479943404
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.004599606057253736
+        }
+      ]
+    },
+    {
+      "file": "submission_hist_r480_s116.csv",
+      "bytes": 65725091,
+      "sha256": "5220ca8d81efcf0cfa322c7a0f2453d8067c96a9989a297b3df9495ca937c2e5",
+      "attribution": "inferred",
+      "ledger_row": 17,
+      "ledger_date": "2026-08-11",
+      "published_public_score": 0.0032523499,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.38893637,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.0032523498502939896,
+      "offline_minus_published": -4.9706010574884774e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0023398419890277022
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.003079182415414161
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0023535976033055572
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.003638464056738955
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.0052683374949562545
+        }
+      ]
+    },
+    {
+      "file": "submission_long512.csv",
+      "bytes": 65893422,
+      "sha256": "5df02b020f469c726d8c8d53899110a513f16c3a016b247110cd36fe626ca9bd",
+      "attribution": "unattributed",
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.40209875,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.004183395317455263,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.003940266384025226
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0034880018022444004
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0033680449652553346
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.0046145313184406955
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.005861767629946835
+        }
+      ]
+    },
+    {
+      "file": "submission_market_s130.csv",
+      "bytes": 65600014,
+      "sha256": "58ac663d76813859b1083b0d0cc3d10338b8f90165a5724ae99136860546bdb7",
+      "attribution": "inferred",
+      "ledger_row": 14,
+      "ledger_date": "2026-08-10",
+      "published_public_score": 0.0014991067,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.39163484,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.0014991066747216397,
+      "offline_minus_published": -2.5278360351113638e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0004142468588164139
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0012617477062921711
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0010864970456652134
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.0020886483106534737
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.0030041592609479917
+        }
+      ]
+    },
+    {
+      "file": "submission_mix2_r480.csv",
+      "bytes": 65716816,
+      "sha256": "b99957e965959a30e1b2f9c2b64bdfb80ff449721b83f624594d450ce5c5625e",
+      "attribution": "inferred",
+      "ledger_row": 15,
+      "ledger_date": "2026-08-10",
+      "published_public_score": 0.0025767425,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.40007528,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.002576742477240823,
+      "offline_minus_published": -2.2759176921544055e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0015929644287284717
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0023670691557796664
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0017479650742411312
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.003160312547143662
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.004430911371009816
+        }
+      ]
+    },
+    {
+      "file": "submission_mkt_moderate.csv",
+      "bytes": 65706425,
+      "sha256": "437f9ec40194fedffa8605d5060fd68ff354002ecc73619ff9990d465d8f98c8",
+      "attribution": "inferred",
+      "ledger_row": 24,
+      "ledger_date": "2026-08-13",
+      "published_public_score": 0.0039867107,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.40123061,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.003986710688835826,
+      "offline_minus_published": -1.1164173752131745e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.00337073440696134
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0036418999461823587
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0029877247743660407
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.0043626033121380026
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.005977532101283822
+        }
+      ]
+    },
+    {
+      "file": "submission_mkt_shrunk.csv",
+      "bytes": 65739646,
+      "sha256": "259406f900346a2e49510424866820074e3f0b7f806e2107bef72b0b8cf07609",
+      "attribution": "inferred",
+      "ledger_row": 23,
+      "ledger_date": "2026-08-13",
+      "published_public_score": 0.003997751,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.4046632,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.003997750997074001,
+      "offline_minus_published": -2.925998852931766e-12,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0031968458000056765
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.003646012963911094
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.003205359185648793
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.004437078132685124
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.005909451512588149
+        }
+      ]
+    },
+    {
+      "file": "submission_mkt_shrunk_slowfast.csv",
+      "bytes": 65894007,
+      "sha256": "32bf9490ea6dccbe51a2239f4843cdf72f960e9418b251b99972d4dad5bd21cf",
+      "attribution": "ledger_text",
+      "ledger_row": 28,
+      "ledger_date": "2026-08-17",
+      "published_public_score": 0.0041150085,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.42044974,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.0041150084599647085,
+      "offline_minus_published": -4.003529105456316e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0036923435350056932
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0033915349327701128
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0033816803533592843
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.004572603747109216
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.0059232205185848485
+        }
+      ]
+    },
+    {
+      "file": "submission_mktwe_s116.csv",
+      "bytes": 65691184,
+      "sha256": "e121614e7105bea3e9051fb4d312ec39acb1dbd30f24dd54dc761e37cd74a0f9",
+      "attribution": "inferred",
+      "ledger_row": 22,
+      "ledger_date": "2026-08-13",
+      "published_public_score": 0.0039673997,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.4489862,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.003967399650186332,
+      "offline_minus_published": -4.9813667947484763e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.003451562913867612
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.003633411661570274
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0028890394474899717
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.004267565365175696
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.005997307890951209
+        }
+      ]
+    },
+    {
+      "file": "submission_phasebal_r480_s116.csv",
+      "bytes": 65716679,
+      "sha256": "392ba4420f66cbc804339cda857d63b8b142263c9217d2ff65452729d1e8c1b6",
+      "attribution": "inferred",
+      "ledger_row": 16,
+      "ledger_date": "2026-08-10",
+      "published_public_score": 0.0026330806,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.3607771,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.002633080574208413,
+      "offline_minus_published": -2.579158718193919e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.001716410378920341
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.002680546440750886
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.001537973566396511
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.0031155142457343077
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.0045176875183821075
+        }
+      ]
+    },
+    {
+      "file": "submission_r320_s116.csv",
+      "bytes": 65726170,
+      "sha256": "b7107cc8261288aa9ee2b7fd08c84ef0bfdf470478b23e7896c99456adf7d82d",
+      "attribution": "sha256",
+      "ledger_row": 12,
+      "ledger_date": "2026-08-10",
+      "published_public_score": 0.0025651,
+      "fingerprint_public": 0.0025651,
+      "fingerprint_model": "v3_hybrid_replace_r320",
+      "sha256_matches_fingerprint": true,
+      "fingerprint_vs_ledger_consistent": true,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.40147699,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.002565101916253698,
+      "offline_minus_published": 1.9162536982544887e-09,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.001576969783566362
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.002345226368568598
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0017185534565641314
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.003165894498074584
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.00444025784098534
+        }
+      ]
+    },
+    {
+      "file": "submission_r480_s116.csv",
+      "bytes": 65731571,
+      "sha256": "d8988bba0a90f306c9da213cc4ca9014549f34d6b514fd88055d1c07afdcf90b",
+      "attribution": "sha256",
+      "ledger_row": 13,
+      "ledger_date": "2026-08-10",
+      "published_public_score": 0.0025821304,
+      "fingerprint_public": 0.0025821304,
+      "fingerprint_model": "v3_hybrid_replace_r480",
+      "sha256_matches_fingerprint": true,
+      "fingerprint_vs_ledger_consistent": true,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.40578432,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.002582130427402629,
+      "offline_minus_published": 2.740262921088754e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0016032882617605937
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.002358973048474544
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0016939039268196732
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.0031848668590492846
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.004497999909620964
+        }
+      ]
+    },
+    {
+      "file": "submission_r960_pb_hist_mktwe.csv",
+      "bytes": 65668690,
+      "sha256": "405ac9d97d2ef9d71fe54734bc1a33e72ac11a683a879b47ee27d39994351f4e",
+      "attribution": "inferred",
+      "ledger_row": 25,
+      "ledger_date": "2026-08-13",
+      "published_public_score": 0.0037609312,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.5,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.00376093119403198,
+      "offline_minus_published": -5.968019915064682e-12,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.003417708663915331
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0035655640321522464
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.002210269315413571
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.0040397898251963715
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.005999246661426372
+        }
+      ]
+    },
+    {
+      "file": "submission_replace_r80_s116.csv",
+      "bytes": 65680686,
+      "sha256": "aeb93bd9c3f4176f39a11a6f37ba3fdce9f5346fc47dd65e8c2107e2a96142a8",
+      "attribution": "sha256",
+      "ledger_row": 11,
+      "ledger_date": "2026-08-09",
+      "published_public_score": 0.0023682898,
+      "fingerprint_public": 0.0023682898,
+      "fingerprint_model": "v3_hybrid_replace_r080",
+      "sha256_matches_fingerprint": true,
+      "fingerprint_vs_ledger_consistent": true,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.38969038,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.002368289837479387,
+      "offline_minus_published": 3.7479387215294535e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.001301409462744929
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.002144767375900636
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0017850114514414983
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.0029903299747038314
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.004005300905711606
+        }
+      ]
+    },
+    {
+      "file": "submission_replace_s116.csv",
+      "bytes": 65709454,
+      "sha256": "c06c7971aa91f6199e08f11dabfa2fa87400ba10e8dc73c6bfbde87d7611e6b4",
+      "attribution": "sha256",
+      "ledger_row": 10,
+      "ledger_date": "2026-08-09",
+      "published_public_score": 0.0024872338,
+      "fingerprint_public": 0.0024872338,
+      "fingerprint_model": "v3_hybrid_replace_r160",
+      "sha256_matches_fingerprint": true,
+      "fingerprint_vs_ledger_consistent": true,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.39841316,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.0024872337948961265,
+      "offline_minus_published": -5.103873487039001e-12,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0014721178296099868
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.002263765490895575
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0017533736092801844
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.0031130581339935404
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.004237621905375244
+        }
+      ]
+    },
+    {
+      "file": "submission_slowfast_runner.csv",
+      "bytes": 65894007,
+      "sha256": "6eb04dfafa88797421aaffe19d1332c3b58bd6f29ab96de05d65d76f1f299628",
+      "attribution": "inferred",
+      "ledger_row": 30,
+      "ledger_date": "2026-08-18",
+      "published_public_score": 0.0041150085,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.42044975,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.004115008457305058,
+      "offline_minus_published": -4.2694941332355185e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0036923435499401913
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.00339153491013644
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.003381680327432579
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.004572603773580708
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.00592322051562677
+        }
+      ]
+    },
+    {
+      "file": "submission_slowfast_t2.csv",
+      "bytes": 66030719,
+      "sha256": "5381faf5f0f0b01f249083ffea4ec9325b747577dd87a0b24da26385cbd31eea",
+      "attribution": "unattributed",
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.44592858,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.003937421061855573,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.003906921134038677
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.002871516043840394
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.003231327721129662
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.004368141083530341
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.005675460815504185
+        }
+      ]
+    },
+    {
+      "file": "submission_xs_moderate.csv",
+      "bytes": 65686463,
+      "sha256": "d2c1e0b57789040a90273b6ac482925b5b925860445e76e58c3d7948bee5cfa3",
+      "attribution": "ledger_text",
+      "ledger_row": 27,
+      "ledger_date": "2026-08-14",
+      "published_public_score": 0.0039260128,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.44546596,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.003926012821775182,
+      "offline_minus_published": 2.1775182351690958e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.003402688680313015
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.0035777363958509056
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.002891908498769191
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.004223296580901037
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.0059324207935687046
+        }
+      ]
+    },
+    {
+      "file": "submission_xs_shrunk.csv",
+      "bytes": 65657383,
+      "sha256": "b9a931d266b22af369d6b24273f83b04c6a477aeed70aa4582db82b95f53053c",
+      "attribution": "inferred",
+      "ledger_row": 26,
+      "ledger_date": "2026-08-13",
+      "published_public_score": 0.0035771492,
+      "rows": 3217458,
+      "rows_match_test": true,
+      "row_id_join_coverage": 1.0,
+      "non_finite": 0,
+      "max_abs_prediction": 0.42178691,
+      "label_join_coverage": 1.0,
+      "offline_score": 0.003577149213486286,
+      "offline_minus_published": 1.3486285872776893e-11,
+      "reproduces_published": true,
+      "by_period": [
+        {
+          "bucket": 0,
+          "rows": 643485,
+          "time_id_range": [
+            888480,
+            931383
+          ],
+          "score": 0.0029245504057069382
+        },
+        {
+          "bucket": 1,
+          "rows": 643488,
+          "time_id_range": [
+            931384,
+            974290
+          ],
+          "score": 0.003281320861472037
+        },
+        {
+          "bucket": 2,
+          "rows": 643501,
+          "time_id_range": [
+            974291,
+            1017206
+          ],
+          "score": 0.0025822764131095965
+        },
+        {
+          "bucket": 3,
+          "rows": 643486,
+          "time_id_range": [
+            1017207,
+            1061562
+          ],
+          "score": 0.004023137286377154
+        },
+        {
+          "bucket": 4,
+          "rows": 643498,
+          "time_id_range": [
+            1061563,
+            1105919
+          ],
+          "score": 0.005473567069480878
+        }
+      ]
+    }
+  ],
+  "fingerprint_only": [
+    {
+      "file": "baseline_submission.csv",
+      "public": 0.00119088,
+      "model": "baseline_v1",
+      "recoverable": true
+    },
+    {
+      "file": "submission.csv",
+      "public": 0.00151886,
+      "model": "legacy_a2e6",
+      "recoverable": false
+    },
+    {
+      "file": "submission_scale05.csv",
+      "public": 0.00128602,
+      "model": "legacy_a2e6",
+      "recoverable": false
+    },
+    {
+      "file": "submission_scale05_8dp.csv",
+      "public": 0.00128602,
+      "model": "legacy_a2e6",
+      "recoverable": false
+    },
+    {
+      "file": "submission_v3_s113.csv",
+      "public": 0.00186805,
+      "model": "legacy_a2e6",
+      "recoverable": false
+    },
+    {
+      "file": "submission_v3_s113_8dp.csv",
+      "public": 0.00186805,
+      "model": "legacy_a2e6",
+      "recoverable": false
+    },
+    {
+      "file": "submission_v2_s080.csv",
+      "public": 0.00150852,
+      "model": "legacy_a5e5",
+      "recoverable": false
+    },
+    {
+      "file": "submission_v2_s080_8dp.csv",
+      "public": 0.00150852,
+      "model": "legacy_a5e5",
+      "recoverable": false
+    },
+    {
+      "file": "submission_v2_s120.csv",
+      "public": 0.0011693833,
+      "model": "legacy_a5e5",
+      "recoverable": false
+    },
+    {
+      "file": "submission_strict_scale113.csv",
+      "public": 0.00187232,
+      "model": "strict_ridge",
+      "recoverable": true
+    },
+    {
+      "file": "submission_strict_scale092.csv",
+      "public": 0.001805154,
+      "model": "strict_ridge",
+      "recoverable": true
+    },
+    {
+      "file": "submission_hybrid_base0856.csv",
+      "public": null,
+      "model": "v3_hybrid_w050",
+      "recoverable": true
+    },
+    {
+      "file": "submission_hybrid_scale090.csv",
+      "public": 0.0021381,
+      "model": "v3_hybrid_w050",
+      "recoverable": true
+    },
+    {
+      "file": "submission_hybrid_scale130.csv",
+      "public": 0.0022857726,
+      "model": "v3_hybrid_w050",
+      "recoverable": true
+    }
+  ],
+  "ledger_uncovered": [
+    {
+      "row": 0,
+      "date": "2026-07-23",
+      "public_score": "0.00119088"
+    },
+    {
+      "row": 1,
+      "date": "2026-08-07",
+      "public_score": "0.00151886"
+    },
+    {
+      "row": 2,
+      "date": "2026-08-08",
+      "public_score": "0.00128602"
+    },
+    {
+      "row": 3,
+      "date": "2026-08-08",
+      "public_score": "0.00150852"
+    },
+    {
+      "row": 4,
+      "date": "2026-08-08",
+      "public_score": "0.0011693833"
+    },
+    {
+      "row": 5,
+      "date": "2026-08-08",
+      "public_score": "0.00186805"
+    },
+    {
+      "row": 6,
+      "date": "2026-08-08",
+      "public_score": "0.00187232"
+    },
+    {
+      "row": 7,
+      "date": "2026-08-09",
+      "public_score": "0.0018051540"
+    },
+    {
+      "row": 8,
+      "date": "2026-08-09",
+      "public_score": "0.00213810"
+    },
+    {
+      "row": 9,
+      "date": "2026-08-09",
+      "public_score": "0.0022857726"
+    },
+    {
+      "row": 31,
+      "date": "2026-08-19",
+      "public_score": "0.0039374211"
+    },
+    {
+      "row": 32,
+      "date": "2026-08-21",
+      "public_score": "0.0041833953"
+    }
+  ],
+  "elapsed_seconds": 18.1367385959893
+}
