@@ -1,0 +1,117 @@
+{
+  "experiment": "local_public_lb",
+  "segment": "search",
+  "train_cut_required": 888479,
+  "window": {
+    "time_id_min": 888480,
+    "time_id_max": 1045919,
+    "rows": 2361139
+  },
+  "blocks": [
+    {
+      "block": 0,
+      "time_id_min": 888480,
+      "time_id_max": 927839
+    },
+    {
+      "block": 1,
+      "time_id_min": 927840,
+      "time_id_max": 967199
+    },
+    {
+      "block": 2,
+      "time_id_min": 967200,
+      "time_id_max": 1006559
+    },
+    {
+      "block": 3,
+      "time_id_min": 1006560,
+      "time_id_max": 1045919
+    }
+  ],
+  "baseline": {
+    "cache_label": "b1_seeds3",
+    "score": 0.0035225977573691836,
+    "pooled": {
+      "A": 0.004012007998613374,
+      "B": 0.00450141823985756,
+      "peak": 0.0035758081838329755,
+      "optimal_scale": 0.8912764344111085,
+      "score_at_unit_scale": 0.003522597757369188,
+      "denominator": 4969057.347582538
+    },
+    "per_block": [
+      {
+        "block": 0,
+        "time_id_min": 888480,
+        "time_id_max": 927839,
+        "rows": 590325,
+        "peak": 0.0038354364667897937
+      },
+      {
+        "block": 1,
+        "time_id_min": 927840,
+        "time_id_max": 967199,
+        "rows": 590394,
+        "peak": 0.003917828932635623
+      },
+      {
+        "block": 2,
+        "time_id_min": 967200,
+        "time_id_max": 1006559,
+        "rows": 590166,
+        "peak": 0.003821551322391539
+      },
+      {
+        "block": 3,
+        "time_id_min": 1006560,
+        "time_id_max": 1045919,
+        "rows": 590254,
+        "peak": 0.0027565281197446403
+      }
+    ]
+  },
+  "arms": [
+    {
+      "name": "seeds10",
+      "cache_label": "b1_seeds10",
+      "identity": {
+        "blend_weight": 1.0,
+        "num_iteration": 480,
+        "prediction_scale": 1.16,
+        "prediction_clip": 0.5,
+        "market_lambda": 0.5,
+        "cross_section_weighted": true,
+        "long_window": 512,
+        "history_window": 5,
+        "slow_fast_window": 2000,
+        "slow_fast_slow_relative": 0.387609649122807,
+        "slow_fast_fast_relative": 1.0801809210526316,
+        "n_history_positions": 40,
+        "n_lgbm_files": 10,
+        "n_market_files": 10
+      },
+      "score": 0.0035468843800203764,
+      "score_relative": 0.006894520556707251,
+      "pooled_peak": 0.003593484708893503,
+      "peak_relative": 0.0049433650105861204,
+      "block_mean_relative": 0.004999043196981023,
+      "per_block_relative": [
+        -0.0019051967056653574,
+        0.006201873140138092,
+        0.009528515361264756,
+        0.006170980992186603
+      ],
+      "positive_blocks": 3,
+      "n_blocks": 4,
+      "drop_best_block_relative": 0.0034892191422197794,
+      "bootstrap": {
+        "samples": 2000,
+        "ci_low": -0.0019350445847164971,
+        "ci_high": 0.011984983371523546,
+        "median": 0.005025345524932612
+      }
+    }
+  ],
+  "elapsed_seconds": 199.18605140398722
+}
