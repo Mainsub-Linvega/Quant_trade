@@ -69,6 +69,33 @@ PUBLIC_BASELINE = {
     "long_window": 512,
 }
 
+# ⚠️⚠️ 2026-08-24 补：**冻结岭回归的文件身份**。
+#
+# 为什么它不是 `PUBLIC_BASELINE` 的一个键：那张表是 **meta 标量**的身份表，
+# 由 `validate_meta` / `public_baseline_drift` 逐键比对 meta 字段。岭回归不是标量，
+# 它是一个**文件**（`model/baseline_model.json`，1.4 MB 的系数），meta 里根本没有承载它的
+# 字段。把它塞进 PUBLIC_BASELINE 会让现存那份已通过全部门禁的交付包
+# （`outputs/v3_hybrid_submission_20260819.zip`，三层回退的最后一层）当场判 FAIL ——
+# 因为它的 meta 里没有这个键。⟹ 按**文件身份**处理，与
+# `audit_submission_zip` 的 `no_unexpected_modules` 同一类。
+# 覆盖由 `tests/test_model_identity_key_coverage.py::FrozenRidgeGateTest` 机械保证。
+#
+# 为什么需要它：
+# 1. `strategies/v3_hybrid/train.py:607` 自己写着「baseline_model.json 是 v1_ridge 生产模型的
+#    **冻结拷贝，不重训**」，`:402` 还断言它必须存在；ledger 从 2026-08-08 起每一版 v3 都是
+#    「冻结复用 `c23a8cfb` 逐位不变」——**岭回归从来没跟着 v3 一起重训过**。
+# 2. 但它不是死重：`train.py:132` 是 `market = group_mean(ridge_raw)`，市场块是
+#    `m̂ = (1−λ)·m̂_ridge + λ·m̂_lgbm`（λ=0.5）⟹ **换岭回归 = 换市场块 = 换模型**。
+# 3. 而 2026-08-24 之前，`PUBLIC_BASELINE` / `BASELINE_CHECKED_KEYS` / `validate_meta` /
+#    `public_baseline_drift` **四家都没有任何岭回归项**（无 alpha、无训练窗、无 hash），
+#    `retrain_extended` 的命令计划却把「重训岭回归」排在第一条 ⟹ 换掉它不会被任何门禁发现。
+#    这是 CLAUDE.md §8.2 同型事故的第六次，也是第一次发生在
+#    「**已冻结组件被计划重训**」这个方向 —— 前五次都是「该带的键没带上」。
+#
+# 生产实测：训练段只有 partitions 005–008（train_rows=1,146,653，prediction_scale=1.13），
+# 而 v3 的 LGBM 块用了全部 9 个（train_rows=2,645,530）—— 两块的训练窗本来就不同。
+PRODUCTION_RIDGE_SHA256 = "54dc6afba78b16cb47ef06f1392901690b4161d93c37ce0357cda2cdf31ed2fd"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Stage/validate/promote a v3_hybrid candidate.")
@@ -195,6 +222,18 @@ def check_against_public_baseline(*, scale: float, n_seeds: int, blend_weight: f
     return drift
 
 
+def ridge_identity_drift(model_dir: Path) -> list[str]:
+    """候选/staging 里的岭回归是不是榜上那份冻结拷贝（空列表 = 是）。"""
+    path = model_dir / "baseline_model.json"
+    if not path.is_file():
+        return [f"缺 baseline_model.json（{path}）—— v3_hybrid/train.py:402 要求它必须存在"]
+    actual = sha256_file(path)
+    if actual == PRODUCTION_RIDGE_SHA256:
+        return []
+    return [f"baseline_model.json sha256 {actual[:16]}… != 冻结岭回归 "
+            f"{PRODUCTION_RIDGE_SHA256[:16]}… —— 换岭回归等于换市场块（m̂ 的 (1−λ) 那一半）"]
+
+
 def slow_fast_defaults() -> dict[str, float]:
     """slow/fast 三键的默认值 —— 唯一定义仍是 `PUBLIC_BASELINE`，这里只是取一份视图。"""
     return {key: PUBLIC_BASELINE[key] for key in
@@ -224,6 +263,14 @@ def stage_candidate(candidate: Path, destination: Path, *, scale: float, n_seeds
     for name in selected_models + selected_market:
         if not (candidate / name).is_file():
             raise FileNotFoundError(candidate / name)
+    # ⚠️ 2026-08-24：岭回归是**冻结拷贝**，不跟 v3 一起重训（见 PRODUCTION_RIDGE_SHA256）。
+    # 这道门在复制之前拦 —— 换掉它等于换市场块，而 meta 里没有任何字段会暴露这件事。
+    ridge_drift = ridge_identity_drift(candidate)
+    if ridge_drift and not off_baseline:
+        raise ValueError("候选的岭回归不是榜上那份冻结拷贝：\n  " + "\n  ".join(ridge_drift)
+                         + "\n有意为之请显式加 --off-baseline")
+    if ridge_drift:
+        print(f"⚠️ 已按 --off-baseline 放行岭回归偏离：{ridge_drift[0]}", flush=True)
     shutil.copy2(candidate / "baseline_model.json", destination / "baseline_model.json")
     for name in selected_models + selected_market:
         shutil.copy2(candidate / name, destination / name)

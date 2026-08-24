@@ -68,6 +68,14 @@ def parse_args() -> argparse.Namespace:
                         "time_id。⚠️ 不要改 --train-window 来做这件事 —— rolling_time_folds 的 "
                         "first_valid_idx = train_window + embargo，改它会把**验证段**也挪走，"
                         "各臂就落在不同数据上，配对比较失效。")
+    p.add_argument("--train-time-id-max", type=int, default=None,
+                   help="把每折训练段的**后端**封顶在这个 real time_id（含）。"
+                        "验证段一个不动 ⟹ 与不封顶的臂逐位配对。"
+                        "\n⚠️ 2026-08-24 新增，用来问「多给一段更近的训练数据值多少」："
+                        "扩展数据 888,480–1,045,889 落在原 OOF 折的**验证段之后**，"
+                        "塞进那些折的训练段就是拿未来训练 ⟹ 预注册的 D2b 在因果上不成立。"
+                        "合法问法是把验证段挪到新数据**之后**，两臂只差训练段后端封顶。"
+                        "\n⚠️ 与 --train-truncate 正交：那个砍前端（recency），这个封后端（新鲜度）。")
     p.add_argument("--expanding-train", action="store_true",
                    help="P4 recency 的反方向：**保持 fold 版图不变**，把每折训练段扩到 embargo "
                         "之前的全部历史（滑动窗在后面几折丢掉了本可用的数据）。"
@@ -343,6 +351,20 @@ def main() -> None:
             train_ids = train_ids[-args.train_truncate:]
             print(f"fold {index}: 训练段 {len(full_train_ids):,} → {len(train_ids):,} 个 time_id"
                   f"（验证段不变：{len(valid_ids):,}）", flush=True)
+        if args.train_time_id_max is not None:
+            kept = train_ids[train_ids <= args.train_time_id_max]
+            if len(kept) == 0:
+                raise SystemExit(f"fold {index}: --train-time-id-max "
+                                 f"{args.train_time_id_max} 把训练段整个砍空了")
+            # 只封**后端**，valid_ids 一个不动 ⟹ 各臂落在完全相同的验证行上
+            if int(valid_ids[0]) <= args.train_time_id_max:
+                raise SystemExit(
+                    f"fold {index}: 封顶 {args.train_time_id_max} 落在验证段内部 "
+                    f"（验证段起点 {int(valid_ids[0])}）⟹ 该折没有意义，拒绝继续")
+            print(f"fold {index}: 训练段后端封顶 {int(train_ids[-1]):,} → {int(kept[-1]):,}"
+                  f"（{len(train_ids):,} → {len(kept):,} 个 time_id；验证段不变："
+                  f"{len(valid_ids):,}）", flush=True)
+            train_ids = kept
         tr = row_slice(time_ids, train_ids)
         va = row_slice(time_ids, valid_ids)
         # 冻结容量臂：min_data_in_leaf 按**未截断**训练段的行数算，不随截断缩小
@@ -565,7 +587,8 @@ def main() -> None:
             "n_folds", "train_window", "embargo", "sample_modulo", "sampling",
             "history_window", "num_iteration", "n_seeds", "seed", "num_threads", "prediction_scale",
             "prediction_clip", "train_truncate", "freeze_min_data",
-            "expanding_train", "expanding_cap", "phase_feature", "fold_grid", "disk_cache",
+            "expanding_train", "expanding_cap", "train_time_id_max",
+            "phase_feature", "fold_grid", "disk_cache",
             "design_cache_dir", "fixed_production_features")},
         "rounds": {"cross": int(cross_rounds), "market": int(market_rounds),
                    "market_checkpoints": checkpoints},

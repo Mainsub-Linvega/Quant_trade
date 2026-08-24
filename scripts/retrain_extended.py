@@ -10,6 +10,30 @@ candidate directory and never overwrites ``strategies/*/model``.
 ``production_structure()`` 从生产 ``hybrid_meta.json`` 派生，并与 ``PUBLIC_BASELINE`` 对拍。
 slow/fast 三键不在这里 —— ``train.py`` 没有那个概念，由
 ``scripts/promote_v3_candidate.py`` 在 staging 时写入。
+
+⚠️⚠️ 2026-08-24 两处修正（8/23 回补包实际是**增量包**，与预注册假设对不上）：
+
+1. **``--role`` 成为必填门禁。** RUNBOOK D1 写死「决策期重训必须止于
+   ``time_id 1,045,889``，训进密封段则 D2 之后的一切比较全部作废 —— 而且**不会报错**」，
+   但 ``strategies/{v1_ridge,v3_hybrid}/train.py`` 都没有时间截断参数，
+   ``src/io.py:20`` 按 manifest 顺序整分区读 ⟹ 此前这条纪律**没有任何机械手段**。
+   现在训练段边界由 ``scripts/build_extended_data_root.py`` 写进
+   ``<data-root>/root_identity.json``，本脚本读它并与
+   ``outputs/experiments/sealed_period_plan.json`` 对拍；缺文件、role 不符、
+   边界不符一律**拒绝生成计划**（fail closed）。
+
+2. **删掉了「重训岭回归」那条命令。** 原计划第一条是
+   ``v1_ridge/train.py --train-partitions 999``，有两个问题：
+   - 它**跑不起来**：``v1_ridge/train.py:261`` 是
+     ``if len(files) < args.train_partitions + 1: raise``，而 9/11/12 恒 ``< 1000``，
+     且这一句在 ``--skip-validation`` 分支**之前** ⟹ 立刻抛
+     ``ValueError("not enough chronological train partitions")``。
+     「08-18 干跑验证过」只覆盖了 dry-run 打印，从未执行过。
+   - 它**不该跑**：``v3_hybrid/train.py:607`` 自己写着岭回归是「冻结拷贝，不重训」，
+     ledger 从 08-08 起每一版 v3 都是逐位复用 ⟹ 同时换岭回归会把「扩展数据的增量」
+     和「换市场块」两件事混在一起（CLAUDE.md §5.2 一次只回答一个问题）。
+   现在改为把生产的冻结岭回归**原样拷进候选目录**，并记录 sha256；
+   身份由 ``promote_v3_candidate.PRODUCTION_RIDGE_SHA256`` 把关。
 """
 
 from __future__ import annotations
@@ -23,6 +47,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_META = ROOT / "strategies" / "v3_hybrid" / "model" / "hybrid_meta.json"
+PRODUCTION_RIDGE = ROOT / "strategies" / "v3_hybrid" / "model" / "baseline_model.json"
+SEALED_PLAN = ROOT / "outputs" / "experiments" / "sealed_period_plan.json"
+
+# role → 该数据根的 train 段 time_id 上界该等于什么。
+#   decision      止于密封段之前（值从 sealed_period_plan.json 读，不在这里写死）
+#   extended_full 用满 100% 数据，只用于 D4.5 最终交付件（那一份**不参与任何比较**）
+ROLE_DECISION = "decision"
+ROLE_FULL = "extended_full"
 
 # 市场块超参里只有这四项由 --market-spec 传；min_data_in_leaf 走倍数（见下）。
 MARKET_SPEC_KEYS = ("num_leaves", "learning_rate", "feature_fraction", "lambda_l2")
@@ -50,11 +82,13 @@ BASELINE_CHECKED_KEYS = ("market_lambda", "market_model_count", "cross_section_w
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Retrain fixed v3 structure after a verified data refresh.")
     parser.add_argument("--audit", required=True, help="Updated audit JSON containing comparison to baseline.")
-    parser.add_argument("--data-root", default=str(ROOT / "data"))
+    parser.add_argument("--data-root", required=True,
+                        help="必须是 build_extended_data_root.py 产出的派生根（带 root_identity.json）")
+    parser.add_argument("--role", required=True, choices=(ROLE_DECISION, ROLE_FULL),
+                        help=f"{ROLE_DECISION}=决策期（止于密封段前，用于 D1/D2 比较）；"
+                             f"{ROLE_FULL}=100% 数据（只用于 D4.5 最终交付件）")
     parser.add_argument("--candidate-dir", default=str(ROOT / "outputs" / "candidates" /
                                                         "v3_hybrid_extended_fixed"))
-    parser.add_argument("--ridge-alpha", type=float, default=2_000_000.0)
-    parser.add_argument("--ridge-feature-count", type=int, default=200)
     parser.add_argument("--lgbm-feature-count", type=int, default=200)
     parser.add_argument("--sample-modulo", type=int, default=5)
     parser.add_argument("--num-iteration", type=int, default=480)
@@ -148,13 +182,13 @@ def command_plan(args: argparse.Namespace, structure: dict | None = None) -> lis
                                         separators=(",", ":")),   # 无空格 ⟹ 复制到 shell 也不用再引
             "--market-min-data-scale", str(MARKET_MIN_DATA_SCALE),
         ]
+    # ⚠️ 2026-08-24：这里**只剩一条命令**。原来的第一条
+    # `v1_ridge/train.py --train-partitions 999` 已删除 —— 它既跑不起来
+    # （`v1_ridge/train.py:261` 的 `len(files) < train_partitions + 1` 恒真，
+    #  且在 `--skip-validation` 之前就 raise），也不该跑
+    # （`v3_hybrid/train.py:607`：岭回归是冻结拷贝，不重训）。
+    # 冻结岭回归由 `main()` 在跑命令之前拷进候选目录，见那里。
     return [
-        [python, str(ROOT / "strategies" / "v1_ridge" / "train.py"),
-         "--data-root", args.data_root, "--model-dir", candidate,
-         "--train-partitions", "999", "--sample-modulo", str(args.sample_modulo),
-         "--validation-sample-modulo", "10", "--sampling", "phase_balanced",
-         "--feature-count", str(args.ridge_feature_count), "--ridge-alpha", str(args.ridge_alpha),
-         "--prediction-scale", str(args.prediction_scale), "--skip-validation"],
         [python, str(ROOT / "strategies" / "v3_hybrid" / "train.py"),
          "--data-root", args.data_root, "--model-dir", candidate,
          "--sample-modulo", str(args.sample_modulo), "--sampling", "phase_balanced",
@@ -163,6 +197,43 @@ def command_plan(args: argparse.Namespace, structure: dict | None = None) -> lis
          "--n-seeds", str(args.n_seeds), "--prediction-scale", str(args.prediction_scale),
          *structure_flags],
     ]
+
+
+def load_root_identity(data_root: Path, role: str) -> dict:
+    """数据根的训练段边界门禁 —— **fail closed**：读不到就拒绝，不猜。
+
+    这是 RUNBOOK D1「训练段必须止于 1,045,889」的机械手段。原文自己写着训进密封段
+    「不会报错」，所以这道门必须在**生成计划时**就响，而不是等训练几小时之后。
+    """
+    identity_path = data_root / "root_identity.json"
+    if not identity_path.is_file():
+        raise SystemExit(
+            f"{data_root} 里没有 root_identity.json ⟹ 拒绝生成计划。\n"
+            f"训练段边界必须是可核的：先跑\n"
+            f"  .venv/bin/python scripts/build_extended_data_root.py --execute\n"
+            f"再用 outputs/data_roots/{role} 作 --data-root。\n"
+            f"⚠️ 直接拿 data/ 或回补包原目录重训会静默训进密封段（RUNBOOK D1）。")
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    if identity.get("role") != role:
+        raise SystemExit(f"--role {role} 与数据根声明的 role={identity.get('role')!r} 不符："
+                         f"{identity_path}")
+
+    actual = identity.get("train_time_id_max")
+    if role == ROLE_DECISION:
+        if not SEALED_PLAN.is_file():
+            raise SystemExit(f"找不到 {SEALED_PLAN} —— 决策期边界不能靠本脚本猜")
+        geometry = json.loads(SEALED_PLAN.read_text(encoding="utf-8")).get("geometry") or {}
+        expected = geometry.get("decision_train_time_id_max")
+        if not isinstance(expected, int):
+            raise SystemExit(f"{SEALED_PLAN} 的 geometry.decision_train_time_id_max 缺失")
+        if actual != expected:
+            raise SystemExit(
+                f"⚠️⚠️ 决策期数据根的训练段止于 time_id {actual}，密封期计划要求 {expected}。\n"
+                f"差值 {(actual or 0) - expected} —— 训进密封段等于把测试集喂给模型，"
+                f"D2 之后的一切比较全部作废。拒绝生成计划。")
+    elif actual is None:
+        raise SystemExit(f"{identity_path} 没有 train_time_id_max，无法核对边界")
+    return identity
 
 
 def validate_audit(path: Path) -> dict:
@@ -176,14 +247,41 @@ def validate_audit(path: Path) -> dict:
     return comparison
 
 
+def frozen_ridge_sha256() -> str:
+    """生产冻结岭回归的 sha256，并当场与公榜身份常量对拍。"""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    try:
+        from promote_v3_candidate import PRODUCTION_RIDGE_SHA256, sha256_file
+    finally:
+        sys.path.remove(str(ROOT / "scripts"))
+    if not PRODUCTION_RIDGE.is_file():
+        raise SystemExit(f"生产冻结岭回归不在盘上：{PRODUCTION_RIDGE}")
+    actual = sha256_file(PRODUCTION_RIDGE)
+    if actual != PRODUCTION_RIDGE_SHA256:
+        raise SystemExit(
+            f"生产 baseline_model.json 的 sha256 {actual[:16]}… 与公榜身份常量 "
+            f"{PRODUCTION_RIDGE_SHA256[:16]}… 不符 ⟹ 拒绝生成计划。\n"
+            f"岭回归自 2026-08-08 起逐位冻结；它变了说明生产目录被动过。")
+    return actual
+
+
 def main() -> None:
     args = parse_args()
+    data_root = Path(args.data_root)
+    identity = load_root_identity(data_root, args.role)
     comparison = validate_audit(Path(args.audit))
     candidate = Path(args.candidate_dir)
     structure = production_structure()
+    ridge_sha = frozen_ridge_sha256()
     plan = command_plan(args, structure)
     print(json.dumps({"audit": args.audit, "comparison": comparison,
+                      "role": args.role, "data_root": str(data_root),
+                      "train_time_id_max": identity.get("train_time_id_max"),
+                      "train_rows": identity.get("train_rows"),
+                      "train_partitions": identity.get("train_partitions"),
+                      "truncated_member": identity.get("truncated_member"),
                       "candidate_dir": str(candidate),
+                      "frozen_ridge_sha256": ridge_sha,
                       "production_structure": structure, "commands": plan,
                       "execute": args.execute}, ensure_ascii=False, indent=2))
     if not args.execute:
@@ -193,6 +291,9 @@ def main() -> None:
             raise SystemExit(f"candidate exists: {candidate}; pass --force")
         shutil.rmtree(candidate)
     candidate.mkdir(parents=True)
+    # ⚠️ 必须在跑 v3_hybrid/train.py **之前**放进去：`train.py:402` 断言它存在。
+    shutil.copy2(PRODUCTION_RIDGE, candidate / "baseline_model.json")
+    print(f"冻结岭回归已拷入候选目录（sha256 {ridge_sha[:16]}…）：不重训", flush=True)
     for command in plan:
         subprocess.run(command, cwd=ROOT, check=True)
     print(f"fixed-structure extended-data candidate: {candidate}")

@@ -165,15 +165,30 @@ def seal_geometry(test_time_id_min: int, test_time_id_max: int,
 # ============================ 门禁前置：限幅与标签 ============================
 
 
-def assert_no_clip_hits(prediction: np.ndarray, clip: float) -> int:
+def clip_hits(prediction: np.ndarray, clip: float) -> int:
+    """触限行数 —— 只数，不判。"""
+    return int(np.sum(np.abs(prediction) >= clip - 1e-12))
+
+
+def assert_no_clip_hits(prediction: np.ndarray, clip: float, *, where: str = "") -> int:
     """限幅是唯一的非线性步骤；触限 > 0 行时 peak 不再与 raw 上的 peak 等价。
 
-    返回触限行数（0）。触限就抛 —— 静默降级成「单点分比较」会让不同 scale 的模型不可比。
+    ⚠️⚠️ 2026-08-24 修**作用域**：本断言此前作用在**全量 test 期**（3,217,458 行）的预测上，
+    而 peak 只由**密封段**那 856,319 行算出来（`arm_view` 紧接着的每一步都是 `pred[seal]`）
+    ⟹ 一行落在评估窗口**之外**的触限就能毙掉整个臂。
+
+    实测代价：`r960`（两个负控制之一）在全窗触限**恰好 1 行 / 3,217,458**，
+    而**密封段内 0 行**、段内 `max|pred| = 0.4620392` —— 按旧作用域它会被
+    `SystemExit` 踢出标定，而它对 peak 的有效性其实毫无影响。
+    更糟的是脚本用 `set -e` 串跑时，它还会连带中断排在后面的臂。
+
+    ⟹ 判据只看**进入 peak 计算的那些行**；全窗的计数仍然记进 npz 元数据（`clip_hits_full`），
+    因为「榜上那份 CSV 触没触限」是交付时要知道的事，只是不该由它否决段内比较。
     """
-    touched = int(np.sum(np.abs(prediction) >= clip - 1e-12))
+    touched = clip_hits(prediction, clip)
     if touched:
         raise SystemExit(
-            f"{touched:,} 行触到限幅 {clip} ⟹ peak 与 raw 上的 peak 不再等价，"
+            f"{touched:,} 行触到限幅 {clip}{where} ⟹ peak 与 raw 上的 peak 不再等价，"
             "本脚本拒绝在这种情况下出 peak 比较（CLAUDE.md §5.5）。")
     return touched
 
@@ -474,6 +489,81 @@ def test_time_id_bounds(data_root: Path) -> tuple[int, int]:
     return lo, hi
 
 
+# ⚠️ 2026-08-24 补 `long_window` 与 history 两项。此前这张表硬编码 9 个键，
+# 而 `long_window` 是 08-21 转正的那块结构（441 列 vs 361 列）——报告号称打印「模型身份」
+# 却分不出这两种模型，与 08-18/19/21/23/24 同型。
+IDENTITY_KEYS = ("blend_weight", "num_iteration", "prediction_scale", "prediction_clip",
+                 "market_lambda", "cross_section_weighted", "long_window", "history_window",
+                 "slow_fast_window", "slow_fast_slow_relative", "slow_fast_fast_relative")
+
+
+def baseline_overrides(model_dir: Path, *, slow_fast: bool = False) -> dict[str, float]:
+    """把候选目录的**占位** meta 拨回公榜口径 —— 否则量的不是有公榜真值的那个模型。
+
+    ⚠️⚠️ 2026-08-24 事故（首轮 Tier 1 标定作废，已重跑）：本函数之前不存在，
+    调用处传的是 `stage({}, ...)`，即**原样使用候选目录的 meta**。而
+    `promote_v3_candidate.PUBLIC_BASELINE` 的注释早就写明：
+
+    > 所有公榜好成绩都是 `experiments/variant_submission.py --blend-weight 1.0 --scale 1.16`
+    > 在**临时副本**上覆写出来的，生产 meta 从来没被同步过。
+
+    候选目录落的是 `train.py` 的本地占位 `blend_weight=0.5 / prediction_scale=0.856`
+    ⟹ 首轮六个臂里有**四个**跑的根本不是那个有公榜真值的模型。
+    实测证据（密封期 `max|pred|` 对公榜 CSV 的 `max|pred|`）：
+
+    ```text
+    production_slowfast  0.402099 / 0.4020988  比值 1.0000  ✅（生产 meta 本来就是 1.0/1.16）
+    asset_adapter        0.414722 / 0.4147218  比值 1.0000  ✅
+    mkt_shrunk           0.243468 / 0.4046632  比值 0.6017  ❌
+    mktwe                0.301355 / 0.4489862  比值 0.6712  ❌
+    r960                 0.325353 / 0.5000000  比值 0.6507  ❌
+    xs_shrunk            0.291319 / 0.4217869  比值 0.6907  ❌
+    ```
+
+    ⭐ 四个比值**互不相同**是关键证据：若只差 `prediction_scale`，比值应恒为
+    0.856/1.16 = 0.73793。比值散开说明 `blend_weight` 0.5→1.0 也在里面，
+    而那**不是缩放、是另一个模型**（`ê = (1−w)·ê_ridge + w·ê_lgbm`）。
+    peak = A²/B 对缩放不变救不了这一项。
+
+    `blend_weight` 与 `prediction_scale` 都从 `PUBLIC_BASELINE` 取，不在这里写常量
+    （CLAUDE.md §7）。对生产目录是无操作（它的 meta 已经是这两个值）。
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+    try:
+        from promote_v3_candidate import PUBLIC_BASELINE
+    finally:
+        _sys.path.remove(str(_REPO_ROOT / "scripts"))
+    meta = json.loads((resolve_model_dir(model_dir) / "hybrid_meta.json")
+                      .read_text(encoding="utf-8"))
+    keys = ["blend_weight", "prediction_scale"]
+    # ⚠️ 2026-08-24：slow/fast 三键**默认不补**，必须显式要（`--slow-fast`）。
+    # 两种臂的「按交付口径」是**不同的**：
+    #   · Tier 1 那五个历史臂的公榜真值是在 slow/fast 转正**之前**打的 ⟹ 补上就不再是那个模型
+    #     （实测佐证：不补时它们的 max|pred| 与留档公榜 CSV 逐位对上，比值 1.0000）；
+    #   · 8/23 之后的重训候选必须**补上** —— `train.py` 的 CLI 里没有 slow/fast 概念，
+    #     任何重训候选都必定缺这三个键，而 `main.py:222` 是
+    #     `PredictionTrail(...) if window else None` ⟹ **缺键静默关掉 slow/fast**。
+    #     不补就等于拿「扩展数据 + 丢了 slow/fast」去比「当前数据 + 有 slow/fast」，
+    #     两个变量混在一起（CLAUDE.md §5.2），而 slow/fast 公榜实测值 +2.93%。
+    # 沿用 RUNBOOK D1 坑 1 的 (b) 路：**沿用当前标定**，不借机重标定 ——
+    # 这样候选与基准的唯一差别就是训练数据。
+    if slow_fast:
+        keys += ["slow_fast_window", "slow_fast_slow_relative", "slow_fast_fast_relative"]
+    overrides: dict[str, float] = {}
+    for key in keys:
+        want = PUBLIC_BASELINE[key]          # ⚠️ 取**原值**：`slow_fast_window` 是 int，
+        try:                                  # 转成 2000.0 会让 staged meta 与生产 meta 分型
+            actual = float(meta[key])
+        except (KeyError, TypeError, ValueError):
+            actual = float("nan")
+        # ⚠️ 不能写成 `if abs(actual - want) >= 1e-12`：`actual` 是 NaN（缺键/非数）时
+        # 该式恒为 **False** ⟹ 缺键被静默判成「不用覆写」。缺键必须算偏离。
+        if not (abs(actual - float(want)) < 1e-12):
+            overrides[key] = want
+    return overrides
+
+
 def resolve_model_dir(path: Path) -> Path:
     """两种布局都接受：生产的 meta 在 `model/` 下，候选的 meta 在本层。
 
@@ -488,7 +578,34 @@ def resolve_model_dir(path: Path) -> Path:
     raise SystemExit(f"{path} 下找不到 hybrid_meta.json（本层和 model/ 都找过）")
 
 
-def run_candidate(model_dir: Path, data_root: Path, cache_path: Path) -> dict[str, Any]:
+def sealed_rows(row_id: np.ndarray, data_root: Path) -> np.ndarray:
+    """给 test 期的 row_id 序列返回「落在密封段内」的布尔掩码。
+
+    几何从 `seal_geometry` 派生（唯一真值源）；time_id 从 test 分区按 row_id 对齐读入。
+    用 searchsorted 对齐而不是逐行查字典 —— 320 万行上后者要好几秒。
+    """
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    index = pd.concat([pq.read_table(path, columns=["row_id", "time_id"]).to_pandas()
+                       for path in sorted((data_root / "test").glob("*.parquet"))],
+                      ignore_index=True)
+    idx_row = index["row_id"].to_numpy(np.int64)
+    idx_time = index["time_id"].to_numpy(np.int64)
+    order = np.argsort(idx_row, kind="stable")
+    idx_row, idx_time = idx_row[order], idx_time[order]
+
+    pos = np.searchsorted(idx_row, row_id)
+    if pos.max() >= len(idx_row) or not np.array_equal(idx_row[np.minimum(pos, len(idx_row) - 1)],
+                                                       row_id):
+        raise SystemExit("预测的 row_id 与 test 索引对不齐 —— 口径对不上，拒绝出掩码")
+
+    seal_min = seal_geometry(int(idx_time.min()), int(idx_time.max()))["seal_time_id_min"]
+    return idx_time[pos] >= seal_min
+
+
+def run_candidate(model_dir: Path, data_root: Path, cache_path: Path,
+                  *, slow_fast: bool = False) -> dict[str, Any]:
     """走官方 runner 在 test 期出预测，落 npz。**不留提交格式 CSV。**"""
     model_dir = resolve_model_dir(model_dir)
     from runner import run_strategy  # 官方 runner，只读引用
@@ -499,13 +616,12 @@ def run_candidate(model_dir: Path, data_root: Path, cache_path: Path) -> dict[st
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="sealed_period_") as workspace:
         workspace = Path(workspace)
-        package = stage({}, workspace, model_dir)
+        package = stage(baseline_overrides(model_dir, slow_fast=slow_fast),
+                        workspace, model_dir)
         staged_meta = json.loads(
             (package / "model" / "hybrid_meta.json").read_text(encoding="utf-8"))
-        identity = {k: staged_meta.get(k) for k in
-                    ("blend_weight", "num_iteration", "prediction_scale", "prediction_clip",
-                     "market_lambda", "cross_section_weighted", "slow_fast_window",
-                     "slow_fast_slow_relative", "slow_fast_fast_relative")}
+        identity = {k: staged_meta.get(k) for k in IDENTITY_KEYS}
+        identity["n_history_positions"] = len(staged_meta.get("history_positions") or [])
         identity["n_lgbm_files"] = len(staged_meta.get("lgbm_model_files", []))
         identity["n_market_files"] = len(staged_meta.get("market_model_files", []))
         print("  入包模型身份：" + ", ".join(f"{k}={v}" for k, v in identity.items()), flush=True)
@@ -531,11 +647,20 @@ def run_candidate(model_dir: Path, data_root: Path, cache_path: Path) -> dict[st
     if not np.all(np.isfinite(prediction)):
         raise SystemExit("预测里有非有限值")
     clip = float(staged_meta.get("prediction_clip", 0.5))
-    touched = assert_no_clip_hits(prediction, clip)
+    # ⚠️ 2026-08-24：判据只看**密封段**（peak 只由那 856,319 行算出来），全窗计数仅作记录。
+    # 旧作用域会因为一行落在评估窗口之外的触限毙掉整个臂 —— `r960` 实测就是这样
+    # （全窗 1 行 / 3,217,458，段内 0 行）。详见 `assert_no_clip_hits` 的说明。
+    full_hits = clip_hits(prediction, clip)
+    seal_mask = sealed_rows(row_id, data_root)
+    touched = assert_no_clip_hits(prediction[seal_mask], clip, where="（密封段内）")
+    if full_hits:
+        print(f"  ⚠️ 全窗触限 {full_hits:,} 行（密封段内 0 行）—— 记录但不否决段内比较",
+              flush=True)
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     meta = {"model_dir": str(model_dir), "identity": identity, "clip": clip,
-            "clip_hits": touched, "rows": int(len(row_id)),
+            "clip_hits": touched, "clip_hits_full": full_hits,
+            "sealed_rows": int(seal_mask.sum()), "rows": int(len(row_id)),
             "max_abs_prediction": float(np.max(np.abs(prediction))),
             "runner_status": result.status,
             "predict_total_seconds": float(result.timing.predict_total_seconds),
@@ -582,6 +707,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cache-dir", default=str(_REPO_ROOT / "outputs" / "cache"))
     p.add_argument("--output-dir", default=str(_REPO_ROOT / "outputs" / "experiments"))
     p.add_argument("--label", default=None)
+    p.add_argument("--slow-fast", action="store_true",
+                   help="给候选补上 PUBLIC_BASELINE 的 slow/fast 三键 —— "
+                        "重训候选必须加（train.py 不产出它们，缺键会静默关掉）；"
+                        "Tier 1 那些 slow/fast 转正前的历史臂**不要**加")
     p.add_argument("--force", action="store_true")
     return p.parse_args()
 
@@ -610,7 +739,8 @@ def main() -> None:
         label = args.label or Path(args.candidate).name
         print(f"候选 {args.candidate} → {CACHE_PREFIX}{label}.npz")
         run_candidate(Path(args.candidate), data_root,
-                      cache_dir / f"{CACHE_PREFIX}{label}.npz")
+                      cache_dir / f"{CACHE_PREFIX}{label}.npz",
+                      slow_fast=args.slow_fast)
         return
 
     # ---- 裁决
@@ -669,7 +799,8 @@ def main() -> None:
             row_id, pred, meta = load_prediction(cache_dir, label)
             if not np.array_equal(row_id, base_row_id):
                 raise SystemExit(f"{label} 的 row_id 与基准不同 —— 不是配对比较")
-            assert_no_clip_hits(pred, meta["clip"])
+            # ⚠️ 只看密封段 —— 下面每一行都是 pred[seal]（见 assert_no_clip_hits 的说明）
+            assert_no_clip_hits(pred[seal], meta["clip"], where="（密封段内）")
             blocks = block_metrics(time_id[seal], target[seal], pred[seal], weight[seal],
                                    geometry["blocks"])
             pooled = scale_invariant_score(target[seal], pred[seal], weight[seal])

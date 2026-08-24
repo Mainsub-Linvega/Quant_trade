@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -10,10 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "experiments")]
 
 from sealed_period_eval import (BOOTSTRAP_CHUNKS_PER_BLOCK, EMBARGO_REAL_TIME_IDS,
-                                MIN_POSITIVE_BLOCKS, MIN_RELATIVE_GAIN, N_BLOCKS, SEAL_TIME_IDS,
-                                _chunk_sums, _peak_from_sums, align_labels, assert_no_clip_hits,
-                                block_metrics, judge, load_backfill_labels, resolve_model_dir,
-                                seal_geometry)
+                                IDENTITY_KEYS, MIN_POSITIVE_BLOCKS, MIN_RELATIVE_GAIN, N_BLOCKS,
+                                SEAL_TIME_IDS, _chunk_sums, _peak_from_sums, align_labels,
+                                assert_no_clip_hits, baseline_overrides, block_metrics, clip_hits, judge,
+                                load_backfill_labels, resolve_model_dir, seal_geometry)
+
+sys.path.insert(0, str(ROOT / "scripts"))
+from promote_v3_candidate import PUBLIC_BASELINE  # noqa: E402
 
 # 仓库实测的 test 期边界（RUNBOOK §1）：3,217,458 行 / time_id 888,480–1,105,919
 TEST_MIN, TEST_MAX = 888_480, 1_105_919
@@ -206,3 +210,124 @@ def test_model_dir_accepts_both_layouts(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit, match="hybrid_meta.json"):
         resolve_model_dir(tmp_path / "nothing_here")
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-24：首轮 Tier 1 标定作废事故的回归 —— 见 `baseline_overrides` 的文档字符串
+# ---------------------------------------------------------------------------
+
+
+def _meta(tmp_path: Path, **fields) -> Path:
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "hybrid_meta.json").write_text(json.dumps(fields), encoding="utf-8")
+    return candidate
+
+
+def test_placeholder_candidate_meta_is_pulled_back_to_public_baseline(tmp_path: Path) -> None:
+    """⭐ 核心回归：`train.py` 的占位 meta 必须被拨回公榜口径。
+
+    候选目录落的是 `blend_weight=0.5 / prediction_scale=0.856`，而所有公榜真值都是在
+    `1.0 / 1.16` 上打的。首轮标定因为传 `stage({}, ...)` 而让六个臂里的**四个**跑了
+    另一个模型 —— `blend_weight` 不是缩放，peak 的尺度不变性救不了它。
+    """
+    candidate = _meta(tmp_path, blend_weight=0.5, prediction_scale=0.856)
+    assert baseline_overrides(candidate) == {
+        "blend_weight": PUBLIC_BASELINE["blend_weight"],
+        "prediction_scale": PUBLIC_BASELINE["prediction_scale"],
+    }
+
+
+def test_already_baseline_meta_gets_no_overrides(tmp_path: Path) -> None:
+    """生产目录（meta 本来就是 1.0/1.16）必须是无操作 —— 否则等于悄悄改生产口径。"""
+    candidate = _meta(tmp_path, blend_weight=PUBLIC_BASELINE["blend_weight"],
+                      prediction_scale=PUBLIC_BASELINE["prediction_scale"])
+    assert baseline_overrides(candidate) == {}
+
+
+def test_overrides_only_touch_the_two_placeholder_keys(tmp_path: Path) -> None:
+    """不得顺手覆写 `long_window` 之类 —— 那会给 361 列的森林盖上「有长窗」的章。"""
+    candidate = _meta(tmp_path, blend_weight=0.5, prediction_scale=0.856,
+                      long_window=None, num_iteration=480, market_lambda=0.5)
+    assert set(baseline_overrides(candidate)) == {"blend_weight", "prediction_scale"}
+
+
+def test_missing_keys_are_treated_as_drift_not_as_ok(tmp_path: Path) -> None:
+    """缺键 → NaN → 必须判为需要覆写，而不是「没写就算对」。"""
+    assert set(baseline_overrides(_meta(tmp_path))) == {"blend_weight", "prediction_scale"}
+
+
+def test_identity_print_covers_long_window(tmp_path: Path) -> None:
+    """报告号称打印「模型身份」，漏印 `long_window` 就分不出 441 列和 361 列两种模型。"""
+    assert "long_window" in IDENTITY_KEYS
+    assert "history_window" in IDENTITY_KEYS
+    for key in ("blend_weight", "prediction_scale", "market_lambda",
+                "cross_section_weighted", "slow_fast_window"):
+        assert key in IDENTITY_KEYS
+
+
+def test_clip_check_is_scoped_to_the_rows_that_enter_the_peak() -> None:
+    """⭐ 2026-08-24 回归：触限判据只看**密封段**，不看全量 test 期。
+
+    旧作用域对全窗 3,217,458 行断言，而 peak 只由密封段那 856,319 行算出来
+    （`arm_view` 紧接着每一步都是 `pred[seal]`）⟹ 一行落在评估窗口**之外**的触限
+    就能毙掉整个臂。`r960`（两个负控制之一）实测正是这样：
+    全窗触限 **1 行 / 3,217,458**，密封段内 **0 行**、段内 max|pred| = 0.4620392。
+    脚本用 `set -e` 串跑时，它还会连带中断排在后面的臂。
+    """
+    seal = np.array([False, False, True, True])
+    prediction = np.array([0.5, -0.1, 0.2, -0.3])      # 触限那行在密封段**之外**
+
+    assert clip_hits(prediction, 0.5) == 1              # 全窗仍如实计数
+    assert assert_no_clip_hits(prediction[seal], 0.5) == 0   # 段内判据放行
+
+    inside = np.array([0.1, -0.1, 0.5, -0.3])          # 触限那行落在段内 ⟹ 必须拒绝
+    with pytest.raises(SystemExit, match="触到限幅"):
+        assert_no_clip_hits(inside[seal], 0.5)
+
+
+def test_sealed_mask_matches_the_preregistered_row_count() -> None:
+    """掩码必须落在预注册几何上 —— 856,319 行是 RUNBOOK / P10 记的实测值。"""
+    import pandas as pd
+    import pyarrow.parquet as pq
+    from sealed_period_eval import sealed_rows
+
+    test_dir = ROOT / "data" / "test"
+    if not any(test_dir.glob("*.parquet")):
+        pytest.skip("test 分区不在盘上")
+    row_id = pd.concat([pq.read_table(p, columns=["row_id"]).to_pandas()
+                        for p in sorted(test_dir.glob("*.parquet"))],
+                       ignore_index=True)["row_id"].to_numpy(np.int64)
+    assert int(sealed_rows(row_id, ROOT / "data").sum()) == 856_319
+
+
+def test_slow_fast_keys_are_opt_in_and_keep_their_types(tmp_path: Path) -> None:
+    """⭐ 两类臂的「按交付口径」不同 —— slow/fast 必须显式要，不能默认补。
+
+    · Tier 1 那五个历史臂的公榜真值是在 slow/fast 转正**之前**打的，补上就不再是那个模型
+      （实测佐证：不补时它们的 `max|pred|` 与留档公榜 CSV 逐位对上）；
+    · 重训候选**必定**缺这三个键（`train.py` 的 CLI 里没有这个概念），而
+      `main.py:222` 是 `PredictionTrail(...) if window else None` ⟹ **缺键静默关掉**。
+      不补就等于拿「扩展数据 + 丢了 slow/fast」比「当前数据 + 有 slow/fast」，
+      两个变量混在一起，而 slow/fast 公榜实测 +2.93%。
+    """
+    candidate = _meta(tmp_path, blend_weight=0.5,
+                      prediction_scale=PUBLIC_BASELINE["prediction_scale"])
+    assert set(baseline_overrides(candidate)) == {"blend_weight"}
+
+    with_sf = baseline_overrides(candidate, slow_fast=True)
+    assert set(with_sf) == {"blend_weight", "slow_fast_window",
+                            "slow_fast_slow_relative", "slow_fast_fast_relative"}
+    # `slow_fast_window` 是 int —— 写成 2000.0 会让 staged meta 与生产 meta 分型
+    assert isinstance(with_sf["slow_fast_window"], int)
+    assert with_sf["slow_fast_window"] == PUBLIC_BASELINE["slow_fast_window"]
+
+
+def test_already_slow_fast_model_needs_no_override(tmp_path: Path) -> None:
+    """生产目录本来就有这三个键 ⟹ 即使传 slow_fast=True 也必须是无操作。"""
+    candidate = _meta(tmp_path, blend_weight=PUBLIC_BASELINE["blend_weight"],
+                      prediction_scale=PUBLIC_BASELINE["prediction_scale"],
+                      **{k: PUBLIC_BASELINE[k] for k in
+                         ("slow_fast_window", "slow_fast_slow_relative",
+                          "slow_fast_fast_relative")})
+    assert baseline_overrides(candidate, slow_fast=True) == {}

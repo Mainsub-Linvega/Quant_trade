@@ -11,12 +11,20 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from promote_v3_candidate import PUBLIC_BASELINE, slow_fast_defaults, stage_candidate
 
+# ⚠️ 2026-08-24：候选目录必须带**真的**冻结岭回归。此前这里写的是占位 `"{}"`，
+# 而 `stage_candidate` 从 08-24 起会核 `baseline_model.json` 的 sha256
+# （换岭回归 = 换市场块，见 promote_v3_candidate.PRODUCTION_RIDGE_SHA256）。
+# 用占位值等于让这些用例全部撞在 ridge 门上 —— 它们测的是 meta / 森林 / 种子数，
+# 不该被无关的门挡住，所以夹具带一份真的。
+FROZEN_RIDGE = ROOT / "strategies" / "v3_hybrid" / "model" / "baseline_model.json"
+needs_frozen_ridge = unittest.skipUnless(FROZEN_RIDGE.is_file(), "生产冻结岭回归不在盘上")
+
 
 def make_candidate(root: Path, **overrides) -> tuple[Path, list[str], list[str]]:
     """造一个最小候选目录。默认与公榜基线一致，`overrides` 用来制造偏离。"""
     source = root / "candidate"
     source.mkdir()
-    (source / "baseline_model.json").write_text("{}")
+    (source / "baseline_model.json").write_bytes(FROZEN_RIDGE.read_bytes())
     models = [f"seed{i}.txt" for i in range(3)]
     market = [f"market{i}.txt" for i in range(3)]
     for name in models + market:
@@ -48,6 +56,7 @@ def make_candidate(root: Path, **overrides) -> tuple[Path, list[str], list[str]]
     return source, models, market
 
 
+@needs_frozen_ridge
 class LongWindowIdentityTest(unittest.TestCase):
     """2026-08-23 的回归：`long_window` 是第 14 个身份键，此前 validate_meta 一条都没查它。
 
@@ -101,6 +110,7 @@ class LongWindowIdentityTest(unittest.TestCase):
                               "staging 把候选的 long_window 改掉了 —— meta 会与森林宽度打架")
 
 
+@needs_frozen_ridge
 class PromoteV3CandidateTest(unittest.TestCase):
     def test_stage_overrides_scale_and_blend_without_touching_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

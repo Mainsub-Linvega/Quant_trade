@@ -51,6 +51,16 @@ strategies/**/model/*.bin
 /outputs/promotions/**/*.txt
 /outputs/private_submissions/
 
+# 2026-08-24：派生数据根（scripts/build_extended_data_root.py）。
+# train/ 里既有指向 4.1 GB 源数据的符号链接，也有一个 1.47 GB 的物理截断分区
+# （decision 根的 train_partition_010.parquet）⟹ 一个都不入库。
+# ⚠️ 上面那条 `/outputs/*.parquet` 只匹配 outputs/ 直下，管不到这一层。
+# root_identity.json 与 manifest.json **要入库** —— 它们记着每个成员的 sha256、
+# 训练段边界和行数，是「D1 训练段止于 1,045,889」这条纪律的落盘证据。
+/outputs/data_roots/*/train/
+/outputs/data_roots/*/test
+/outputs/data_roots/*/sample_submission.csv
+
 # ---- 08-13 的六个候选，合计 115 MB，一律不入库 ----
 # 这一批用了 train.py 的 --train-only/--reuse-from：只重训被调的那片森林，另一片原样复用
 # ⟹ 目录之间大量逐字节重复。分数全部在 experiments/ledger.csv，训练是确定性的

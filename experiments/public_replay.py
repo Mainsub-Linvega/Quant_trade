@@ -83,6 +83,10 @@ ATTRIBUTION: dict[str, tuple[str, int]] = {
 }
 
 
+# 合并时给预测列的内部名字 —— 必须与标签的 `target` / `weight` 都不撞。
+PREDICTION_COLUMN = "_prediction"
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -199,7 +203,16 @@ def main() -> None:
         rec["max_abs_prediction"] = float(np.max(np.abs(pred)))
 
         if labels is not None:
-            merged = frame[["row_id", pred_col]].merge(labels, on="row_id", how="inner")
+            # ⚠️ 2026-08-24 修：提交 CSV 的预测列**就叫 `target`**，而 labels 里也有 `target`
+            # ⟹ 直接 merge 会被 pandas 改名成 `target_x` / `target_y`，随后
+            # `merged["target"]` 当场 KeyError。这条评分分支此前从未执行过
+            # （08-18 的「干跑验证」是 inventory 模式，`--labels` 缺席，
+            #  整个 `if labels is not None:` 块被跳过）。
+            # 主办方官方复算示例（`public_release_20260823/docs/
+            # submission_and_evaluation.md:176`）也是先 rename 再 merge。
+            merged = (frame[["row_id", pred_col]]
+                      .rename(columns={pred_col: PREDICTION_COLUMN})
+                      .merge(labels, on="row_id", how="inner"))
             coverage = float(len(merged) / max(len(frame), 1))
             rec["label_join_coverage"] = coverage
             # ⚠️ 部分 join 会算出一个**看起来正常但错的**分数。回补数据若换了 row_id 口径，
@@ -210,7 +223,7 @@ def main() -> None:
                     "若回补数据的 row_id 与 test 不同口径，改按 (time_id, asset_id) 连接。")
             y = merged["target"].to_numpy(np.float64)
             w = np.maximum(merged["weight"].to_numpy(np.float64), 0.0)
-            p = merged[pred_col].to_numpy(np.float64)
+            p = merged[PREDICTION_COLUMN].to_numpy(np.float64)
             offline = weighted_zero_mean_r2(y, p, w)
             rec["offline_score"] = float(offline)
             pub = rec.get("published_public_score")

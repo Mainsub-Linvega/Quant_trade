@@ -100,6 +100,31 @@ def public_baseline_drift(meta: dict) -> list[str]:
             for key in PUBLIC_BASELINE if differs(key)]
 
 
+def frozen_ridge_drift(archive: zipfile.ZipFile) -> list[str]:
+    """包里的 `model/baseline_model.json` 是不是榜上那份冻结岭回归。
+
+    ⚠️ 2026-08-24 补。它是**文件身份**，不是 meta 标量 —— meta 里没有任何字段承载它，
+    所以 `public_baseline_drift` 那条路看不见它（同理它也不该进 `PUBLIC_BASELINE`，
+    否则现存那份已过全部门禁的 20260819.zip 会因为 meta 缺键而当场判 FAIL）。
+
+    为什么要查：`v3_hybrid/train.py:132` 是 `market = group_mean(ridge_raw)`，市场块是
+    `m̂ = (1−λ)·m̂_ridge + λ·m̂_lgbm`（λ=0.5）⟹ **换岭回归 = 换市场块 = 交出另一个模型**，
+    而 08-24 之前没有任何门禁会发现这件事。
+    """
+    sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+    try:
+        from promote_v3_candidate import PRODUCTION_RIDGE_SHA256
+    finally:
+        sys.path.remove(str(_REPO_ROOT / "scripts"))
+    name = "model/baseline_model.json"
+    if name not in archive.namelist():
+        return [f"包里没有 {name}"]
+    actual = hashlib.sha256(archive.read(name)).hexdigest()
+    if actual == PRODUCTION_RIDGE_SHA256:
+        return []
+    return [f"{name} sha256 {actual[:16]}… != 冻结岭回归 {PRODUCTION_RIDGE_SHA256[:16]}…"]
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     return digest
@@ -129,6 +154,7 @@ def audit(path: Path, expected_scale: float | None = None,
         # ⚠️ 市场森林此前完全没被核过 —— 它是架构的一半，漏打包会静默降级
         absent_market = sorted(name for name in market_files if f"model/{name}" not in names)
         drift = public_baseline_drift(meta) if (expect_public_baseline and not missing) else []
+        ridge_drift = frozen_ridge_drift(archive) if expect_public_baseline else []
         checks = {
             "required_files_present": not missing,
             "no_unexpected_modules": not unexpected_modules,
@@ -143,6 +169,7 @@ def audit(path: Path, expected_scale: float | None = None,
                                   meta.get("num_iteration") == expected_iterations),
             "seed_count_matches": (expected_seeds is None or len(model_files) == expected_seeds),
             "matches_public_baseline": (not expect_public_baseline) or not drift,
+            "frozen_ridge_matches": (not expect_public_baseline) or not ridge_drift,
         }
         return {
             "zip": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size,
@@ -151,6 +178,7 @@ def audit(path: Path, expected_scale: float | None = None,
             "duplicates": duplicates, "absent_declared_models": absent_models,
             "absent_declared_market_models": absent_market,
             "public_baseline_drift": drift,
+            "frozen_ridge_drift": ridge_drift,
             "meta_summary": {"prediction_scale": meta.get("prediction_scale"),
                              "num_iteration": meta.get("num_iteration"),
                              "history_window": meta.get("history_window"),

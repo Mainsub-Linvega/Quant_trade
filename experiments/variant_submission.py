@@ -85,7 +85,12 @@ def stage(overrides: dict[str, float | int], destination: Path,
     meta_path = package / "model" / "hybrid_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     for key, value in overrides.items():
-        print(f"  {key}: {meta[key]} → {value}")
+        # ⚠️ 2026-08-24：`meta[key]` 改成 `.get()` —— 覆写目标**可能本来就不存在**。
+        # 实例：重训候选缺 slow/fast 三键（`train.py` 的 CLI 里没有这个概念），
+        # 而补上它们正是 staging 该做的事（`promote_v3_candidate` 同款做法）。
+        # 旧写法在这种情况下抛 KeyError，把「补缺键」这条正当路径堵死。
+        before = meta.get(key, "（缺键，本次新增）")
+        print(f"  {key}: {before} → {value}")
         meta[key] = value
     meta["variant_note"] = ("由 experiments/variant_submission.py 生成的临时变体，"
                             "不是生产模型；生产 meta 未被改动")

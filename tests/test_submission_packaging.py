@@ -128,6 +128,9 @@ class PackagingMetaGateTest(unittest.TestCase):
                 check_v3_hybrid_meta(model_dir, off_baseline=False)
 
 
+FROZEN_RIDGE = ROOT / "strategies" / "v3_hybrid" / "model" / "baseline_model.json"
+
+
 class SubmissionPackagingTest(unittest.TestCase):
     def test_audit_accepts_minimal_valid_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -227,7 +230,10 @@ class SubmissionPackagingTest(unittest.TestCase):
                 for module in sorted(DECLARED_MODULES - {"main.py"}):
                     archive.writestr(module, "")
                 archive.writestr("temporal.py", "# 研究模块，不该在包里")
-                archive.writestr("model/baseline_model.json", "{}")
+                # 这个用例开了 --expect-public-baseline ⟹ 也会核冻结岭回归的
+                # 文件身份；本用例测的是「多带一个模块」，所以岭回归给真的。
+                archive.writestr("model/baseline_model.json",
+                                 FROZEN_RIDGE.read_bytes())
                 archive.writestr("model/hybrid_meta.json", json.dumps(meta))
                 for name in meta["lgbm_model_files"] + meta["market_model_files"]:
                     archive.writestr(f"model/{name}", "model")

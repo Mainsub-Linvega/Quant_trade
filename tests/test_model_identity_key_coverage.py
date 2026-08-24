@@ -36,8 +36,11 @@
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +49,10 @@ for _p in (str(ROOT), str(ROOT / "scripts")):
         sys.path.insert(0, _p)
 
 from audit_submission_zip import public_baseline_drift  # noqa: E402
-from promote_v3_candidate import PUBLIC_BASELINE, validate_meta  # noqa: E402
+from audit_submission_zip import frozen_ridge_drift  # noqa: E402
+from promote_v3_candidate import (PRODUCTION_RIDGE_SHA256,  # noqa: E402
+                                  PUBLIC_BASELINE, ridge_identity_drift,
+                                  stage_candidate, validate_meta)
 from retrain_extended import BASELINE_CHECKED_KEYS, production_structure  # noqa: E402
 from verify_delivery_runtime import model_identity  # noqa: E402
 
@@ -230,6 +236,94 @@ class PromoteGateCoverageTest(unittest.TestCase):
             self.assertIn(key, PUBLIC_BASELINE,
                           f"{key} 已不在 PUBLIC_BASELINE 里，豁免表该清理")
             self.assertTrue(reason.strip(), f"{key} 的豁免没写理由")
+
+
+class FrozenRidgeGateTest(unittest.TestCase):
+    """⭐ 第五个消费者：**冻结岭回归的文件身份**（2026-08-24 补）。
+
+    它没有进 `PUBLIC_BASELINE`，理由写在 `promote_v3_candidate.PRODUCTION_RIDGE_SHA256`
+    的注释里（meta 里没有承载它的字段；塞进去会让现存那份已过门禁的交付包当场判 FAIL）。
+    ⟹ 上面那套「名单比对」覆盖不到它，本类用**行为式**断言接上：把岭回归换掉，
+    每一条路都必须响。
+
+    为什么值得单开一类：换岭回归 = 换市场块（`v3_hybrid/train.py:132` 的
+    `market = group_mean(ridge_raw)`，`m̂ = (1−λ)·m̂_ridge + λ·m̂_lgbm`），
+    而 08-24 之前 `retrain_extended` 的命令计划**第一条就是重训岭回归**，
+    四个身份消费者里没有一个会发现。这是同型事故的第六次，
+    也是第一次发生在「已冻结组件被计划重训」这个方向。
+    """
+
+    def test_production_ridge_is_the_frozen_one(self) -> None:
+        if not PRODUCTION_MODEL_DIR.is_dir():
+            self.skipTest("生产模型目录不在盘上")
+        self.assertEqual(ridge_identity_drift(PRODUCTION_MODEL_DIR), [])
+
+    def test_a_different_ridge_is_detected(self) -> None:
+        if not PRODUCTION_MODEL_DIR.is_dir():
+            self.skipTest("生产模型目录不在盘上")
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp)
+            source = (PRODUCTION_MODEL_DIR / "baseline_model.json").read_bytes()
+            (fake / "baseline_model.json").write_bytes(source + b" ")   # 差一个字节
+            drift = ridge_identity_drift(fake)
+            self.assertTrue(drift)
+            self.assertIn("!=", drift[0])
+
+    def test_missing_ridge_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertTrue(ridge_identity_drift(Path(tmp)))
+
+    def test_staging_refuses_a_candidate_whose_ridge_was_retrained(self) -> None:
+        """⭐ 核心断言：转正这条路上，换掉的岭回归必须走不过去。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "candidate"
+            candidate.mkdir()
+            (candidate / "baseline_model.json").write_text('{"coef": [0.0]}')
+            (candidate / "hybrid_meta.json").write_text(json.dumps(
+                baseline_meta() | {"lgbm_model_files": [], "market_model_files": []}))
+            with self.assertRaises(ValueError, msg="换掉岭回归竟然过了 staging"):
+                stage_candidate(candidate, Path(tmp) / "staging",
+                                scale=PUBLIC_BASELINE["prediction_scale"], n_seeds=0,
+                                blend_weight=PUBLIC_BASELINE["blend_weight"])
+
+    def test_off_baseline_is_the_only_way_past(self) -> None:
+        """偏离必须是**显式按下去**的 —— 与身份键那套同一条纪律。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "candidate"
+            candidate.mkdir()
+            (candidate / "baseline_model.json").write_text('{"coef": [0.0]}')
+            (candidate / "hybrid_meta.json").write_text(json.dumps(
+                baseline_meta() | {"lgbm_model_files": [], "market_model_files": []}))
+            stage_candidate(candidate, Path(tmp) / "staging",
+                            scale=PUBLIC_BASELINE["prediction_scale"], n_seeds=0,
+                            blend_weight=PUBLIC_BASELINE["blend_weight"],
+                            off_baseline=True)
+
+    def test_zip_audit_sees_a_swapped_ridge(self) -> None:
+        """打包审计那条路（D5 的最后一道门）也必须响。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "good.zip"
+            with zipfile.ZipFile(good, "w") as archive:
+                archive.writestr("model/baseline_model.json",
+                                 (PRODUCTION_MODEL_DIR / "baseline_model.json").read_bytes()
+                                 if PRODUCTION_MODEL_DIR.is_dir() else b"{}")
+            bad = Path(tmp) / "bad.zip"
+            with zipfile.ZipFile(bad, "w") as archive:
+                archive.writestr("model/baseline_model.json", '{"coef": [0.0]}')
+            empty = Path(tmp) / "empty.zip"
+            with zipfile.ZipFile(empty, "w"):
+                pass
+            with zipfile.ZipFile(bad) as archive:
+                self.assertTrue(frozen_ridge_drift(archive))
+            with zipfile.ZipFile(empty) as archive:
+                self.assertTrue(frozen_ridge_drift(archive))
+            if PRODUCTION_MODEL_DIR.is_dir():
+                with zipfile.ZipFile(good) as archive:
+                    self.assertEqual(frozen_ridge_drift(archive), [])
+
+    def test_the_constant_is_a_real_sha256(self) -> None:
+        self.assertEqual(len(PRODUCTION_RIDGE_SHA256), 64)
+        self.assertTrue(all(c in "0123456789abcdef" for c in PRODUCTION_RIDGE_SHA256))
 
 
 if __name__ == "__main__":
