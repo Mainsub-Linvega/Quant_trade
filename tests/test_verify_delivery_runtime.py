@@ -12,14 +12,19 @@
 3. **公榜基线偏离**。取值表必须复用 `audit_submission_zip.public_baseline_drift`，
    不能另抄一份 —— 两张表分头维护正是 08-18（slow/fast 丢键）与 08-21（long_window 丢键）
    两次「静默降级」事故的形状。
+4. **`--from-zip` 的归属锚点**（2026-08-25 新增）。此前本脚本永远指着 `strategies/v3_hybrid/`
+   跑 —— 那是源目录，不是交出去的那件东西。现在解压真 zip 再跑，且 zip 的 sha256
+   必须进落盘 JSON：没有它，「测了交付物」就只是一句自述。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +32,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from promote_v3_candidate import PUBLIC_BASELINE  # noqa: E402
 from verify_delivery_runtime import (EVAL_CPU_CORES, EVAL_MEMORY_GB,  # noqa: E402
-                                     ProgressProxy, model_identity,
+                                     ProgressProxy, extract_submission_zip, model_identity,
                                      peak_rss_bytes, public_baseline_drift,
                                      resolve_manifest, rss_verdict)
 
@@ -215,6 +220,65 @@ class ProgressProxyTest(unittest.TestCase):
         proxy = ProgressProxy(self.Spy(), every=1000, expected=10)
         with self.assertRaises(AttributeError):
             proxy.definitely_not_there
+
+
+class FromZipTest(unittest.TestCase):
+    """`--from-zip`：跑的到底是不是那份交付物。
+
+    ⚠️ 2026-08-25 新增。CLAUDE.md 伤疤规则 11 要的是「每个测量配一个**能失败**的归属检查」——
+    对「我们验证了交付物的运行时」这句话，那个检查就是**落盘 JSON 里的 zip sha256**。
+    """
+
+    def _zip(self, directory: Path, name: str = "pkg.zip") -> Path:
+        path = directory / name
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("main.py", "class Model: pass\n")
+            archive.writestr("model/hybrid_meta.json", json.dumps(baseline_meta()))
+        return path
+
+    def test_zip_sha256_and_extraction_are_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._zip(root)
+            target, evidence = extract_submission_zip(path, force=False, root=root / "out")
+            self.assertEqual(evidence["sha256"],
+                             hashlib.sha256(path.read_bytes()).hexdigest())
+            self.assertEqual(evidence["bytes"], path.stat().st_size)
+            self.assertEqual(evidence["file_count"], 2)
+            self.assertEqual(target.name, "pkg")
+            self.assertEqual(evidence["extracted_to"], str(target))
+            self.assertTrue((target / "main.py").exists())
+
+    def test_audit_failure_is_recorded_not_raised(self) -> None:
+        """审计不过要**落盘**是哪几项红了，不是抛异常把现场丢掉。
+
+        拦截由 `checks["zip_audit_passed"]` 负责，与其它门禁同一层。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, evidence = extract_submission_zip(self._zip(root), force=False,
+                                                 root=root / "out")
+        self.assertFalse(evidence["audit_passed"])
+        self.assertIn("required_files_present", evidence["audit_failing_checks"])
+        self.assertIn("requirements_covers_dependencies", evidence["audit_failing_checks"])
+
+    def test_existing_target_needs_force(self) -> None:
+        """CLAUDE.md §5.10：产物不得静默覆盖。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._zip(root)
+            extract_submission_zip(path, force=False, root=root / "out")
+            with self.assertRaises(SystemExit) as caught:
+                extract_submission_zip(path, force=False, root=root / "out")
+            self.assertIn("--force", str(caught.exception))
+            extract_submission_zip(path, force=True, root=root / "out")
+
+    def test_missing_zip_fails_loudly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(SystemExit):
+                extract_submission_zip(Path(directory) / "nope.zip", force=False,
+                                       root=Path(directory) / "out")
+
 
 
 if __name__ == "__main__":

@@ -193,6 +193,117 @@ ROADMAP 历史记录的 `112 passed / 22 subtests` 是 pytest 的数；本文件
 > 按 CLAUDE.md §7「旧结论不删除」，引用原样保留以说明当时的推理来源；
 > 可核验的**实验证据**一律仍以 `outputs/experiments/` 与 `experiments/ledger.csv` 为准。
 
+### 2026-08-27 — `INFRA`：`requirements.txt` 落地，并暴露出「门禁与真文件第一次相遇」的两个问题
+
+用户在评测机 base 环境（`/opt/conda`，`pip check` 干净）freeze 出真文件。第一版用文档字面的
+`pip freeze`，喂进闸门当场炸出两条，一条是我的 bug，一条是**文件本身**的缺陷：
+
+1. **`_TEAM_PATH` 误判（我的 bug，已修）** —— conda-forge 的构建根偏偏长成
+   `/home/conda/feedstock_root/`，被「禁止队伍专属绝对路径」（交付要求第 7 条）的
+   `/home/<user>/` 命中。评测机 base 里的 numpy 正是这一形状 ⟹ 一份**合法**的评测机
+   freeze 会被判违规。修法是按前缀显式豁免构建根，而不是放宽 `/home/`：
+   同一份文件里的 `/home/jovyan/...` 仍然拦得住（新增两条回归各覆盖一面）。
+2. **`pip freeze` 记不下 numpy 的版本（文件本身的缺陷）** ——
+   `numpy @ file:///home/conda/feedstock_root/build_artifacts/numpy_1682210216651/work`，
+   `1682210216651` 是构建时间戳不是版本。三重毛病：主办方说这份文件「用于记录 Python 包
+   **及版本**」而它一个版本都没记；它写死了一条绝对路径；**而且它让归属检查瞎掉** ——
+   lightgbm 4.3.0 本机也是这个版本，`numpy` 是唯一能区分「评测机 freeze / 本机 freeze」
+   的那一项，它一读不出来，伤疤规则 11 那道门就只剩形式。
+   ⟹ 改用 `python -m pip list --format=freeze`：同一套已安装包元数据，渲染成 `name==version`，
+   一次解决三个问题。**这不是绕过门禁，是门禁指出了交付物该长什么样。**
+
+**落地产物**：`strategies/v3_hybrid/requirements.txt`，223 条，全部 `==` 形状，
+0 条直接引用 / 0 条选项行 / 0 条绝对路径，`sha256 db645ebd…`。
+`numpy==1.24.3`、`lightgbm==4.3.0` 与 `outputs/cloud/delivery_cloud_py311_4t.json` 的
+`environment` 块**逐字相同** —— 这份 JSON 是 08-21 在真实评测机上落的盘，是独立于本次测量的锚点。
+
+**正/负控制（伤疤规则 11：能失败才算数）**：
+- 正控制：真文件 → `problems` 空、`env_drift` 空，通过。
+- 负控制：换成本机 `.venv` freeze（50 行）→ 当场 `SystemExit`，
+  `numpy==2.5.1 != 评测机实测 1.24.3`，并指出「最可能的原因：这份 freeze 是在本机跑的」。
+- 有意偏离出口：`--off-env-baseline` 放行，但打印 ⚠️ 且要求重跑云端交付验证刷新真值。
+
+**踩到的两条旧伤疤**（都是我犯的，记在这里）：
+- 伤疤规则 16 —— 我把 `cloud_sync.py pull` 接了 `tail -20`，进度全看不见，
+  只能靠 `pgrep` 判断它还活着。
+- `cloud_sync.py pull` 是**整目录**镜像（云端 `outputs/experiments/` 一百多个 JSON，
+  走 Contents API 逐个 base64），为取一个 4 KB 文件跑了 4 分钟还没完。
+  定点取应当直接用 `Contents.get_bytes(f"{REMOTE_ROOT}/outputs/experiments/<name>")`。
+
+**打包 + 交付验证（当日走完，P-REQ 结案）**：
+`v3_hybrid_submission_20260827.zip`，sha256 `d1ee32ae…`，13 个文件，审计 **13/13 全过**。
+两条后端各跑一次 `--from-zip` 全量推理（**首次测真正的交付物**，此前只测过源目录）：
+lightgbm `predict 6.05 min / wall 7.03 / peak 11.57 GB`、
+numpy 兜底 `10.09 / 10.89 / 11.54`；`rows 3,217,458`、`calls 214,538`、
+`runner_messages` 空，13 条 check 只红 `peak_rss_has_headroom` —— 那是 08-23 立的存量风险
+（余量线 9.60 GB，历次实测 10.93–11.57 GB，**没有一次达标过**），不是本次回归。
+
+⭐ **最强的那道归属检查是计划外发现的**：两条后端从 zip 跑出的 `predictions_sha256`
+（`524e14e0…` / `567265de…`）与 08-24 用**源目录**跑的 `_full_20260824` **逐位相同**。
+⟹ 「打包 → 解压 → 推理」这条链路对预测零偏移，比「12 个文件 sha256 相同」更靠后一步、
+也更贴近真正要证的东西（榜上跑的是解压后的东西，不是 zip 里的字节）。
+
+**状态**：P-REQ `RESOLVED`。全量测试 **345 passed**（原 343 + 新增 2）。
+`20260824.zip` 作废，唯一可交的是 `20260827.zip`。
+
+### 2026-08-25 — `INFRA/INCIDENT`（未爆）：P-REQ 待办 1 —— 交付门禁第一次核「主办方要求本身有没有漏」
+
+**背景**：P-REQ（ROADMAP）核出交付 zip 缺 `requirements.txt` —— 主办方 08-23 新文档
+`submission_and_evaluation.md:53`「最终交付要求」第 3 条明写的硬要求。
+`20260824.zip` 只有 12 个文件，而 `audit_submission_zip.py` **11/11 全过**。
+这不是既有事故的重演：08-18/08-19/08-24 三次都是「查的项对、取值错」，这次是
+**查的项本身少了一条** —— 08-24 做更新包审计时抓了新文档的评分公式与 80/20 规则，
+数据审计做了，**文档要求审计没做**。
+
+**做了什么**（AI 侧，代码 + 门禁 + 回归；用户侧待办 2/3 未动）：
+
+1. `make_submission.py`：新增 `SUBMISSION_EXTRA_FILES`（按策略声明的非 `.py` 交付物，
+   `v1_ridge` 显式写成空集）、`IMPORT_TO_DISTRIBUTION`、`check_requirements()`。
+   `resolve_local_modules()` 重构为 `_walk_imports()` 的一个出口，另一个出口是新的
+   `resolve_third_party_imports()` —— **同一次 AST 遍历**，避免两处分头维护。
+2. `audit_submission_zip.py`：`REQUIRED` 从 `SUBMISSION_EXTRA_FILES` **派生**；
+   新增两道 check（`requirements_covers_dependencies` / `requirements_matches_eval_env`）
+   与 `requirements_summary` 输出块。
+3. `verify_delivery_runtime.py`：新增 `--from-zip`，解压到 `outputs/delivery_verify/<stem>/`
+   （真实块设备，**不用 tmpfs**，伤疤规则 13）再走官方 runner，落盘 zip 的 sha256，
+   并新增 check `zip_audit_passed` 把「内容审计」与「跑通」绑在同一件产物上。
+   ⚠️ 此前本脚本永远指着 `strategies/v3_hybrid/` —— 那是**源目录不是交付物**，
+   打包做的取舍（`ignore_patterns` 排除 manifest、只收声明过的 `*.py`）从没被 runner 装载过。
+
+**⭐ 归属检查怎么做的**（伤疤规则 11：能失败、且独立于被测量本身）。
+要防的是「文件在包里了，但装的是**本机** freeze」这种假通过。三道，全部**对已知真值**：
+
+- `outputs/cloud/delivery_cloud_py311_4t.json` 的 `environment` 块是 08-23 在**真实评测机**
+  落的盘（`python 3.11.15` / `numpy 1.24.3` / `lightgbm 4.3.0`），是一件**独立产物**。
+  门禁要求 `requirements.txt` 的 numpy/lightgbm 版本等于它。
+- 第三方 import 根由 AST **现算**（实测恰为 `{numpy, lightgbm}`），不是维护一张清单 ——
+  将来新增依赖而没进 freeze，门禁自动变红。未在 `IMPORT_TO_DISTRIBUTION` 登记的新根一律硬失败。
+- 交付要求第 7 条：拒绝含 `/home/<user>/`、`/Users/` 的行。conda 常见的
+  `pkg @ file:///croot/...` 是构建根不是队伍路径，只记录不拦。
+
+**负控制实跑**（这一步能失败，整套门禁才算数）：拿本机 `.venv/bin/pip freeze`
+的真实输出（50 行）过闸门 → **当场炸**，`numpy==2.5.1 != 评测机实测 1.24.3`。
+⚠️ `lightgbm` 两边**都是 4.3.0**，区分两台机器的是 numpy —— 用例
+`test_eval_env_truth_is_available_and_not_this_machine` 显式钉住了这一点，
+免得哪天版本对齐后这道检查静默失效。
+
+**顺带修的一个读数污染**：`audit()` 原本是 `meta = ... if not missing else {}`，
+即**任何**必需文件缺失都会把 meta 清空。往 `REQUIRED` 加 `requirements.txt` 之后，
+那会让存量包的 `meta_summary` 整块变空、`public_baseline_drift` 从 3 条虚涨成 13 条 ——
+缺一件交付物不该污染另一件的读数。改为只看 `hybrid_meta.json` 本身在不在。
+（形状同伤疤规则 12：分母里混进不该算的格子。）
+
+**现状**：`20260824.zip`（sha `015ab10e…`）现在判 FAIL，且**只红两条**：
+`required_files_present` 与 `requirements_covers_dependencies`；模型身份读数依旧干净
+（`prediction_scale 1.16`、`public_baseline_drift` 为空）。这是真话，不加豁免开关。
+`--from-zip` 的解压与证据块已用它干跑验证：`sha256` 与 ROADMAP 留档逐字符一致、12 个文件。
+
+**测试**：全量 `343 passed / 43 subtests`（新增 `RequirementsGateTest` 22 项 +
+`FromZipTest` 4 项）。生产目录、模型产物、提交包一律未动。
+
+**待用户**：待办 2（JupyterHub 上 `pip freeze`）与待办 3（重新打包 + 重跑审计）完成后，
+才能跑两条后端的 `--from-zip` 全量交付验证。
+
 ### 2026-08-24 — `RESULT`：D0 走完 —— 尺子修好了（21/21 复现），而它量出的第一件事是「公榜排名多半是 regime」
 
 **背景**：`~/Downloads/public_release_20260823`（4.1 GB）到货。按 CLAUDE.md §8.8 先做只读审计。

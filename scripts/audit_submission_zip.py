@@ -14,6 +14,12 @@
 打包那边当时是「除 `train.py` 外全收 `*.py`」，于是纯研究模块 `temporal.py` 混进了包 ——
 它不在 `main.py` 的 import 闭包里，却会因为研究改动改变提交包字节。
 入包清单现在由 `make_submission.SUBMISSION_MODULES` 唯一定义，本脚本派生并双向核对。
+
+⚠️ 2026-08-25 补第三类洞：**「该查的项本身漏了一条」**。主办方 08-23 新文档
+`submission_and_evaluation.md:53` 的「最终交付要求」第 3 条明写 ZIP 必须包含
+`requirements.txt`，而 `REQUIRED` 里从来没有它 ⟹ `20260824.zip` 只有 12 个文件、
+本脚本 11/11 全过。现在非 .py 交付物也由 `make_submission.SUBMISSION_EXTRA_FILES`
+派生，并额外核「它覆盖住 main.py 真正 import 的第三方包」「版本与评测机实测一致」。
 """
 
 from __future__ import annotations
@@ -32,11 +38,19 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 # 只改了一处而当场 KeyError。
 if str(_REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "scripts"))
-from make_submission import SUBMISSION_MODULES
+from make_submission import (IMPORT_TO_DISTRIBUTION, REQUIREMENTS_NAME, SUBMISSION_EXTRA_FILES,
+                             SUBMISSION_MODULES, _normalize_distribution,
+                             eval_environment_versions, inspect_requirements,
+                             resolve_third_party_imports)
 
 # main.py 顶层无条件 import features / lgbm_numpy / history ⟹ 少一个就装不起来
 DECLARED_MODULES = SUBMISSION_MODULES["v3_hybrid"]
-REQUIRED = {*DECLARED_MODULES, "model/baseline_model.json", "model/hybrid_meta.json"}
+# ⚠️ 2026-08-25：非 .py 的交付物同样**派生**而不是手抄。此前 REQUIRED 里没有
+# `requirements.txt` ⟹ 审计 11/11 全过，却漏掉主办方 08-23 新文档「最终交付要求」
+# 第 3 条这条明写的硬要求（`20260824.zip` 只有 12 个文件）。
+DECLARED_EXTRA_FILES = SUBMISSION_EXTRA_FILES["v3_hybrid"]
+REQUIRED = {*DECLARED_MODULES, *DECLARED_EXTRA_FILES,
+            "model/baseline_model.json", "model/hybrid_meta.json"}
 FORBIDDEN_NAMES = {"train.py"}
 FORBIDDEN_PREFIXES = ("src/", "data/", "outputs/", ".git/")
 
@@ -51,6 +65,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expect-public-baseline", action="store_true",
                         help="拿 promote_v3_candidate.PUBLIC_BASELINE 全表核对 meta —— "
                              "包含 slow/fast 三个键。打私榜包前应当加上")
+    parser.add_argument("--off-env-baseline", action="store_true",
+                        help="显式允许 requirements.txt 的版本偏离评测机实测环境；"
+                             "与 make_submission.py 的同名参数配对使用，默认拒绝")
     return parser.parse_args()
 
 
@@ -100,6 +117,35 @@ def public_baseline_drift(meta: dict) -> list[str]:
             for key in PUBLIC_BASELINE if differs(key)]
 
 
+def requirements_drift(archive: zipfile.ZipFile) -> tuple[list[str], list[str], dict]:
+    """包里的 `requirements.txt` 够不够、以及是不是真从评测机来的。
+
+    返回 `(硬问题, 环境漂移, 摘要)`。解析与判据全部复用 `make_submission` ——
+    不在这里抄第二份（这个文件顶上那条注释记着两处手抄同一口径的下场）。
+
+    ⚠️ 第三方 import 根取自**仓库里的** `strategies/v3_hybrid`，与 `DECLARED_MODULES`
+    同源。「包里的 .py 是不是就是那份声明」由 `required_files_present` 与
+    `no_unexpected_modules` 两道 check 单独把关，所以这里不必再解压一次。
+    """
+    if REQUIREMENTS_NAME not in archive.namelist():
+        return [f"包里没有 {REQUIREMENTS_NAME}"], [], {}
+    blob = archive.read(REQUIREMENTS_NAME)
+    report = inspect_requirements(blob.decode("utf-8"),
+                                  resolve_third_party_imports(_REPO_ROOT / "strategies"
+                                                              / "v3_hybrid"),
+                                  eval_environment_versions())
+    summary = report["summary"]
+    return report["problems"], report["env_drift"], {
+        "sha256": hashlib.sha256(blob).hexdigest(),
+        "entry_count": summary["entry_count"],
+        "pinned_versions": {name: summary["pins"].get(_normalize_distribution(name))
+                            for name in sorted(IMPORT_TO_DISTRIBUTION.values())},
+        "direct_reference_count": len(summary["direct_reference_lines"]),
+        "option_line_count": len(summary["option_lines"]),
+        "team_path_lines": summary["team_path_lines"],
+    }
+
+
 def frozen_ridge_drift(archive: zipfile.ZipFile) -> list[str]:
     """包里的 `model/baseline_model.json` 是不是榜上那份冻结岭回归。
 
@@ -132,7 +178,7 @@ def sha256_file(path: Path) -> str:
 
 def audit(path: Path, expected_scale: float | None = None,
           expected_iterations: int | None = None, expected_seeds: int | None = None,
-          expect_public_baseline: bool = False) -> dict:
+          expect_public_baseline: bool = False, off_env_baseline: bool = False) -> dict:
     with zipfile.ZipFile(path) as archive:
         names = sorted(name for name in archive.namelist() if not name.endswith("/"))
         duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -147,13 +193,18 @@ def audit(path: Path, expected_scale: float | None = None,
         # 包内的 .py 在评测端就是 sys.path 上的顶层名字，多塞一个还可能遮蔽标准库。
         unexpected_modules = sorted(name for name in names
                                     if name.endswith(".py") and name not in DECLARED_MODULES)
-        meta = json.loads(archive.read("model/hybrid_meta.json")) if not missing else {}
+        # ⚠️ 2026-08-25：原来是 `if not missing`，即**任何**必需文件缺失都会把 meta 清空。
+        # 往 REQUIRED 里加 requirements.txt 之后，那会让存量包的 meta_summary 整块变空、
+        # public_baseline_drift 从 3 条虚涨成 13 条 —— 缺一件交付物不该污染另一件的读数。
+        has_meta = "model/hybrid_meta.json" in names
+        meta = json.loads(archive.read("model/hybrid_meta.json")) if has_meta else {}
         model_files = list(meta.get("lgbm_model_files") or [])
         market_files = list(meta.get("market_model_files") or [])
         absent_models = sorted(name for name in model_files if f"model/{name}" not in names)
         # ⚠️ 市场森林此前完全没被核过 —— 它是架构的一半，漏打包会静默降级
         absent_market = sorted(name for name in market_files if f"model/{name}" not in names)
-        drift = public_baseline_drift(meta) if (expect_public_baseline and not missing) else []
+        drift = public_baseline_drift(meta) if (expect_public_baseline and has_meta) else []
+        req_problems, req_env_drift, req_summary = requirements_drift(archive)
         ridge_drift = frozen_ridge_drift(archive) if expect_public_baseline else []
         checks = {
             "required_files_present": not missing,
@@ -170,6 +221,10 @@ def audit(path: Path, expected_scale: float | None = None,
             "seed_count_matches": (expected_seeds is None or len(model_files) == expected_seeds),
             "matches_public_baseline": (not expect_public_baseline) or not drift,
             "frozen_ridge_matches": (not expect_public_baseline) or not ridge_drift,
+            # 交付要求第 3 条。无条件核，**不设豁免开关** —— 加开关就是再造一个
+            # 「审计过了但缺硬要求」的洞，那正是本次要修的东西。
+            "requirements_covers_dependencies": not req_problems,
+            "requirements_matches_eval_env": off_env_baseline or not req_env_drift,
         }
         return {
             "zip": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size,
@@ -179,6 +234,9 @@ def audit(path: Path, expected_scale: float | None = None,
             "absent_declared_market_models": absent_market,
             "public_baseline_drift": drift,
             "frozen_ridge_drift": ridge_drift,
+            "requirements_problems": req_problems,
+            "requirements_env_drift": req_env_drift,
+            "requirements_summary": req_summary,
             "meta_summary": {"prediction_scale": meta.get("prediction_scale"),
                              "num_iteration": meta.get("num_iteration"),
                              "history_window": meta.get("history_window"),
@@ -199,7 +257,8 @@ def audit(path: Path, expected_scale: float | None = None,
 def main() -> None:
     args = parse_args()
     result = audit(Path(args.zip_path), args.expected_scale, args.expected_iterations,
-                   args.expected_seeds, expect_public_baseline=args.expect_public_baseline)
+                   args.expected_seeds, expect_public_baseline=args.expect_public_baseline,
+                   off_env_baseline=args.off_env_baseline)
     text = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         output = Path(args.output); output.parent.mkdir(parents=True, exist_ok=True)

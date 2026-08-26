@@ -400,6 +400,92 @@
 - ⚠️ **纪律**：段3/段4 与密封段（1,045,920–1,105,919）重叠。本项只**报告**观察，
   **不据此改动 P10 的候选清单、块数或门槛**（`sealed_period_plan.json` `not_doing` 第 5 条）。
 
+### P-REQ — 交付包缺 `requirements.txt` —— `RESOLVED`（2026-08-25 发现，**2026-08-27 结案**）
+
+**主办方 8/23 新文档的硬要求，我们的工具链从没接上。**
+`public_release_20260823/docs/submission_and_evaluation.md` 的「最终交付要求」第 3 条：
+
+> 3. ZIP **必须**包含 `requirements.txt`，用于记录 Python 包及版本。
+
+提交前自检清单里也列了这一项。而 `outputs/v3_hybrid_submission_20260824.zip`
+只有 **12 个文件**（4 个 `.py` + 8 个模型文件），**没有 `requirements.txt`**。
+
+- `scripts/make_submission.py` 从不打包它（docstring 明写「入包内容：`SUBMISSION_MODULES`
+  声明的那几个 `*.py` + `model/`」）；
+- `scripts/audit_submission_zip.py:39` 的 `REQUIRED` 里也没有它
+  ⟹ **审计 11/11 全过，却漏掉一条明写的硬要求。**
+
+⚠️ **这是新要求**：`requirements` 在旧包的 `competition_description.md` /
+`data_description.md` 里出现 **0 次**，是 8/23 那份**新增**文档带来的。
+⟹ 我 8/24 做 §8.8 的更新包审计时，抓了新文档的评分公式与 80/20 规则，
+**没有把它的打包要求与我们的打包代码对一遍** —— 数据审计做了，**文档要求审计没做**。
+
+**真实依赖面**（已核，用于给 freeze 结果做合理性检查）：
+`numpy` 是唯一硬依赖；`lightgbm` 是**延迟 import**（`main.py:274`，拿不到就走 numpy 兜底）；
+其余全是标准库（`json` / `pathlib` / `re`）。**无 pandas / scipy / sklearn。**
+
+**待办**：
+
+1. ~~AI 侧~~ ✅ **2026-08-25 完成**。`make_submission.py` 新增 `SUBMISSION_EXTRA_FILES`
+   （按策略声明的非 `.py` 交付物）+ `check_requirements()` 闸门；
+   `audit_submission_zip.REQUIRED` 改为**派生**它，并新增两道 check
+   （`requirements_covers_dependencies` / `requirements_matches_eval_env`）；
+   `verify_delivery_runtime.py` 新增 `--from-zip`（解压到 `outputs/delivery_verify/<stem>/`
+   走官方 runner，落盘 zip sha256 + check `zip_audit_passed`）。
+   全量 **343 passed / 43 subtests**（新增 26 项）。生产目录与提交包未动。
+   ⭐ **归属检查**（伤疤规则 11，独立于被测量本身）：`requirements.txt` 的 numpy/lightgbm
+   版本必须等于 `outputs/cloud/delivery_cloud_py311_4t.json` 里**真实评测机**实测的
+   `1.24.3` / `4.3.0`；第三方 import 根由 AST 现算（实测 `{numpy, lightgbm}`）而非维护清单。
+   **负控制实跑**：本机 `.venv` 的真实 freeze 过闸门 → 当场炸
+   （`numpy==2.5.1 != 1.24.3`）；`--off-env-baseline` 是有意偏离的唯一出口。
+   ⚠️ 区分两台机器的是 **numpy**（lightgbm 两边都是 4.3.0），已用单测钉死这一前提。
+   证据：`NOTES.md` 2026-08-25 条目。
+2. ~~用户侧~~ ✅ **2026-08-27 完成**。在评测机 base 环境（`/opt/conda/bin/python`，
+   `pip check` → `No broken requirements found.`）生成，落到
+   **`strategies/v3_hybrid/requirements.txt`**（223 条，`sha256 db645ebd…`，进版本控制）。
+   `numpy==1.24.3` / `lightgbm==4.3.0` 与 `delivery_cloud_py311_4t.json` 的 `environment`
+   块逐字相同 ⟹ 归属检查通过（`problems` 空、`env_drift` 空）。
+   ⚠️ **命令与文档字面不同，是门禁逼出来的**：文档写 `pip freeze`，但 conda 装的 numpy
+   在 freeze 里渲染成 `numpy @ file:///home/conda/feedstock_root/…/numpy_1682210216651/work`
+   —— **记不下版本**（`1682210216651` 是构建时间戳）、写死绝对路径（违反交付要求第 7 条）、
+   且让归属检查瞎掉（lightgbm 两边同为 4.3.0，numpy 是唯一判别项）。
+   ⟹ 实际用的是 **`python -m pip list --format=freeze`**，同一套元数据、`name==version` 形状。
+   同时修掉一个真 bug：conda-forge 构建根 `/home/conda/feedstock_root/` 被
+   `_TEAM_PATH` 的 `/home/<user>/` 误判为队伍路径，改为按前缀显式豁免构建根
+   （`/home/jovyan/…` 仍拦得住，两条回归各覆盖一面）。全量 **345 passed**。
+   证据：`NOTES.md` 2026-08-27 条目。
+3. ~~用户重新打包 + 交付验证~~ ✅ **2026-08-27 完成**。
+   **`outputs/v3_hybrid_submission_20260827.zip`，sha256 `d1ee32ae…`，13 个文件，
+   内容审计 13/13 全过** —— 这是现在唯一可交的那份。
+   证据：`outputs/experiments/audit_submission_20260827.json`、
+   `delivery_zip_lgbm_4t.json`、`delivery_zip_numpy_4t.json`。
+
+   ⭐ **三道归属检查（伤疤规则 11），全部实跑**：
+   - **对已知真值**：新包 vs `20260824.zip` 逐条目 sha256 —— 12 个原有文件**逐字节相同**，
+     唯一差异就是新增的 `requirements.txt` ⟹ 模型身份不可能变。
+   - **对已知真值（更强）**：从 zip 解压出的模型跑全量推理，`predictions_sha256`
+     `524e14e0…`（lightgbm）/ `567265de…`（numpy 兜底）与 08-24 用**源目录**跑的
+     `delivery_runtime_*_4t_full_20260824` **逐位相同** ⟹ 打包链路零偏移。
+   - **口径边界**：`requirements.txt` 的 numpy/lightgbm 版本 == 评测机实测真值（见待办 2）。
+
+   **两条后端的交付验证读数**（`rows 3,217,458` / `calls 214,538` / `runner_messages` 空 /
+   `zero_timeouts` / `zip_audit_passed`，13 条 check 只红 `peak_rss_has_headroom` 一条）：
+
+   | 后端 | model_init | predict_total | wall | 峰值 RSS |
+   |---|---:|---:|---:|---:|
+   | lightgbm | 0.39 s | 6.05 min | 7.03 min | 11.57 GB |
+   | numpy 兜底 | 0.33 s | 10.09 min | 10.89 min | 11.54 GB |
+
+   ⚠️ `peak_rss_has_headroom`（余量线 = 12 GB 的 80% = 9.60 GB）**在每一次量过内存的运行里
+   都是红的** —— 本地 11.32–11.57 GB、真实评测机 10.93 GB。这是 08-23 立项时就记在案的
+   **存量风险**（见 NOTES 08-23「交付链路从来没量过内存」），不是本次引入的回归；
+   `peak_rss_under_limit`（< 12 GB）始终为真。
+
+⚠️ **`20260824.zip`（sha `015ab10e…`）已作废**：它缺 `requirements.txt`，
+自 08-25 起内容审计判 FAIL（红 `required_files_present` 与 `requirements_covers_dependencies`）。
+**不加豁免开关** —— 加开关就是再造一个「审计过了但缺硬要求」的洞。
+⟹ 现在唯一可交的是 **`20260827.zip`（sha `d1ee32ae…`）**，模型身份与 `20260824` 逐字节相同。
+
 ### P-B1 — 种子数 3→10 —— `REJECTED`（2026-08-24，本地公榜协议首次实跑）
 
 **协议**（首次启用「本地公榜」）：新增数据根 `outputs/data_roots/original`

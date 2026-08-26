@@ -113,3 +113,9 @@ outputs/cloud/
 # staging 的 promotion_manifest.json 也记着每片森林的 sha256。
 /outputs/candidates/v3_seeds10_original/*.txt
 /outputs/candidates/v3_seeds10_original/baseline_model.json
+
+# 2026-08-27：verify_delivery_runtime.py --from-zip 的解压工作目录。
+# 纯粹是提交 zip 的解压产物（14 MB），随时可由 zip 重建 ⟹ 不入库。
+# 那份 zip 本身也不入库（上面的 /outputs/*.zip），可交性由
+# outputs/experiments/audit_submission_<日期>.json 里的 sha256 记录。
+/outputs/delivery_verify/

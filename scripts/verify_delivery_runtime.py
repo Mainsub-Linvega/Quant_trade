@@ -26,6 +26,19 @@ P0 动作 3 要的恰恰是「在接近私榜环境的 4 核设置下验证 Ligh
 归零、而我们从未测量过的量。峰值取内核维护的高水位（`VmHWM` 与 `ru_maxrss` 取大者），
 不需要采样线程。
 
+## `--from-zip`：测真正的交付物，不是手搭目录
+
+⚠️ 2026-08-25 补。此前本脚本永远指着 `strategies/v3_hybrid/` 跑 —— 那是**源目录**，
+不是交出去的那件东西。打包会做取舍（`promotion_manifest.json` / `consistency_*.json`
+被 `ignore_patterns` 排除、只收声明过的 `*.py`），而这些取舍从来没有被官方 runner
+真正装载过一次。`--from-zip` 把 zip 解压到 `outputs/delivery_verify/<stem>/` 再跑，
+并把 zip 的 sha256 写进落盘 JSON —— 那是**归属锚点**，证明这一次跑的就是那份 zip。
+同时进程内跑一遍 `audit_submission_zip.audit(..., expect_public_baseline=True)`，
+把「内容审计过了」与「官方 runner 跑通了」绑在同一件产物上。
+
+⚠️ 解压落点是 `outputs/`（真实块设备）而**不是** `/tmp`：本机 `/tmp` 是 tmpfs，
+写进去等于占内存，而这个 runner 峰值本来就 ~11.5 GB（CLAUDE.md 伤疤规则 13）。
+
 ## 不产生任何提交文件
 
 调的是 `run_loaded_model` 而不是 `run_strategy`，后者会 `to_csv`。本脚本只在内存里对返回的
@@ -45,9 +58,11 @@ import json
 import os
 import platform
 import resource
+import shutil
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +87,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--strategy-dir", default=str(_REPO_ROOT / "strategies" / "v3_hybrid"))
+    p.add_argument("--from-zip", default=None,
+                   help="改为解压这份提交 zip 再跑（落点 outputs/delivery_verify/<stem>/），"
+                        "并把 zip 的 sha256 与内容审计结果写进 JSON。与 --strategy-dir 互斥")
     p.add_argument("--data-root", default=str(_REPO_ROOT / "data"))
     p.add_argument("--split", default="test")
     p.add_argument("--backend", required=True, choices=["lightgbm", "numpy-fallback"])
@@ -162,6 +180,53 @@ def rss_verdict(peak_bytes: int, limit_gb: float, headroom: float) -> dict[str, 
         "eval_env_note": ("docs/competition_description.md:158-159 —— "
                           f"官方评测环境 {EVAL_CPU_CORES} 核 / {EVAL_MEMORY_GB} GB"),
     }
+
+
+def extract_submission_zip(zip_path: Path, *, force: bool,
+                           root: Path | None = None) -> tuple[Path, dict[str, Any]]:
+    """把提交 zip 解压到 `outputs/delivery_verify/<stem>/`，并留下归属证据。
+
+    返回 `(解压目录, 证据块)`。证据块里的 `sha256` 是这次 runner 到底跑了哪份 zip 的
+    唯一凭据 —— 没有它，「测了交付物」就只是一句自述。
+
+    ⚠️ 落点必须是真实块设备。本机 `/tmp`（含 session scratchpad）是 tmpfs，
+    往那儿解压等于把交付物放进内存，而本脚本峰值 RSS 就有 ~11.5 GB
+    （CLAUDE.md 伤疤规则 13：3.9 GB 的 memmap 曾先后掐死两个任务）。
+    `root` 只为单测留一个不写进仓库 `outputs/` 的出口，生产路径不传它。
+
+    ⚠️ 审计不过**不在这里抛**：证据要落盘、要能看见是哪几项红了。
+    拦截由 `checks["zip_audit_passed"]` 负责，与其它门禁同一层。
+    """
+    if not zip_path.exists():
+        raise SystemExit(f"--from-zip 指向的文件不存在：{zip_path}")
+
+    sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+    try:
+        from audit_submission_zip import audit as audit_zip
+    finally:
+        sys.path.remove(str(_REPO_ROOT / "scripts"))
+    report = audit_zip(zip_path, expect_public_baseline=True)
+
+    target = (root or _REPO_ROOT / "outputs" / "delivery_verify") / zip_path.stem
+    if target.exists() and not force:
+        raise SystemExit(f"解压落点已存在：{target}；用 --force 覆盖")
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+    with zipfile.ZipFile(zip_path) as archive:
+        archive.extractall(target)
+
+    evidence = {
+        "path": str(zip_path),
+        "sha256": report["sha256"],
+        "bytes": report["bytes"],
+        "file_count": len(report["files"]),
+        "extracted_to": str(target),
+        "audit_passed": report["passed"],
+        "audit_failing_checks": [k for k, ok in report["checks"].items() if not ok],
+        "requirements_summary": report.get("requirements_summary", {}),
+    }
+    return target, evidence
 
 
 def resolve_manifest(model_dir: Path, spec: str) -> dict[str, Any]:
@@ -339,6 +404,19 @@ def main() -> None:
         lgb_version = lgb.__version__
 
     strategy_dir = Path(args.strategy_dir)
+    zip_evidence: dict[str, Any] | None = None
+    if args.from_zip:
+        if args.strategy_dir != str(_REPO_ROOT / "strategies" / "v3_hybrid"):
+            raise SystemExit("--from-zip 与 --strategy-dir 互斥：要么测源目录，要么测交付物")
+        strategy_dir, zip_evidence = extract_submission_zip(Path(args.from_zip),
+                                                            force=args.force)
+        print(f"交付物：{zip_evidence['path']}\n"
+              f"  sha256 {zip_evidence['sha256'][:16]}…，"
+              f"{zip_evidence['file_count']} 个文件，"
+              f"内容审计 {'通过' if zip_evidence['audit_passed'] else '未通过 '
+                          + str(zip_evidence['audit_failing_checks'])}\n"
+              f"  解压到 {zip_evidence['extracted_to']}", flush=True)
+
     resolution = resolve_manifest(strategy_dir / "model", args.manifest)
     identity = model_identity(strategy_dir / "model", resolution)
     drift = identity["public_baseline_drift"]
@@ -395,6 +473,9 @@ def main() -> None:
     timing_d["wall_clock_minutes"] = timing_d["wall_clock_seconds"] / 60.0
 
     checks = {
+        # --from-zip 时把「内容审计」与「跑通」绑在同一件产物上：不能出现
+        # 「审计的是 A、跑的是 B」。没给 --from-zip 时这一项恒真（无交付物可审）。
+        "zip_audit_passed": zip_evidence is None or bool(zip_evidence["audit_passed"]),
         "model_matches_promotion_manifest": identity["manifest"].get("identical") is True,
         # 非循环的那一道：PUBLIC_BASELINE 是手工维护的「榜上那份长什么样」，
         # 与「来自某次 staging」是两件独立的事，必须分开判。
@@ -422,6 +503,7 @@ def main() -> None:
             "platform": platform.platform(), "lightgbm": lgb_version,
             "numpy": np.__version__,
         },
+        "submission_zip": zip_evidence,
         "model_identity": identity,
         "resources": resources,
         "timing": timing_d,

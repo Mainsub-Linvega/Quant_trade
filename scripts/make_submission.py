@@ -1,8 +1,10 @@
 """生成私榜提交 zip：只读复制 + 校验 + 压缩，不修改策略源目录。
 
-入包内容：`SUBMISSION_MODULES` 声明的那几个 `*.py` + `model/`；
+入包内容：`SUBMISSION_MODULES` 声明的那几个 `*.py` + `SUBMISSION_EXTRA_FILES` 声明的
+非 .py 交付物（v3_hybrid = `requirements.txt`）+ `model/`；
 声明集与 `main.py` 的 AST import 闭包双向对拍，缺模块和多模块都当场失败。
-校验项：main.py 在包根、Model 可实例化、predict 返回长度正确且全为有限浮点。
+校验项：main.py 在包根、Model 可实例化、predict 返回长度正确且全为有限浮点、
+`requirements.txt` 覆盖住真实第三方依赖且版本与评测机实测一致。
 
 用法：
     .venv/bin/python scripts/make_submission.py [--strategy v1_ridge]
@@ -17,6 +19,7 @@ import ast
 import datetime
 import importlib.util
 import json
+import re
 import shutil
 import sys
 import zipfile
@@ -50,16 +53,60 @@ SUBMISSION_MODULES: dict[str, frozenset[str]] = {
     "v3_hybrid": frozenset({"main.py", "features.py", "lgbm_numpy.py", "history.py"}),
 }
 
+REQUIREMENTS_NAME = "requirements.txt"
 
-def resolve_local_modules(strategy_dir: Path) -> set[str]:
-    """`main.py` 靠 import 真正能拉起来的本地模块闭包（含 `main.py` 自己）。
+# 提交包里**非 .py** 的交付物，按策略声明。与 `SUBMISSION_MODULES` 同一套纪律：
+# 每个策略都必须被显式分类，空集也要写出来 —— 偏离必须是按下去的，不是漏掉的。
+#
+# ⚠️ 2026-08-25 补。主办方 08-23 新文档 `submission_and_evaluation.md:53`
+# 「最终交付要求」第 3 条：**ZIP 必须包含 `requirements.txt`**。
+# 这条要求在旧的 `competition_description.md` / `data_description.md` 里出现 0 次 ——
+# 08-24 做更新包审计时抓了新文档的评分公式与 80/20 规则，却没把它的**打包要求**
+# 与打包代码对一遍，于是 `20260824.zip` 只有 12 个文件、审计 11/11 全过，
+# 而它缺一条明写的硬要求。
+SUBMISSION_EXTRA_FILES: dict[str, frozenset[str]] = {
+    "v1_ridge": frozenset(),          # 已退役，不再打私榜包；显式声明为空，不是漏掉
+    "v3_hybrid": frozenset({REQUIREMENTS_NAME}),
+}
 
-    只跟进「策略目录里确实存在同名 .py」的名字，所以 `main.py` 里那句延迟的
-    `import lightgbm` 会被自动忽略（评测端由 pip 提供，不该进包）。
-    用 `ast.walk` 而不是只看顶层，函数体内的 import 同样算数。
+# import 根 → 发行包名。两者并不总是同名（`sklearn` 装的是 `scikit-learn`），
+# 所以不能靠字符串相等猜。查不到的根一律**硬失败**：将来往策略里引入一个新第三方包，
+# 必须有人在这里按一下，才可能通过打包 —— 新依赖不能静默溜进交付物。
+IMPORT_TO_DISTRIBUTION: dict[str, str] = {
+    "numpy": "numpy",
+    "lightgbm": "lightgbm",
+}
+
+# 归属检查用的**已知真值**（CLAUDE.md 伤疤规则 11）。这份 JSON 是 08-23 在
+# **主办方真实评测机**（JupyterHub，`/home/jovyan/Quant_trade`）上落的盘，
+# `environment` 块记着那台机器上实际装着的 python / numpy / lightgbm 版本。
+# 它是一件**独立于 requirements.txt 的产物** ⟹ 拿本机 `.venv` 的 freeze 冒充
+# 评测环境 freeze 时，这道门会当场炸（本机 numpy 2.5.1 ≠ 评测机 1.24.3）。
+EVAL_ENV_EVIDENCE = _REPO_ROOT / "outputs" / "cloud" / "delivery_cloud_py311_4t.json"
+
+# 文档「最终交付要求」第 7 条：不得写死 `/home/jovyan` 或队伍专属绝对路径。
+# conda 的 `pip freeze` 常见 `pkg @ file:///croot/...`、`file:///opt/conda/...` ——
+# 那些是**构建根**不是队伍路径，只记录不拦；`/home/<user>/`、`/Users/` 才拦。
+#
+# ⚠️ 2026-08-27：conda-forge 的构建根偏偏长成 `/home/conda/feedstock_root/`，
+# 会被 `/home/<user>/` 命中。评测机 base 里的 numpy 正是这一形状 ⟹ 一份**合法**的
+# 评测机 freeze 会被误判成「写死队伍路径」。构建根按前缀显式豁免，而不是放宽 `/home/`：
+# `/home/jovyan/...` 仍然必须拦得住。
+_BUILD_ROOT = re.compile(r"file://+/home/conda/feedstock_root/")
+_TEAM_PATH = re.compile(r"(/home/[^/\s]+/|/Users/[^/\s]+/)")
+
+
+def _walk_imports(strategy_dir: Path) -> tuple[set[str], set[str]]:
+    """从 `main.py` 出发遍历一次 AST，同时收下两样东西。
+
+    返回 `(本地模块闭包, 闭包里出现过的非本地 import 根)`。
+
+    ⚠️ 两者必须来自**同一次**遍历。分成两个函数各走一遍 AST 迟早会有一处漏改，
+    而那正是这个文件反复吃过的亏（08-13 两处手抄同一份口径、只改了一处）。
     """
     local = {path.stem for path in strategy_dir.glob("*.py")}
     seen: set[str] = set()
+    foreign: set[str] = set()
     stack = ["main"]
     while stack:
         current = stack.pop()
@@ -77,9 +124,37 @@ def resolve_local_modules(strategy_dir: Path) -> set[str]:
                 continue
             for name in names:
                 root = name.split(".")[0]
-                if root in local and root not in seen:
-                    stack.append(root)
-    return {f"{name}.py" for name in seen}
+                if root in local:
+                    if root not in seen:
+                        stack.append(root)
+                else:
+                    foreign.add(root)
+    return {f"{name}.py" for name in seen}, foreign
+
+
+def resolve_local_modules(strategy_dir: Path) -> set[str]:
+    """`main.py` 靠 import 真正能拉起来的本地模块闭包（含 `main.py` 自己）。
+
+    只跟进「策略目录里确实存在同名 .py」的名字，所以 `main.py` 里那句延迟的
+    `import lightgbm` 会被自动忽略（评测端由 pip 提供，不该进包）。
+    用 `ast.walk` 而不是只看顶层，函数体内的 import 同样算数。
+    """
+    return _walk_imports(strategy_dir)[0]
+
+
+def resolve_third_party_imports(strategy_dir: Path) -> set[str]:
+    """提交包在评测端真正需要 pip 提供的那些顶层包。
+
+    就是 `resolve_local_modules()` 忽略掉的那一半 —— 同一次遍历的另一个出口，
+    再剔除标准库（`json` / `pathlib` / `re` / `__future__` 都在这里被滤掉）。
+    2026-08-25 实测 v3_hybrid 恰为 `{numpy, lightgbm}`。
+
+    为什么要**现算**而不是维护一张清单：`requirements.txt` 是一份从评测机 freeze 来的
+    外部文件，我们无法控制它的内容，只能核「它有没有覆盖住我们真正 import 的东西」。
+    这个集合必须随代码自动变化，否则新加一个依赖时门禁会继续绿着。
+    """
+    return {root for root in _walk_imports(strategy_dir)[1]
+            if root not in sys.stdlib_module_names}
 
 
 def check_submission_modules(strategy: str, strategy_dir: Path) -> list[str]:
@@ -196,6 +271,173 @@ def check_v3_hybrid_meta(model_dir: Path, *, off_baseline: bool) -> dict:
     return found
 
 
+# `pip freeze` 的两种行型。conda base 环境里两种都会出现：pip 装的给 `name==version`，
+# conda 装的常给 `name @ file:///.../name-version-cp311-...whl` 这样的直接引用。
+_REQ_PINNED = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([^\s;#]+)")
+_REQ_DIRECT = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*@\s*(\S+)")
+
+
+def _normalize_distribution(name: str) -> str:
+    """PEP 503 规范化：`Foo_Bar.baz` 与 `foo-bar-baz` 是同一个包，不能靠字面比。"""
+    return re.sub(r"[-_.]+", "-", name.strip()).lower()
+
+
+def _version_from_url(distribution: str, url: str) -> str | None:
+    """从直接引用的 URL 里抠出版本，抠不出来返回 `None`。
+
+    conda 装的包在 `pip freeze` 里没有 `==`，版本只藏在文件名中
+    （`file:///croot/numpy_.../dist/numpy-1.24.3-cp311-cp311-linux_x86_64.whl`）。
+    ⚠️ 只认「路径段里那个名字规范化后**等于**目标包名」的候选 —— 否则
+    `numpy_and_numpy_base_1708638617955` 这种构建目录会被当成版本 `1708638617955`。
+    抠不出来时返回 `None`，由调用方判为「版本不可核」而**不是**当成核过了。
+    """
+    for match in re.finditer(r"([A-Za-z0-9._-]+)-(\d[A-Za-z0-9._!+]*)", url):
+        if _normalize_distribution(match.group(1)) == distribution:
+            return match.group(2)
+    return None
+
+
+def analyze_requirements(text: str) -> dict:
+    """把 `pip freeze` 的输出解析成可审计的结构。纯函数 —— 打包端与审计端共用这一份。"""
+    pins: dict[str, str | None] = {}
+    unparsable: list[str] = []
+    direct_lines: list[str] = []
+    option_lines: list[str] = []
+    team_path_lines: list[str] = []
+    entries = 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        entries += 1
+        if _TEAM_PATH.search(_BUILD_ROOT.sub("file:///<conda-forge-build-root>/", line)):
+            team_path_lines.append(line)
+        if line.startswith("-"):        # `-e ...`、`--index-url ...` 之类的选项行
+            option_lines.append(line)
+            continue
+        pinned = _REQ_PINNED.match(line)
+        direct = _REQ_DIRECT.match(line)
+        if pinned:
+            pins[_normalize_distribution(pinned.group(1))] = pinned.group(2)
+        elif direct:
+            name = _normalize_distribution(direct.group(1))
+            pins[name] = _version_from_url(name, direct.group(2))
+            direct_lines.append(line)
+        else:
+            unparsable.append(line)
+    return {"entry_count": entries, "pins": pins, "unparsable": unparsable,
+            "direct_reference_lines": direct_lines, "option_lines": option_lines,
+            "team_path_lines": team_path_lines}
+
+
+def eval_environment_versions(path: Path = EVAL_ENV_EVIDENCE) -> dict[str, str]:
+    """评测机上**实际装着**的第三方包版本，取自云端交付验证 JSON 的 `environment` 块。
+
+    这是归属检查的已知真值。文件不存在时返回空字典，由调用方判为「无法核」——
+    静默跳过等于把门禁关掉，那正是本次要修的那类洞。
+    """
+    if not path.exists():
+        return {}
+    environment = (json.loads(path.read_text(encoding="utf-8")).get("environment") or {})
+    return {root: str(environment[root]) for root in IMPORT_TO_DISTRIBUTION
+            if environment.get(root)}
+
+
+def inspect_requirements(text: str, third_party_roots: set[str],
+                         eval_versions: dict[str, str]) -> dict:
+    """核 `requirements.txt`：既核「够不够」，也核「是不是从评测机来的」。纯函数。
+
+    分两档返回：
+    - `problems`：一律硬失败（文件空、行解析不了、写死队伍绝对路径、缺我们真正 import 的包）。
+    - `env_drift`：版本与评测机真值对不上 —— 可以用 `--off-env-baseline` 显式放行
+      （base 环境真升级过时），但默认拒绝。这是 CLAUDE.md 伤疤规则 11 要的那种
+      **能失败、且独立于被测量本身**的归属检查：拿本机 `.venv` 的 freeze 冒充
+      评测环境 freeze，会在这里当场炸。
+    """
+    summary = analyze_requirements(text)
+    problems: list[str] = []
+    env_drift: list[str] = []
+
+    # 判据是「有没有依赖条目」而不是 `text.strip()` —— 一份只剩注释的文件同样什么都没记录。
+    if summary["entry_count"] == 0:
+        problems.append(f"{REQUIREMENTS_NAME} 是空的（0 条依赖条目）")
+    if summary["unparsable"]:
+        problems.append(f"有 {len(summary['unparsable'])} 行不是合法的依赖声明："
+                        + "; ".join(summary["unparsable"][:5]))
+    if summary["team_path_lines"]:
+        problems.append(
+            "写死了队伍专属绝对路径（交付要求第 7 条）："
+            + "; ".join(summary["team_path_lines"][:5]))
+
+    for root in sorted(third_party_roots):
+        distribution = IMPORT_TO_DISTRIBUTION.get(root)
+        if distribution is None:
+            problems.append(
+                f"第三方 import 根 `{root}` 没在 IMPORT_TO_DISTRIBUTION 里登记 —— "
+                "新依赖必须有人显式按一下，才能确认它在评测环境里装着")
+            continue
+        name = _normalize_distribution(distribution)
+        if name not in summary["pins"]:
+            problems.append(f"`{root}` 是 main.py 的 import 闭包里真正用到的第三方包，"
+                            f"但 {REQUIREMENTS_NAME} 里没有 `{distribution}`")
+            continue
+        expected = eval_versions.get(root)
+        actual = summary["pins"][name]
+        if expected is None:
+            env_drift.append(f"{distribution}: 评测环境真值缺这一项"
+                             f"（{EVAL_ENV_EVIDENCE.name} 的 environment 块）⟹ 版本无法核")
+        elif actual is None:
+            env_drift.append(f"{distribution}: 声明为直接引用、读不出版本 ⟹ 无法与评测机的 "
+                             f"{expected} 对拍")
+        elif actual != expected:
+            env_drift.append(f"{distribution}=={actual} != 评测机实测 {expected}"
+                             f"（{EVAL_ENV_EVIDENCE.name}）")
+
+    return {"summary": summary, "problems": problems, "env_drift": env_drift}
+
+
+def check_requirements(strategy: str, strategy_dir: Path, *, off_env_baseline: bool) -> dict:
+    """打包前的依赖闸门。见 `SUBMISSION_EXTRA_FILES` 的注释。"""
+    declared = SUBMISSION_EXTRA_FILES.get(strategy)
+    if declared is None:
+        raise SystemExit(
+            f"{strategy} 未在 SUBMISSION_EXTRA_FILES 里分类 —— 要么声明它需要哪些非 .py "
+            f"交付物，要么显式写成 frozenset()。不分类就打包 = 又一次「审计全过但缺硬要求」")
+    if REQUIREMENTS_NAME not in declared:
+        print(f"ℹ️ {strategy} 未声明 {REQUIREMENTS_NAME}，跳过依赖校验")
+        return {}
+
+    path = strategy_dir / REQUIREMENTS_NAME
+    if not path.exists():
+        raise SystemExit(
+            f"缺 {path} —— 主办方 08-23 新文档「最终交付要求」第 3 条：ZIP 必须包含 "
+            f"{REQUIREMENTS_NAME}。\n"
+            f"⚠️ 它必须在**主办方 JupyterHub** 上生成，本机 freeze 不算数：\n"
+            f"    cd ~/submit && python -m pip freeze > {REQUIREMENTS_NAME}\n"
+            f"再把它放到 {path}")
+
+    report = inspect_requirements(path.read_text(encoding="utf-8"),
+                                  resolve_third_party_imports(strategy_dir),
+                                  eval_environment_versions())
+    summary = report["summary"]
+    print(f"{REQUIREMENTS_NAME}: {summary['entry_count']} 条依赖，"
+          f"其中直接引用 {len(summary['direct_reference_lines'])} 条；"
+          + ", ".join(f"{d}={summary['pins'].get(_normalize_distribution(d))!r}"
+                      for d in sorted(IMPORT_TO_DISTRIBUTION.values())))
+    if report["problems"]:
+        raise SystemExit(f"{REQUIREMENTS_NAME} 校验失败：\n  "
+                         + "\n  ".join(report["problems"]))
+    if report["env_drift"]:
+        message = (f"{REQUIREMENTS_NAME} 与评测机实测环境不符"
+                   f"（{EVAL_ENV_EVIDENCE}）：\n  " + "\n  ".join(report["env_drift"]))
+        if not off_env_baseline:
+            raise SystemExit(message + "\n最可能的原因：这份 freeze 是在本机跑的。"
+                             "\nbase 环境确实升级过请显式加 --off-env-baseline"
+                             "（并重跑一次云端交付验证刷新真值）")
+        print("⚠️ 已按 --off-env-baseline 放行：\n  " + "\n  ".join(report["env_drift"]))
+    return report
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Package a strategy directory for private submission.")
     parser.add_argument("--strategy", default="v1_ridge")
@@ -208,6 +450,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--off-baseline", action="store_true",
                         help="显式允许包内 meta 偏离公榜基线（例如 2 种子的超时退路）。"
                              "只对 v3_hybrid 生效；默认拒绝")
+    parser.add_argument("--off-env-baseline", action="store_true",
+                        help="显式允许 requirements.txt 的版本偏离评测机实测环境"
+                             "（outputs/cloud/delivery_cloud_py311_4t.json）。"
+                             "base 环境真升级过才用；默认拒绝")
     return parser.parse_args()
 
 
@@ -262,6 +508,8 @@ def main() -> None:
     names = check_submission_modules(args.strategy, strategy_dir)
     assert "main.py" in names, "策略目录里没有 main.py"
     print("入包模块: " + ", ".join(names))
+    extras = sorted(SUBMISSION_EXTRA_FILES.get(args.strategy, frozenset()))
+    print("入包其它交付物: " + (", ".join(extras) or "—"))
     for name in names:
         shutil.copy2(strategy_dir / name, staging / name)
     model_dir = Path(args.model_dir) if args.model_dir else (strategy_dir / "model")
@@ -273,6 +521,11 @@ def main() -> None:
     # ⚠️ 配置校验必须在烟测**之前** —— 烟测只查形状与有限性，交错模型照样能过。
     if args.strategy == "v3_hybrid":
         check_v3_hybrid_meta(staging / "model", off_baseline=args.off_baseline)
+
+    # 依赖闸门同理放在烟测之前：烟测跑在**本机**解释器上，requirements.txt 写什么它都能过。
+    check_requirements(args.strategy, strategy_dir, off_env_baseline=args.off_env_baseline)
+    for name in sorted(SUBMISSION_EXTRA_FILES.get(args.strategy, frozenset())):
+        shutil.copy2(strategy_dir / name, staging / name)
 
     smoke_test(staging)
 
