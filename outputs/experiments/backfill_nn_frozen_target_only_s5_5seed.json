@@ -1,0 +1,451 @@
+{
+  "experiment": "backfill_nn_train",
+  "question": "Train NN on original train plus public backfill labels, reserving the public tail for scoring.",
+  "configuration": {
+    "data_root": "data",
+    "backfill_root": "/mnt/e/量化/public_release_20260823/data",
+    "output_dir": "outputs/experiments",
+    "artifact_dir": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts",
+    "label": "backfill_nn_frozen_target_only_s5_5seed",
+    "force": false,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "reserve_time_ids": 60000,
+    "train_backfill_end_time_id": 1008480,
+    "validation_start_time_id": 1008486,
+    "validation_end_time_id": 1045920,
+    "current_feature_count": 100,
+    "arms": "target_only",
+    "responder_set": "shortlist",
+    "responders": [],
+    "aux_lambda": 0.3,
+    "market_hidden": [
+      32
+    ],
+    "cross_hidden": [
+      64,
+      32
+    ],
+    "max_iter": 8,
+    "batch_size": 4096,
+    "learning_rate": 0.001,
+    "alpha": 0.001,
+    "seed": 2026,
+    "seeds": [
+      2026,
+      2027,
+      2028,
+      2029,
+      2030
+    ]
+  },
+  "distinction_from_prior_nn": {
+    "uses_public_backfill_labels": true,
+    "new_data": "20260823 public backfill labels at /mnt/e/量化/public_release_20260823/data/train",
+    "different_from": [
+      "target_mlp_screen used only the original train rolling OOF setup and cached v3 OOF blend comparison; it did not train on the 20260823 public backfill labels.",
+      "This experiment trains on original train plus the non-held-out part of the public backfill, then scores only on the held-out public backfill tail.",
+      "The holdout is a contiguous public backfill time tail, not the old rolling_time_folds validation window."
+    ],
+    "holdout": "public backfill tail reserved by real time_id; default is the last 60000 public-backfill time_id values.",
+    "training_reopen_reason": "previous NN did not show stable signal on the old original-train rolling setup; 20260823 public backfill creates a new training distribution and a public-period holdout, so this is a fresh training experiment rather than a parameter tweak of the old NN.",
+    "scope_boundary": "not a continuation of the old target_mlp_screen verdict; it re-tests NN training only under the expanded label set, and current responder auxiliary results remain unstable across sample density"
+  },
+  "split": {
+    "holdout_cutoff_time_id": 1008486,
+    "mode": "explicit_backfill_window",
+    "train_backfill_end_exclusive": 1008480,
+    "validation_start_inclusive": 1008486,
+    "validation_end_exclusive": 1045920,
+    "reserve_time_ids": 60000,
+    "rows_total_sampled": 3289030,
+    "rows_train_sampled": 3005475,
+    "rows_holdout_sampled": 112282,
+    "train_time_range": [
+      0,
+      1008478
+    ],
+    "holdout_time_range": [
+      1008487,
+      1045919
+    ],
+    "backfill_rows_sampled": 643500
+  },
+  "architecture": {
+    "market": "sampled time-level mean features -> MLP",
+    "cross": "current cross-sectional deviation + asset one-hot -> MLP",
+    "history_used": false,
+    "target_only_control": true,
+    "auxiliary_loss": {
+      "lambda": 0.3,
+      "responders": []
+    }
+  },
+  "selected_features": {
+    "market": [
+      0,
+      3,
+      5,
+      6,
+      8,
+      11,
+      12,
+      13,
+      14,
+      15,
+      34,
+      36,
+      39,
+      42,
+      43,
+      45,
+      47,
+      48,
+      50,
+      51,
+      70,
+      76,
+      78,
+      90,
+      93,
+      94,
+      95,
+      96,
+      98,
+      99,
+      111,
+      115,
+      117,
+      120,
+      121,
+      123,
+      124,
+      126,
+      127,
+      129,
+      135,
+      144,
+      145,
+      148,
+      149,
+      151,
+      154,
+      157,
+      181,
+      183,
+      187,
+      188,
+      189,
+      190,
+      191,
+      192,
+      193,
+      194,
+      195,
+      199,
+      200,
+      201,
+      202,
+      203,
+      205,
+      206,
+      208,
+      211,
+      213,
+      214,
+      216,
+      219,
+      228,
+      244,
+      248,
+      250,
+      256,
+      258,
+      263,
+      266,
+      268,
+      269,
+      271,
+      274,
+      276,
+      281,
+      284,
+      286,
+      287,
+      288,
+      291,
+      293,
+      305,
+      308,
+      311,
+      313,
+      316,
+      318,
+      319,
+      321
+    ],
+    "cross": [
+      0,
+      5,
+      8,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      34,
+      36,
+      38,
+      39,
+      41,
+      54,
+      55,
+      59,
+      64,
+      65,
+      66,
+      67,
+      73,
+      79,
+      80,
+      81,
+      82,
+      90,
+      93,
+      95,
+      96,
+      98,
+      100,
+      101,
+      106,
+      107,
+      110,
+      115,
+      119,
+      135,
+      148,
+      152,
+      153,
+      155,
+      156,
+      157,
+      158,
+      160,
+      175,
+      187,
+      188,
+      189,
+      190,
+      191,
+      192,
+      193,
+      194,
+      195,
+      199,
+      200,
+      201,
+      202,
+      204,
+      217,
+      218,
+      219,
+      231,
+      236,
+      237,
+      238,
+      239,
+      244,
+      248,
+      250,
+      256,
+      258,
+      263,
+      268,
+      271,
+      274,
+      284,
+      286,
+      294,
+      295,
+      296,
+      297,
+      298,
+      305,
+      308,
+      313,
+      318,
+      321
+    ]
+  },
+  "aux_missing_imputed": {},
+  "iterations": {
+    "market": 8,
+    "target_only_cross": 8,
+    "aux_cross": null
+  },
+  "seed_results": [
+    {
+      "seed": 2026,
+      "iterations": {
+        "market": 8,
+        "target_only_cross": 8
+      },
+      "target_only": {
+        "A": 0.0013227856425747136,
+        "B": 0.010147705307863393,
+        "peak": 0.0001724293131419493,
+        "optimal_scale": 0.13035317861957377,
+        "score_at_unit_scale": -0.007502134022713965,
+        "denominator": 218874.62096666876,
+        "score_at_unit_scale_unclipped": -0.0075021340227141575
+      },
+      "artifact_replay_max_abs": 1.445983940986939e-07
+    },
+    {
+      "seed": 2027,
+      "iterations": {
+        "market": 8,
+        "target_only_cross": 8
+      },
+      "target_only": {
+        "A": 0.0012499131682689791,
+        "B": 0.010636504159665569,
+        "peak": 0.00014687936043277197,
+        "optimal_scale": 0.11751165133829823,
+        "score_at_unit_scale": -0.00813667782312761,
+        "denominator": 218874.62096666876,
+        "score_at_unit_scale_unclipped": -0.008136677823127547
+      },
+      "artifact_replay_max_abs": 1.8754068220605546e-07
+    },
+    {
+      "seed": 2028,
+      "iterations": {
+        "market": 8,
+        "target_only_cross": 8
+      },
+      "target_only": {
+        "A": 0.0040336219095817106,
+        "B": 0.012589388787882395,
+        "peak": 0.001292366609975378,
+        "optimal_scale": 0.3203985497265899,
+        "score_at_unit_scale": -0.004522144968718974,
+        "denominator": 218874.62096666876,
+        "score_at_unit_scale_unclipped": -0.004522144968718944
+      },
+      "artifact_replay_max_abs": 2.270863626585573e-07
+    },
+    {
+      "seed": 2029,
+      "iterations": {
+        "market": 8,
+        "target_only_cross": 8
+      },
+      "target_only": {
+        "A": 0.0013950512678938614,
+        "B": 0.010274627254089749,
+        "peak": 0.00018941495315828713,
+        "optimal_scale": 0.13577633848844203,
+        "score_at_unit_scale": -0.007484524718302027,
+        "denominator": 218874.62096666876,
+        "score_at_unit_scale_unclipped": -0.007484524718302188
+      },
+      "artifact_replay_max_abs": 1.3382080193968804e-07
+    },
+    {
+      "seed": 2030,
+      "iterations": {
+        "market": 8,
+        "target_only_cross": 8
+      },
+      "target_only": {
+        "A": 0.0011610121507013137,
+        "B": 0.012498747822462014,
+        "peak": 0.00010784674058737589,
+        "optimal_scale": 0.09289027726560024,
+        "score_at_unit_scale": -0.010176723521059387,
+        "denominator": 218874.62096666876,
+        "score_at_unit_scale_unclipped": -0.010176723521059472
+      },
+      "artifact_replay_max_abs": 1.8016590089264817e-07
+    }
+  ],
+  "ensemble": {
+    "seeds": [
+      2026,
+      2027,
+      2028,
+      2029,
+      2030
+    ],
+    "target_only_prediction": "rowwise mean of seed target_only predictions"
+  },
+  "artifacts": {
+    "dir": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts",
+    "seeds": [
+      {
+        "seed": 2026,
+        "market": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2026_market.npz",
+        "cross": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2026_cross.npz",
+        "replay_max_abs": 1.445983940986939e-07
+      },
+      {
+        "seed": 2027,
+        "market": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2027_market.npz",
+        "cross": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2027_cross.npz",
+        "replay_max_abs": 1.8754068220605546e-07
+      },
+      {
+        "seed": 2028,
+        "market": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2028_market.npz",
+        "cross": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2028_cross.npz",
+        "replay_max_abs": 2.270863626585573e-07
+      },
+      {
+        "seed": 2029,
+        "market": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2029_market.npz",
+        "cross": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2029_cross.npz",
+        "replay_max_abs": 1.3382080193968804e-07
+      },
+      {
+        "seed": 2030,
+        "market": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2030_market.npz",
+        "cross": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed_artifacts/seed_2030_cross.npz",
+        "replay_max_abs": 1.8016590089264817e-07
+      }
+    ],
+    "ensemble_replay_max_abs": 8.793637584769698e-08,
+    "cold_start_replay_max_abs": 8.793637584769698e-08
+  },
+  "arms": {
+    "zero": {
+      "A": 0.0,
+      "B": 0.0,
+      "peak": 0.0,
+      "optimal_scale": null,
+      "score_at_unit_scale": 0.0,
+      "denominator": 218874.62096666876,
+      "score_at_unit_scale_unclipped": 0.0
+    },
+    "target_only": {
+      "A": 0.001832476827804115,
+      "B": 0.004049894077985299,
+      "peak": 0.0008291504073384365,
+      "optimal_scale": 0.4524752481219749,
+      "score_at_unit_scale": -0.00038494042237706893,
+      "denominator": 218874.62096666876,
+      "score_at_unit_scale_unclipped": -0.00038494042237702253
+    }
+  },
+  "elapsed_seconds": 364.881916574
+}

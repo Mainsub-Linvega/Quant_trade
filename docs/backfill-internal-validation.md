@@ -106,3 +106,43 @@ validation interval without changing:
     prediction scale
 
 Only after a positive frozen validation may the tail confirmation be reported.
+
+## Final NN Decision
+
+The calibration-selected orthogonal market residual was frozen before the
+validation run. Calibration used backfill time_ids 948486..1008479 and selected:
+
+    scale = 1.0
+    gamma = 0.9817131062
+    normalization = 0.7850584907
+    beta = 0.20
+
+On calibration, adding the residual changed peak from 0.00343320 to 0.00347443
+(+1.20%). This was only a selection result.
+
+The frozen validation used backfill time_ids 1008486..1045919, 112,282 sampled
+rows, and a v3 model retrained through time_id 1008478. The frozen result was:
+
+| Candidate | Peak | Score at frozen scale 1.0 |
+|---|---:|---:|
+| V3 | 0.00218280 | 0.00204929 |
+| V3 + frozen orthogonal NN market residual | 0.00212350 | 0.00196261 |
+| NN market residual alone | 0.00000410 | -0.00145190 |
+
+The residual candidate declined 2.72% in peak and 4.23% at scale 1.0. The
+previous total-prediction 10% NN blend was also not promoted: its apparent gain
+under the old fixed scale was a scale correction, while its scale-invariant peak
+was lower.
+
+Final decision:
+
+    production: pure v3_hybrid
+    target-only NN: research-only, not promoted
+    NN market residual: rejected by frozen validation
+    NN cross residual: rejected
+    responder auxiliary: off
+
+The frozen-validation evaluator now accepts an explicit end cutoff. This is
+required so a validation interval cannot silently include the later tail
+confirmation interval. The nested selection JSON format is also validated by a
+regression test.

@@ -1,0 +1,54 @@
+{
+  "protocol": {
+    "data_root": "/mnt/e/量化/public_release_20260823/data",
+    "v3_model_dir": "outputs/candidates/v3_frozen_retrained",
+    "nn_experiment_json": "outputs/experiments/backfill_nn_frozen_target_only_s5_5seed.json",
+    "start_cutoff": 1008486,
+    "end_cutoff": 1045920,
+    "rows": 112282,
+    "sample_modulo": 5,
+    "sampling": "phase_balanced",
+    "selection_source": "outputs/experiments/backfill_nn_market_residual_calibration.json"
+  },
+  "selection": {
+    "scale": 1.0,
+    "gamma": 0.9817131062000347,
+    "normalization": 0.7850584907354247,
+    "beta": 0.2,
+    "beta_grid": [
+      0.0,
+      0.05,
+      0.1,
+      0.2
+    ],
+    "scale_grid": [
+      0.8,
+      0.9,
+      1.0,
+      1.16,
+      1.3,
+      1.5
+    ]
+  },
+  "candidates": {
+    "v3": {
+      "peak": 0.002182803197065733,
+      "score_at_unit_scale": 0.002049287045980424,
+      "score_at_scale": 0.002049287045980424,
+      "optimal_scale": 0.8017187484964645
+    },
+    "v3_plus_orthogonal_nn_market": {
+      "peak": 0.002123501740315091,
+      "score_at_unit_scale": 0.001962605665838538,
+      "score_at_scale": 0.0019626056658385385,
+      "optimal_scale": 0.784152530385251
+    },
+    "nn_market_residual": {
+      "peak": 4.100383073989968e-06,
+      "score_at_unit_scale": -0.0014518966262660913,
+      "score_at_scale": -0.0014518966262660913,
+      "optimal_scale": -0.05604193727968702
+    }
+  },
+  "correlation": 0.4200599576383204
+}
