@@ -114,11 +114,46 @@ V4-R 将冻结 history 的截面状态压缩为少量市场统计，并加入当
 
 ## 8. Target-only MLP
 
-为避免 responder 泄漏，MLP 只使用可部署输入，分成 market head 和 cross head，并实现 sklearn
-权重到纯 NumPy 推理的导出对拍。模型与 v3 预测相关较低，但单模只有 v3 peak 的约 24.3%；
-50/50 集成下降约 54.49%。
+旧实验 `target_mlp_screen`：为避免 responder 泄漏，MLP 只使用可部署输入，分成 market head 和
+cross head，并实现 sklearn 权重到纯 NumPy 推理的导出对拍。它只在原始训练集滚动 OOF 口径下评估，
+与 cached v3 OOF 做 blend；模型与 v3 预测相关较低，但单模只有 v3 peak 的约 24.3%，50/50 集成
+下降约 54.49%。结论是：**旧训练分布上的 NN 没有稳定信号**，低相关来自模型太弱而不是独立 alpha。
 
-这个案例形成一条重要规则：低相关可能来自模型太弱，而不是独立 alpha。集成必须直接验证组合指标。
+8/23 公榜回填标签后新增 `backfill_nn_train.py`，这不是延续旧 `target_mlp_screen` 的结论，也不是调旧
+NN 参数；它是**训练实验重新打开**：训练集改为原始 train + 公榜回填非保留段，评分只看公榜回填尾段
+（默认最后 60,000 个真实 `time_id`，本次 cutoff `time_id >= 1045920`）。因此它的价值在于检验
+“新增公榜期标签进入训练后，NN 是否重新出现可用信号”。
+
+当前结果：target-only 在回填 holdout 上有可读数值；responder 辅助不稳定，`shortlist_s20` −1.13%、
+`ladder_s20` +1.12%、加密到 `ladder_s10` 又变成 −1.04%。所以当前只保留 target-only NN 训练主线，
+不把 responder 辅助视为稳定增益。
+
+下一步 target-only 复验已做三 seed（s10 / 100 特征 / 8 iter）：seed2026 `0.00313382`、seed2027
+`0.00210080`、seed2028 `0.00015554`，均值 `0.00179672`、std `0.00151224`、CV `0.84`。
+结论：**单 seed target-only NN 不稳定，当前不能导 CSV**；后续若继续，应先做 seed averaging 或训练稳定化，
+而不是扩大容量或恢复 responder 辅助。
+
+稳定化第一步已执行：同一 s10 数据、固定预处理/选列，一次读取后训练 5 个 target-only seed
+（2026..2030），对 holdout 预测逐行平均。单 seed peak 为 `0.00313382 / 0.00210080 / 0.00015554 /
+0.00274635 / 0.00095470`，均值 `0.00181824`；5-seed ensemble peak **`0.00357272`**，高于
+单 seed 均值约 `+96.49%`，也高于最好单 seed 约 `+14.00%`。结论更新为：**seed averaging 是当前
+NN 稳定化主线**；进入 CSV 前还需 s5 或 10-seed 复验。
+
+10-seed 复验已完成：同一 s10 holdout、seeds 2026..2035，单 seed 均值 `0.00145242`、std `0.00101934`，
+10-seed ensemble peak **`0.00394484`**、unit scale 分数 `0.00392462`。这确认 5-seed 不是偶然；
+下一步转为 s5 加密采样检查，仍不直接导 CSV。
+
+s5 加密采样复验完成：5-seed ensemble（2026..2030）在 `3,117,772` train / `171,258` holdout 抽样行上
+达到 peak **`0.00455755`**，unit scale 分数 `0.00454666`，optimal scale `1.0514`；单 seed 均值
+`0.00216202`、std `0.00094707`。这比 s10 / 10-seed ensemble 的 `0.00394484` 更高，说明
+seed averaging + 更密采样方向成立。下一阶段才是候选工程化：保存每 seed MLP 权重与预处理、构建 CPU 推理/CSV
+路径，并在公榜回填 holdout 上复验落盘预测一致性。
+
+冷启动工程化已完成：target-only 每 seed 的 market / cross `.npz` 现在会同时保存 selected 特征索引和
+`robust_transform_fit` 的 `lower/upper/center/scale`，新增的冷启动入口可直接从原始特征、`time_id` 和
+`asset_id` 重建 holdout 设计矩阵并加载磁盘模型。最新 `backfill_nn_target_only_s5_5seed_coldstart`
+实验在 holdout 上的 `cold_start_replay_max_abs` 也是 `1.029e-07`，和训练态 replay 完全对齐；这意味着
+下一步可以把同一条冷启动路径接到 CSV/提交件生成，而不是再依赖训练进程里的内存对象。
 
 ## 9. 第二市场森林
 
@@ -179,3 +214,22 @@ rolling_std / rolling volatility
 禁止先全量计算未来可见的滚动量再切 fold，也禁止在采样后才推进历史。完整 peer matrix、静态 PCA、
 普通 asset×feature interaction 和 scalar regime gate 已被现有证据关闭。
 
+## 13. 回填训练重加权筛选（2026-08-27）
+
+按新增公榜数据的严格时间切分，对当前 v3 身份固定、160 轮、1 seed 做训练损失重加权筛选。训练使用原始
+数据加回填 `time_id < 948480`，中间 `948480..948485` 为 embargo，评分只用回填
+`948486..1008479`；采样为 `phase_balanced / modulo5`，训练 2,825,517 行，评分 179,943 行。
+评分权重保持原始非负 `weight`；重加权只进入 Ridge 与 weighted XS 的拟合损失，market forest 继续未加权。
+
+结果（生产尺度 `1.16`，五个连续评分块）：
+
+| 策略 | score | peak | 相对 none 的 peak | 正块 | 去最好块 | 状态 |
+|---|---:|---:|---:|---:|---:|---|
+| `none` | 0.00318351 | 0.00319100 | — | — | — | 参考 |
+| `backfill_x2` | 0.00327586 | 0.00328293 | +3.10e-05 | 4/5 | -1.52e-05 | 关闭 |
+| `half_life_39480` | 0.00317717 | 0.00318472 | -3.44e-05 | 3/5 | -6.73e-05 | 关闭 |
+| `recent_window_78960` | 0.00318351 | 0.00319100 | 0 | 0/5 | 0 | 关闭 |
+
+`backfill_x2` 的总体提升由最好块贡献，未通过“均值为正、至少 4/5 正块、去最好仍为正、
+2ΔA > ΔB”的预注册门槛；因此不进入 frozen validation，也不改变生产模型。完整原始结果保存在
+`outputs/experiments/recency_adaptation_calibration.{json,md}`。
