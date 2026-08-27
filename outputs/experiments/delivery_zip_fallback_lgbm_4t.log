@@ -1,0 +1,25 @@
+交付物：outputs/v3_hybrid_submission_20260828FALLBACK.zip
+  sha256 5f3bdc580bc542d3…，13 个文件，内容审计 通过
+  解压到 /home/mainsub/Documents/Quant_trade/outputs/delivery_verify/v3_hybrid_submission_20260828FALLBACK
+模型身份：manifest=True （8 个文件，来自 /home/mainsub/Documents/Quant_trade/outputs/promotions/v3_hybrid_long512/promotion_manifest.json）
+公榜基线偏离：无
+后端 = lightgbm；model_init = 0.39s；开始全量推理…
+峰值 RSS = 11.60 GB（上限 12.0 GB，余量线 9.60 GB）
+  ✅ zip_audit_passed
+  ✅ model_matches_promotion_manifest
+  ✅ model_matches_public_baseline
+  ✅ peak_rss_under_limit
+  ❌ peak_rss_has_headroom
+  ✅ backend_as_requested
+  ✅ row_count_correct
+  ✅ zero_non_finite
+  ✅ zero_clip_rows
+  ✅ zero_timeouts
+  ✅ not_aborted
+  ✅ predict_calls_expected
+  ✅ no_error_messages
+
+predict_total = 5.32 分钟 （wall 6.27）
+判定：FAIL
+wrote /home/mainsub/Documents/Quant_trade/outputs/experiments/delivery_zip_fallback_lgbm_4t.json
+wrote /home/mainsub/Documents/Quant_trade/outputs/experiments/delivery_zip_fallback_lgbm_4t.md

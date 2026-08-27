@@ -329,6 +329,34 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 
 ⟹ 任何时候都有一份可交的东西；**时间不够就直接跳到 D5 交当前生产**。
 
+⚠️⚠️ **2026-08-27 订正：上面这张表的后两层现在一份都不可交。**
+主办方 8/23 新文档（`public_release_20260823/docs/submission_and_evaluation.md`
+「最终交付要求」第 3 条）要求 ZIP **必须**包含 `requirements.txt`。实测
+（`unzip -l <zip> | grep -c requirements`）：
+
+| 包 | `requirements.txt` | 现在能不能交 |
+|---|:--:|---|
+| `v3_hybrid_submission_20260827.zip` | ✅ | **能。这是主件**（sha `d1ee32ae…`，13 文件，审计 13/13）|
+| `..._20260824.zip` | ❌ | 不能（08-25 起内容审计判 FAIL）|
+| `..._20260822.zip` | ❌ | 不能（此前一直被当作最后一层回退）|
+| `..._20260819.zip` | ❌ | 不能（且另缺 `long_window`）|
+| `..._20260818.zip` / `..._20260813.PRE-SLOWFAST.zip` | ❌ | 不能 |
+
+⟹ **一条新增的硬要求让盘上的存量交付件集体失效** —— 这是 P-REQ 一个当时没记的副作用。
+回退层由「挑一份旧 zip」改为「**用备份模型现打一份**」，产物是
+`outputs/v3_hybrid_submission_20260828FALLBACK.zip`（用户执行，见 D5 的兜底命令）：
+它装的是长窗 w512 那版（公榜真值 **0.0041833953**），
+`baseline_model.json` 与生产同为 sha `54dc6afb…`、身份键全等于 `PUBLIC_BASELINE`
+⟹ **不需要 `--off-baseline`**。
+
+⟹ 修正后的三层回退：
+
+| 情形 | 交哪一份 |
+|---|---|
+| 主件审计通过（默认路径）| `..._20260827.zip` |
+| 主件审计转红 | `..._20260828FALLBACK.zip`（上传前同样先审计）|
+| 两份都不行 | 用生产目录现跑 `make_submission.py`（D5 命令）现打一份，审计通过再交 |
+
 ## D5：用户打包 + 审计（**只能由用户执行**，CLAUDE.md §1.4）
 
 ```bash
@@ -367,6 +395,28 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 （审计记录 `outputs/experiments/submission_audit_20260822.json`）。
 ROADMAP §P0-B 早已记下这件事，是本文件没跟上 —— 按 CLAUDE.md §7 不删原文，在此订正。
 
+⚠️⚠️ **2026-08-27 再订正（同一处，第二次过期）**：上面这句「最后一层是 `..._20260822.zip`」
+现在也错了 —— 它缺 8/23 新增的硬要求 `requirements.txt`（见 D4.5 的订正表）。
+**8/31 的主件是 `..._20260827.zip`**，兜底件由下面这条命令现打：
+
+```bash
+# 兜底件（长窗 w512 那版，公榜真值 0.0041833953）—— 只在主件审计转红时才用得上
+.venv/bin/python scripts/make_submission.py --strategy v3_hybrid \
+    --model-dir outputs/promotions/backups/model_before_20260824_150921 \
+    --date-tag 20260828FALLBACK
+
+.venv/bin/python scripts/audit_submission_zip.py \
+    outputs/v3_hybrid_submission_20260828FALLBACK.zip --expect-public-baseline \
+    --output outputs/experiments/audit_submission_20260828_fallback.json
+```
+
+⚠️ **不加** `--off-baseline`、**不加** `--off-env-baseline`。已核：该备份的
+`blend_weight 1.0` / `prediction_scale 1.16` / `num_iteration 480` / `long_window 512` /
+`slow_fast_*` 三键 / `market_lambda 0.5` / `cross_section_weighted true` 全部等于
+`promote_v3_candidate.PUBLIC_BASELINE`，`baseline_model.json` 与生产同为 sha `54dc6afb…`
+⟹ 它**本来就该过**。若脚本要求任一开关，**停下来查**，不要用开关绕过。
+⚠️ `--date-tag` 刻意用非日期形状的 `20260828FALLBACK`，上传日一眼分得出主件与兜底件。
+
 ## D6+：缓冲与收尾顺序
 
 - 私榜留 **≥3 次**余量（**重试用**，不是候选组合用 —— 见 §0）。
@@ -382,6 +432,45 @@ ROADMAP §P0-B 早已记下这件事，是本文件没跟上 —— 按 CLAUDE.m
 4. 若必须重传（包损坏、网络失败），重传的**必须是同一份 zip**，并再核一次 sha256。
 
 ⟹ 不存在「最后交个实验版试试」这种操作。想试的东西在 8/23 之前用公榜试完。
+
+### ⭐ 8/31 上传日卡片（2026-08-27 封板，当天不需要做任何判断）
+
+**交这一份，别的一律不碰：**
+
+```text
+outputs/v3_hybrid_submission_20260827.zip
+sha256 d1ee32aece50c0a95b9ad775eeae7a0bf0e17429195767d14f14367182fd6d22
+5,855,380 B / 13 个文件（4 个 .py + 8 个模型文件 + requirements.txt）
+```
+
+**顺序（照抄，不要跳步）：**
+
+1. 核 sha256 与上面一致：
+
+   ```bash
+   sha256sum outputs/v3_hybrid_submission_20260827.zip
+   ```
+
+2. 上传**前**跑审计并**落盘**（`--output` 不可省 —— 不带它就是「审过了但盘上没证据」）：
+
+   ```bash
+   .venv/bin/python scripts/audit_submission_zip.py \
+       outputs/v3_hybrid_submission_20260827.zip --expect-public-baseline \
+       --output outputs/experiments/audit_submission_20260831_final.json
+   ```
+
+3. `passed: true` **之后才**上传。
+4. 上传完**不要再上传任何东西** —— 最新一次提交即最终答案（10 次是重试余量，不是 best-of-10）。
+5. 若必须重传（网络失败／包损坏），重传的**必须是同一份 zip**，并再核一次 sha256。
+
+**中止判据：** 审计任一 check 转红 ⟹ 停，改走兜底件 `..._20260828FALLBACK.zip`（同样先审计再传）。
+⚠️ **唯一的例外是 `peak_rss_has_headroom`** —— 它是 08-23 立案的**存量**风险
+（余量线 = 12 GB 的 80% = 9.60 GB，历次实测 10.93–11.57 GB，**从来没达标过**，
+而 `peak_rss_under_limit` 始终为真）。它红**不构成**中止理由；除它以外任何一条红都算。
+
+**⛔ 这五份一律不可交**（缺 `requirements.txt`；`20260819` 还缺 `long_window`）：
+`..._20260824.zip` / `..._20260822.zip` / `..._20260819.zip` / `..._20260818.zip` /
+`..._20260813.PRE-SLOWFAST.zip`。改名与作废标记本身就是防呆措施，**不要改回去**。
 
 ---
 
