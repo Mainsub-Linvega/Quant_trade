@@ -342,6 +342,8 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 | `..._20260819.zip` | ❌ | 不能（且另缺 `long_window`）|
 | `..._20260818.zip` / `..._20260813.PRE-SLOWFAST.zip` | ❌ | 不能 |
 
+🛑 **2026-08-29 再订正（同一处，第三次过期）**：本表/本段里的 `..._20260827.zip` 与 `..._20260828FALLBACK.zip` **都已不可交** —— 它们的 `main.py` 没有显式 `num_threads`，在评测机上会撞穿 `total_timeout` 并让 85.8% 的 `time_id` 填 0。**以本文件「⭐ 8/31 上传日卡片」为准**（主件 `..._20260829.zip`，sha `d934d246…`）。
+
 ⟹ **一条新增的硬要求让盘上的存量交付件集体失效** —— 这是 P-REQ 一个当时没记的副作用。
 回退层由「挑一份旧 zip」改为「**用备份模型现打一份**」，产物是
 `outputs/v3_hybrid_submission_20260828FALLBACK.zip`（用户执行，见 D5 的兜底命令）：
@@ -356,6 +358,9 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 .venv/bin/python scripts/verify_deliver
 | 主件审计通过（默认路径）| `..._20260827.zip` |
 | 主件审计转红 | `..._20260828FALLBACK.zip`（上传前同样先审计）|
 | 两份都不行 | 用生产目录现跑 `make_submission.py`（D5 命令）现打一份，审计通过再交 |
+
+🛑 **2026-08-29 再订正（同一处，第三次过期）**：本表/本段里的 `..._20260827.zip` 与 `..._20260828FALLBACK.zip` **都已不可交** —— 它们的 `main.py` 没有显式 `num_threads`，在评测机上会撞穿 `total_timeout` 并让 85.8% 的 `time_id` 填 0。**以本文件「⭐ 8/31 上传日卡片」为准**（主件 `..._20260829.zip`，sha `d934d246…`）。
+
 
 ## D5：用户打包 + 审计（**只能由用户执行**，CLAUDE.md §1.4）
 
@@ -399,6 +404,9 @@ ROADMAP §P0-B 早已记下这件事，是本文件没跟上 —— 按 CLAUDE.m
 现在也错了 —— 它缺 8/23 新增的硬要求 `requirements.txt`（见 D4.5 的订正表）。
 **8/31 的主件是 `..._20260827.zip`**，兜底件由下面这条命令现打：
 
+🛑 **2026-08-29 再订正（同一处，第三次过期）**：本表/本段里的 `..._20260827.zip` 与 `..._20260828FALLBACK.zip` **都已不可交** —— 它们的 `main.py` 没有显式 `num_threads`，在评测机上会撞穿 `total_timeout` 并让 85.8% 的 `time_id` 填 0。**以本文件「⭐ 8/31 上传日卡片」为准**（主件 `..._20260829.zip`，sha `d934d246…`）。
+
+
 ```bash
 # 兜底件（长窗 w512 那版，公榜真值 0.0041833953）—— 只在主件审计转红时才用得上
 .venv/bin/python scripts/make_submission.py --strategy v3_hybrid \
@@ -433,14 +441,32 @@ ROADMAP §P0-B 早已记下这件事，是本文件没跟上 —— 按 CLAUDE.m
 
 ⟹ 不存在「最后交个实验版试试」这种操作。想试的东西在 8/23 之前用公榜试完。
 
-### ⭐ 8/31 上传日卡片（2026-08-27 封板，当天不需要做任何判断）
+### ⭐ 8/31 上传日卡片（2026-08-29 重签，当天不需要做任何判断）
+
+🛑 **本卡片取代 8/27 那版。** 8/27 封的 `20260827.zip` 与 `20260828FALLBACK.zip`
+**都不可交** —— 它们的 `main.py`（`ada6a2c2…`）没有显式 `num_threads`，
+在评测机（`os.cpu_count()=affinity=128`、配额 4 核）上 lightgbm 默认 `-1`
+会起 128 线程挤 4 核，实测慢 73×，折算 20.98 h vs 官方总预算 2.98 h
+⟹ 约 14% 处撞 `total_timeout`，**其后 85.8% 的 `time_id` 全部填 0**。
+详见 ROADMAP §1 与 NOTES 2026-08-29。
 
 **交这一份，别的一律不碰：**
 
 ```text
-outputs/v3_hybrid_submission_20260827.zip
-sha256 d1ee32aece50c0a95b9ad775eeae7a0bf0e17429195767d14f14367182fd6d22
-5,855,380 B / 13 个文件（4 个 .py + 8 个模型文件 + requirements.txt）
+outputs/v3_hybrid_submission_20260829.zip
+sha256 d934d2469917571ed8299abbf38202b393aec9a54b276464c0f7b5ff4d1f8546
+5,856,322 B / 13 个文件（4 个 .py + 8 个模型文件 + requirements.txt）
+```
+
+它与 `20260827.zip` 逐条目比对：**13 个条目里 12 个逐字节相同，只有 `main.py` 变了**
+⟹ 模型一个字节没动，只加了线程数。已过：审计 13/13（无 `--off-*`）、
+本地两条后端全量、**云端真机零环境变量全量**（`total` 用掉预算 8.49%）。
+
+**兜底件**（仅当主件出问题才用，装的是 08-24 转正前的 long512 旧模型）：
+
+```text
+outputs/v3_hybrid_submission_20260829FALLBACK.zip
+sha256 5f91bca9e71408fcb0ad43a29b2923bfa282ee59ffd8d1ee02206abed9167bc4
 ```
 
 **顺序（照抄，不要跳步）：**
@@ -448,22 +474,27 @@ sha256 d1ee32aece50c0a95b9ad775eeae7a0bf0e17429195767d14f14367182fd6d22
 1. 核 sha256 与上面一致：
 
    ```bash
-   sha256sum outputs/v3_hybrid_submission_20260827.zip
+   sha256sum outputs/v3_hybrid_submission_20260829.zip
    ```
 
 2. 上传**前**跑审计并**落盘**（`--output` 不可省 —— 不带它就是「审过了但盘上没证据」）：
 
    ```bash
    .venv/bin/python scripts/audit_submission_zip.py \
-       outputs/v3_hybrid_submission_20260827.zip --expect-public-baseline \
-       --output outputs/experiments/audit_submission_20260831_final.json
+       outputs/v3_hybrid_submission_20260829.zip --expect-public-baseline \
+       --output outputs/experiments/audit_submission_20260829_main_uploadday.json
    ```
+
+   ⚠️ **落盘文件名里写 zip 的日期，不要写「final」。** 8/28 那次落的是
+   `audit_submission_20260831_final.json` —— 名字声称「8/31 最终」，
+   内容却是对 `20260827.zip` 的审计，而那个包一天后就被判不可交。
+   **一个自称 final 的通过记录，指着一件后来作废的东西**，比没有记录更危险。
 
 3. `passed: true` **之后才**上传。
 4. 上传完**不要再上传任何东西** —— 最新一次提交即最终答案（10 次是重试余量，不是 best-of-10）。
 5. 若必须重传（网络失败／包损坏），重传的**必须是同一份 zip**，并再核一次 sha256。
 
-**中止判据：** 审计任一 check 转红 ⟹ 停，改走兜底件 `..._20260828FALLBACK.zip`（同样先审计再传）。
+**中止判据：** 审计任一 check 转红 ⟹ 停，改走兜底件 `..._20260829FALLBACK.zip`（同样先审计再传）。
 ⚠️ **唯一的例外是 `peak_rss_has_headroom`** —— 它是 08-23 立案的**存量**风险
 （余量线 = 12 GB 的 80% = 9.60 GB，历次实测 10.93–11.57 GB，**从来没达标过**，
 而 `peak_rss_under_limit` 始终为真）。它红**不构成**中止理由；除它以外任何一条红都算。
