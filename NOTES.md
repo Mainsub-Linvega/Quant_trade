@@ -193,6 +193,170 @@ ROADMAP 历史记录的 `112 passed / 22 subtests` 是 pytest 的数；本文件
 > 按 CLAUDE.md §7「旧结论不删除」，引用原样保留以说明当时的推理来源；
 > 可核验的**实验证据**一律仍以 `outputs/experiments/` 与 `experiments/ledger.csv` 为准。
 
+### 2026-08-29（二）— `INCIDENT`（未爆）：`--from-zip` 从加进来那天起就跑不了评测机的 Python
+
+重打包后第一次在云端跑交付验证，**开跑即死**：
+
+```text
+File "scripts/verify_delivery_runtime.py", line 456
+    f"内容审计 {'通过' if zip_evidence['audit_passed'] else '未通过 '
+SyntaxError: unterminated string literal (detected at line 456)
+```
+
+根因：那里把三元表达式**跨行**写在 f-string 里，是 **PEP 701（Python 3.12+）** 才允许的写法。
+本地 **3.13** 跑得好好的；评测机 **3.11.15**（`outputs/cloud/delivery_cloud_py311_4t.json`）
+直接语法错。**不是本轮引入的** —— git HEAD 就有，是 2026-08-25 加 `--from-zip` 时带进来的。
+
+⟹ **`--from-zip` 这条路径从加进来那天起，从没在评测机的 Python 上跑过**，
+而 ROADMAP 与 NOTES 里多处把它当成「已在真机验过」。此前两次云端跑
+（08-21 / 08-23）用的是**没有这个分支**的旧版脚本，所以一直没暴露。
+
+⚠️ **这与同日的 `num_threads` 是同一个家族**：都是「本地测得好好的，但本地的条件不是
+评测机的条件」。一个是线程数由外部环境变量给，一个是语法由更新的解释器兜着。
+伤疤规则 17 的问句同样适用，只是把「口径」换成「运行环境」。
+
+**门禁**：新增 `tests/test_eval_python_compat.py`，扫**进提交包的模块**
+（语法错 = 整个提交按填 0，没有第二次机会）和**要在评测机上跑的脚本**，
+检测三条 3.12+ 专有的 f-string 用法：跨行 f-string、表达式里嵌套字符串含反斜杠、
+嵌套字符串与外层同引号。
+
+⚠️ **`ast.parse(..., feature_version=(3, 11))` 抓不到** —— 本地实测那段代码在它下面照样通过
+（`feature_version` 只管少数语法门，3.12 的 f-string tokenizer 不受约束）。只能自己扫 token。
+
+⚠️ **检查器初版写错了，值得记**：第一条反斜杠规则写成「`FSTRING_MIDDLE` 里有反斜杠」，
+但 `FSTRING_MIDDLE` 是 f-string 的**字面量**部分 —— `f"\n写出 {x}"` 在 3.11 完全合法，
+一口气误报 **15 处**（含 `train.py:611`、`make_submission.py` 6 处）。
+只有落在 `{}` **表达式**里的反斜杠才是 3.12+ 特性。
+⟹ 改对后留了 2 个正例 + 2 个假阳性回归例把它钉死：
+**会乱叫的门禁和不会叫的门禁一样没用** —— 前者的危害更隐蔽，因为它会训练人去忽略它。
+
+✅ 顺带确认提交包本身是干净的：云端跑 `thread_default_probe.py` 时成功 import 了改后的
+`main.py` 并打出 `predict_kwargs={'num_threads': 4, ...}` ⟹ `main.py` 在 3.11 上没问题；
+新门禁扫全部提交模块也是零命中。
+
+### 2026-08-29 — `INFRA` / `INCIDENT`（未爆）：主办方补全运行时间限制，同时暴露一个**线程数归属缺口**
+
+用户重新下载 `docs/competition_description.md`。diff 有两件事，分量差很多。
+
+**① 运行时间限制从「以最终发布环境为准」变成三个硬数字**（`docs:161,166-172`）：
+
+```text
+--model-init-timeout-seconds 180
+--total-timeout-seconds (0.05 + a) * n_time_id + b     # a、b 均未给值，但都 ≥ 0
+```
+
+`a=b=0` 就是**预算下限**，按它判永远比真实评测更严。公榜 `n_time_id = 214,538`
+⟹ 总预算下限 **10,726.9 s**。四份既有产物 + 本日两次重跑的对账：
+
+| 环境 / 后端 | `model_init`(180 s) | `total_seconds`(10,726.9 s) | `mean_predict`(50 ms) |
+|---|---:|---:|---:|
+| 本地 4c/12G · LightGBM | 0.36 s / 0.20% | 376.8 s / 3.5% | 1.51 ms / 3.0% |
+| 本地 4c/12G · NumPy 兜底 | 0.36 s / 0.20% | 702.3 s / 6.5% | 3.05 ms / 6.1% |
+| 云端真机 · LightGBM | 0.96 s / 0.54% | 821.0 s / 7.7% | 3.39 ms / 6.8% |
+| **云端真机 · NumPy 兜底（最坏）** | 0.81 s / 0.45% | **2,158.6 s / 20.1%** | 9.45 ms / 18.9% |
+
+⟹ 最坏 4.97× 余量。⭐ **且预算随 `n_time_id` 线性缩放** ⟹ 9 月实盘期变长**不改变**这个占比 ——
+此前 ROADMAP 记的「实盘期更长会放大兜底耗时」这条风险就此消解（分子分母同步涨）。
+
+⭐ **风险排序被反转了**：私榜只设 model-init 和 total 两道闸，**没有 per-step 硬闸**，
+50 ms 只是总预算公式里的平均系数。⟹ 此前记的「云端主路径 2.802 s 单步离群是主要风险」
+`SUPERSEDED` —— 那 2.8 秒只贡献总账里的 2.8 秒。真正的风险形状换成了：
+超总闸的后果是 `aborted_after_timeout = True`、**剩余全部 `time_id` 填 0**
+（`timeseries_api/runner.py:180-198`），是悬崖不是线性损失。
+
+**修复**：`scripts/verify_delivery_runtime.py` 此前把 `total_timeout_seconds` **写死成 `None`**
+⟹ runner 那条 abort 分支从来没被走过，`not_aborted` 这道门禁**一直没有失败的机会**
+（CLAUDE.md §8.11）。现在新增 `--total-timeout`（默认按公式下限开闸）+ 三道门禁
+`model_init_under_limit` / `total_under_budget` / `mean_predict_under_budget`。
+
+⭐ **可失败性当场验证**：故意 `--total-timeout 5` 跑一次，`not_aborted` 与
+`predict_calls_expected` **双红**。顺带量出一件事 —— 那一次 `row_count_correct`、
+`zero_non_finite`、`zero_clip_rows` **照样全绿**（填进去的 0 也是有限值、行数也对）
+⟹ **总闸超限这种悬崖式失效，全套门禁里只有 `not_aborted` 抓得到**。
+
+重跑主件两条路径（`--from-zip v3_hybrid_submission_20260827.zip`，16 条 check
+只红存量的 `peak_rss_has_headroom`），`predictions_sha256` 与既有读数**逐位相同**
+（lgbm `524e14e0…`、numpy `567265de…`）⟹ 加门禁没有改动预测。证据：
+`outputs/experiments/delivery_zip_{lgbm,numpy}_4t_timegates.{json,md}`。
+
+**② ⚠️ 新增「重要 Note」：要求策略代码内部手动设 `num_threads`，我们没设。**
+
+> 请各队伍**务必**在策略模型中**手动设置最大线程数**……未能进行最大线程数设置
+> （保持默认值 -1）的模型，其推理性能往往**极大劣化**且**稳定性下降**。
+
+`strategies/v3_hybrid/main.py:436` 的 `booster.predict(design, num_iteration=..., **predict_kwargs)`
+**没有 `num_threads`**（`predict_kwargs` 里只可能有 `validate_features`）。而我们历次交付验证的
+「4 线程」**全部来自外部环境变量** `OMP_NUM_THREADS=4` —— `verify_delivery_runtime.py:392`
+甚至强制校验它对得上才肯跑。**评测机不会替我们设这个变量，它也不随提交包走。**
+
+⟹ 这是 CLAUDE.md §8.11 的又一个现场，且形状是新的：**不是「量错了对象」，而是「量对了对象，
+但它的关键口径由被测物之外的一个开关决定，而那个开关不在交付件里」。**
+既有的 `backend_as_requested`、`threads_declared` 都抓不到 —— 它们记录的正是那个外部开关本身。
+
+**本机复现不出，风险未排除**（`experiments/thread_default_probe.py`，15 行 × 3 森林 × 480 轮）：
+
+| 可见 / 实配 | 默认(-1) | `=1` | `=2` | `=4` | `=8` | 默认/4 |
+|---|---:|---:|---:|---:|---:|---:|
+| 32 / 32 | 0.462 ms | 1.435 | 0.849 | 0.515 | 0.442 | **0.90×** |
+| 32 / 4（`taskset -c 0-3`）| 0.475 ms | 1.284 | — | 0.492 | — | **0.97×** |
+
+原因：libgomp 尊重 `sched_getaffinity`，**cpuset 型**限核下 `-1` 自己就收敛到实配核数。
+**危险的是另一种**：cgroup `cpu.max` **配额型**限制**不改变** affinity，`-1` 会在全部可见核上
+起线程去挤一个小得多的配额。云端 jhub `os_cpu_count = 128`
+（`outputs/cloud/delivery_cloud_py311_4t.json`），但那两次云端跑**都设了** `OMP_NUM_THREADS=4`
+⟹ **我们从未观测过评测机上的默认行为**。
+
+**🛑 当日结果：73.27×，走重打包分支。** 云端真机（`os.cpu_count() = affinity = 128`，
+CPU 配额 4 核，`lightgbm 4.3.0 / numpy 1.24.3 / Python 3.11.15`）：
+
+| | 默认(-1) | `=1` | `=2` | `=4` | `=8` |
+|---|---:|---:|---:|---:|---:|
+| ms / `booster.predict` | **99.249** | 3.508 | 1.900 | 1.355 | 1.132 |
+
+**默认/`=4` = 73.27×**，远超预注册的 1.2× 判据。⭐ 注意 `=1` 只要 3.508 ms ——
+**默认比单线程还慢 28×**，所以这不是「并行度不够」，是 128 个线程互相踩。
+折算全量 214,538 次：**6.04 h vs 官方总预算下限 2.98 h = 202.6%**
+⟹ 约第 105,906 次（**49.4% 处**）撞总闸，其后 **50.6% 的 `time_id` 全部填 0**。
+
+**修复**：`main.py` 加 `_PREDICT_NUM_THREADS = 4`，走探测式启用；`num_threads` 排在
+`validate_features` **之前**探（代价不对等：少了后者只是慢一点，少了前者撞穿总时限）。
+本地全量对拍 **`predictions_sha256` 逐位不变**（`524e14e0…`）⟹ 只改速度、不改模型身份。
+证据：`outputs/experiments/delivery_src_lgbm_4t_numthreads.{json,md}`。
+⟹ 两份存量交付件（`20260827` / `20260828FALLBACK`，`main.py` 逐字节相同 `ada6a2c2…`）
+**均不可交**，待用户重打包。已补为 **CLAUDE.md 伤疤规则 17**。
+
+**⭐ 第二次云端跑：推算 → 端到端实测，并暴露我自己的两处外推错误。**
+端到端三臂（整条 `Model.predict`）：出厂 `num_threads=4` **4.743 ms** /
+抹掉 `num_threads` **353.330 ms** / numpy 兜底 **11.035 ms**。
+
+- **✅ numpy 兜底不受影响**（此前唯一没量过的一格）：不钉线程时兜底/主路径 = **2.33×**，
+  比钉 4 线程时的历史读数 2.78× 还**小** ⟹ 纯 numpy 树遍历确实不吃 BLAS 线程。
+- **⚠️ 订正一：量级低估了。** 早些时候写的 6.04 h / 49.4% 处撞闸，是拿**只量截面森林**的
+  微基准推的，漏了市场森林那一半（两片都是 3 seeds × 480 轮）。端到端 353.330 ≈ 120.850×2
+  + 取列/岭回归，对得上。正确读数：加性开销 **+348.59 ms/次** ⟹ 折到云端全量锚点
+  **351.98 ms/次 = 20.98 h = 预算的 704%**，约第 **30,476** 次（**14.2% 处**）撞闸，
+  **其后 85.8% 填 0**。方向没变，更糟。
+- **⚠️ 订正二：脚本打出的 44.70 h 是错的，两个错叠在一起。**
+  ① 我把折算基准写成 0.60 h —— 那是 **numpy 兜底**的 total，lightgbm 主路径是 **0.228 h**
+  （`delivery_cloud_py311_4t.json` vs `delivery_cloud_numpy_4t.json`，我串了行）；
+  ② 用了**乘性**外推 —— 线程颠簸是给树推理**加**一段固定开销，而 `Model.predict` 里
+  取列 / 岭回归 / 历史状态那些**不受线程数影响**，乘性会把它们一起放大。
+  ⟹ 脚本已改成加性 + 锚点常量集中在文件头（`CLOUD_LGBM_MEAN_MS` 等），
+  并夹住了「不撞闸」时打出负百分比的文案。
+  ⟹ 教训与 §5.7 同形：**比值可以跨环境搬，绝对值不行；而把比值变回绝对值时，
+  乘还是加取决于降级的机制**。
+
+⚠️ **原「仍未量的一格」记录**：numpy 兜底路径也只在 `OMP_NUM_THREADS=4` 下量过。纯 numpy 树遍历不走
+BLAS，但岭回归那步是 `@`（`main.py:399`）。探针已扩出端到端三臂（出厂 / 抹掉 `num_threads` /
+numpy 兜底），只报**同一次运行内的比值**——合成输入比真实分区便宜（本机端到端 2.09 ms vs
+云端全量 3.39 ms），折算绝对小时数会系统性低估（§5.7）。
+
+**原始记录（跑之前写的判据）**：在云端跑
+`env -u OMP_NUM_THREADS -u OPENBLAS_NUM_THREADS python experiments/thread_default_probe.py`。
+**默认/`num_threads=4` ≲ 1.2× ⟹ 按原样交；≫ 1.2× ⟹ 给 `main.py` 补 `num_threads`
+（照 `validate_features` 的探测式启用写法，评测端 lightgbm 版本未知）并重打包。**
+numpy 兜底是单线程纯遍历，不受影响。
+
 ### 2026-08-27 — `INFRA`：`requirements.txt` 落地，并暴露出「门禁与真文件第一次相遇」的两个问题
 
 用户在评测机 base 环境（`/opt/conda`，`pip check` 干净）freeze 出真文件。第一版用文档字面的

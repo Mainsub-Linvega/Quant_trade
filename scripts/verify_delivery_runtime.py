@@ -79,6 +79,21 @@ EVAL_CPU_CORES = 4
 EVAL_MEMORY_GB = 12.0
 EXPECTED_ROWS = 3_217_458
 EXPECTED_CALLS = 214_538
+
+# 2026-08-29 主办方补全的运行时间限制（docs/competition_description.md:161,166-172）：
+#     --model-init-timeout-seconds 180
+#     --total-timeout-seconds (0.05 + a) * n_time_id + b
+# `a`（酌情宽松的单步时间）和 `b`（I/O 偏置）都没给值，但**都 ≥ 0** ⟹ 取 a=b=0 就是预算下限，
+# 按它判定永远比真实评测更严。50 ms 是那条公式里的**平均**系数，不是 per-step 硬闸：
+# 私榜只设 model-init 和 total 两道闸，单步慢只通过总账生效。
+EVAL_MODEL_INIT_TIMEOUT_S = 180.0
+EVAL_MEAN_PREDICT_BUDGET_S = 0.05
+
+
+def total_timeout_budget(n_time_id: int, a: float = 0.0, b: float = 0.0) -> float:
+    """官方 `--total-timeout-seconds (0.05 + a) * n_time_id + b`；默认 a=b=0 = 预算下限。"""
+    return (EVAL_MEAN_PREDICT_BUDGET_S + a) * n_time_id + b
+
 THREAD_ENV = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
               "NUMEXPR_NUM_THREADS")
 
@@ -94,7 +109,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--split", default="test")
     p.add_argument("--backend", required=True, choices=["lightgbm", "numpy-fallback"])
     p.add_argument("--threads", type=int, required=True,
-                   help="预期线程数；与 OMP_NUM_THREADS 不符直接退出（避免记错口径）")
+                   help="预期线程数；与 OMP_NUM_THREADS 不符直接退出（避免记错口径）。"
+                        "传 0 = **不钉线程**，改为要求环境里一个线程变量都没设 —— "
+                        "这是伤疤规则 17 的自检口径：量提交包自己的行为，"
+                        "而不是量我们在命令行前面加的那个开关")
     # ⚠️ 2026-08-23：这里原来写死 `v3_hybrid_slowfast`，而生产早在 08-21 就换成了
     # long512 ⟹ `model_matches_promotion_manifest` 长期红着、两份报告都判 FAIL，
     # 而红的原因是**比错了对象**不是装错了模型。写死一个候选名必然随每次转正过期，
@@ -114,6 +132,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", default=str(_REPO_ROOT / "outputs" / "experiments"))
     p.add_argument("--label", default=None)
     p.add_argument("--per-step-timeout", type=float, default=None)
+    # ⚠️ 2026-08-29：这里以前把 `total_timeout_seconds` 写死成 `None`，于是 runner 的
+    # `aborted_after_timeout` 分支从来没被走过 —— `not_aborted` 这道门禁**一直没有失败的机会**
+    # （CLAUDE.md §8.11：每个测量都要配一个能失败的归属检查）。现在默认按官方公式的下限开闸。
+    # 注意 runner 的 elapsed_total 从 run_loaded_model 起算，**含 iter_test_slices 的 parquet
+    # I/O**，不只是 predict ⟹ 与之比较的应当是 total_seconds 而不是 predict_total_seconds。
+    p.add_argument("--total-timeout", type=float, default=None,
+                   help="总推理超时（秒）；默认 = 官方公式取 a=b=0 的下限 "
+                        f"0.05×{EXPECTED_CALLS:,} = {total_timeout_budget(EXPECTED_CALLS):,.1f} s。"
+                        "传 0 表示关闭（回到 2026-08-29 之前的行为）")
     p.add_argument("--expected-rows", type=int, default=EXPECTED_ROWS)
     p.add_argument("--force", action="store_true")
     return p.parse_args()
@@ -382,14 +409,27 @@ def model_identity(model_dir: Path, resolution: dict[str, Any]) -> dict[str, Any
 
 def main() -> None:
     args = parse_args()
-    label = args.label or f"delivery_runtime_{args.backend.replace('-', '_')}_{args.threads}t"
+    threads_tag = "unpinned" if args.threads == 0 else f"{args.threads}t"
+    label = args.label or f"delivery_runtime_{args.backend.replace('-', '_')}_{threads_tag}"
     out_dir = Path(args.output_dir); out_dir.mkdir(parents=True, exist_ok=True)
     json_path, md_path = out_dir / f"{label}.json", out_dir / f"{label}.md"
     if not args.force and (json_path.exists() or md_path.exists()):
         raise SystemExit(f"output exists: {json_path}; use --force to overwrite")
 
     env = {k: os.environ.get(k) for k in THREAD_ENV}
-    if env["OMP_NUM_THREADS"] != str(args.threads):
+    # ⭐ `--threads 0` = **不钉线程，这正是被测对象**（2026-08-29 新增）。
+    # 此前本脚本强制要求 `OMP_NUM_THREADS == --threads`，于是它**只会**在环境变量钉住的
+    # 条件下测 —— 而那个变量不随提交包走。伤疤规则 17 的自检（「解压到干净目录、
+    # 不带任何环境变量跑，再和留档读数比」）在旧接口下**根本跑不出来**。
+    # 反过来要求：设了任何线程环境变量就拒绝，否则这一臂又变成在量那个外部开关。
+    if args.threads == 0:
+        polluted = {k: v for k, v in env.items() if v is not None}
+        if polluted:
+            raise SystemExit(
+                f"--threads 0 表示「不钉线程」，但环境里设了 {polluted}。"
+                f"请这样跑：env -u OMP_NUM_THREADS -u OPENBLAS_NUM_THREADS "
+                f"-u MKL_NUM_THREADS -u NUMEXPR_NUM_THREADS python ...")
+    elif env["OMP_NUM_THREADS"] != str(args.threads):
         raise SystemExit(
             f"OMP_NUM_THREADS={env['OMP_NUM_THREADS']!r} 与 --threads {args.threads} 不符。"
             f"请这样跑：OMP_NUM_THREADS={args.threads} OPENBLAS_NUM_THREADS={args.threads} ...")
@@ -410,11 +450,17 @@ def main() -> None:
             raise SystemExit("--from-zip 与 --strategy-dir 互斥：要么测源目录，要么测交付物")
         strategy_dir, zip_evidence = extract_submission_zip(Path(args.from_zip),
                                                             force=args.force)
+        # ⚠️ 这段原来把三元表达式**跨行**写在 f-string 里 —— 那是 PEP 701（Python 3.12+）
+        # 才允许的写法，而评测机是 **3.11.15**，直接 SyntaxError。
+        # 本地 3.13 跑得好好的，于是 `--from-zip` 从 2026-08-25 加进来那天起
+        # **从没在评测机的 Python 上跑过**（此前两次云端跑用的是没有这个分支的旧版脚本）。
+        # 见 tests/test_eval_python_compat.py。
+        audit_note = ("通过" if zip_evidence["audit_passed"]
+                      else f"未通过 {zip_evidence['audit_failing_checks']}")
         print(f"交付物：{zip_evidence['path']}\n"
               f"  sha256 {zip_evidence['sha256'][:16]}…，"
               f"{zip_evidence['file_count']} 个文件，"
-              f"内容审计 {'通过' if zip_evidence['audit_passed'] else '未通过 '
-                          + str(zip_evidence['audit_failing_checks'])}\n"
+              f"内容审计 {audit_note}\n"
               f"  解压到 {zip_evidence['extracted_to']}", flush=True)
 
     resolution = resolve_manifest(strategy_dir / "model", args.manifest)
@@ -438,10 +484,15 @@ def main() -> None:
 
     runner_model = (ProgressProxy(model, args.progress_every, EXPECTED_CALLS)
                     if args.progress_every > 0 else model)
+    budget = total_timeout_budget(EXPECTED_CALLS)
+    total_timeout = budget if args.total_timeout is None else args.total_timeout
+    total_timeout = total_timeout or None          # 0 / None ⟹ 关闭这道闸
+    print(f"总超时闸 = {'关闭' if total_timeout is None else f'{total_timeout:,.1f} s'}"
+          f"（官方公式下限 {budget:,.1f} s）", flush=True)
     submission, messages, timing = run_loaded_model(
         model=runner_model, data_root=args.data_root, strategy_dir=strategy_dir,
         split=args.split, per_step_timeout_seconds=args.per_step_timeout,
-        total_timeout_seconds=None, timeout_policy="zero_step")
+        total_timeout_seconds=total_timeout, timeout_policy="zero_step")
 
     resources = rss_verdict(peak_rss_bytes(), args.rss_limit_gb, args.rss_headroom)
     rss_gb = resources["peak_rss_gb"]
@@ -489,6 +540,13 @@ def main() -> None:
         "zero_timeouts": timing_d["predict_timeout_count"] == 0,
         "not_aborted": not timing_d["aborted_after_timeout"],
         "predict_calls_expected": timing_d["predict_calls"] == EXPECTED_CALLS,
+        # 2026-08-29 新增的三道时间门禁。全部按 a=b=0 的预算下限判，比真实评测更严。
+        "model_init_under_limit":
+            timing_d["model_init_seconds"] < EVAL_MODEL_INIT_TIMEOUT_S,
+        # 与 total_seconds 比而不是 predict_total_seconds：官方那条闸计的是含 I/O 的总时间。
+        "total_under_budget": timing_d["total_seconds"] < budget,
+        "mean_predict_under_budget":
+            timing_d["mean_predict_seconds"] < EVAL_MEAN_PREDICT_BUDGET_S,
         "no_error_messages": not any(m.level == "error" for m in messages),
     }
     payload = {
@@ -506,6 +564,18 @@ def main() -> None:
         "submission_zip": zip_evidence,
         "model_identity": identity,
         "resources": resources,
+        # 三条官方时间限制的对账口径，连同实测占比一起留档 —— 免得下次又要手算。
+        "time_limits": {
+            "model_init_timeout_seconds": EVAL_MODEL_INIT_TIMEOUT_S,
+            "mean_predict_budget_seconds": EVAL_MEAN_PREDICT_BUDGET_S,
+            "total_budget_seconds": budget,
+            "total_budget_formula": "(0.05 + a) * n_time_id + b, a=b=0（下限）",
+            "total_timeout_applied_seconds": total_timeout,
+            "model_init_utilization": timing_d["model_init_seconds"] / EVAL_MODEL_INIT_TIMEOUT_S,
+            "total_utilization": timing_d["total_seconds"] / budget,
+            "mean_predict_utilization":
+                timing_d["mean_predict_seconds"] / EVAL_MEAN_PREDICT_BUDGET_S,
+        },
         "timing": timing_d,
         "prediction_health": health,
         "runner_messages": [m.as_dict() for m in messages],
@@ -517,10 +587,12 @@ def main() -> None:
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
                          encoding="utf-8")
 
-    lines = [f"# 交付运行时验证 —— `{args.backend}` @ {args.threads} 线程", "",
+    threads_label = ("**不钉线程**（提交包自定）" if args.threads == 0
+                     else f"{args.threads} 线程")
+    lines = [f"# 交付运行时验证 —— `{args.backend}` @ {threads_label}", "",
              f"> {payload['purpose']}", "",
              "## 环境", "",
-             f"- 声明线程数 **{args.threads}**；`OMP_NUM_THREADS={env['OMP_NUM_THREADS']}`、"
+             f"- 声明线程数 **{threads_label}**；`OMP_NUM_THREADS={env['OMP_NUM_THREADS']}`、"
              f"`OPENBLAS_NUM_THREADS={env['OPENBLAS_NUM_THREADS']}`；机器 {os.cpu_count()} 核",
              f"- lightgbm：`{lgb_version}`；numpy `{np.__version__}`；Python {platform.python_version()}",
              f"- 对照：官方评测环境 **{EVAL_CPU_CORES} 核 / {EVAL_MEMORY_GB} GB**"
@@ -548,6 +620,22 @@ def main() -> None:
              f"| 单步最大 | {timing_d['max_predict_seconds']:.3f} s |",
              f"| 单步平均 | {timing_d['mean_predict_seconds']*1000:.2f} ms |",
              f"| 超时次数 | {timing_d['predict_timeout_count']} |",
+             "", "## 运行时间限制（`docs/competition_description.md:161,166-172`）", "",
+             "> 预算按官方公式取 `a = b = 0` 的**下限**（两者都 ≥ 0），判定比真实评测更严。",
+             "", "| 项 | 实测 | 限额 | 占比 |", "|---|---:|---:|---:|",
+             f"| `model_init_seconds` | {timing_d['model_init_seconds']:.2f} s |"
+             f" {EVAL_MODEL_INIT_TIMEOUT_S:.0f} s |"
+             f" {timing_d['model_init_seconds'] / EVAL_MODEL_INIT_TIMEOUT_S:.1%} |",
+             f"| `total_seconds` | {timing_d['total_seconds']:,.1f} s |"
+             f" {budget:,.1f} s | {timing_d['total_seconds'] / budget:.1%} |",
+             f"| `mean_predict_seconds` | {timing_d['mean_predict_seconds']*1000:.2f} ms |"
+             f" {EVAL_MEAN_PREDICT_BUDGET_S*1000:.0f} ms |"
+             f" {timing_d['mean_predict_seconds'] / EVAL_MEAN_PREDICT_BUDGET_S:.1%} |",
+             "",
+             f"- 本次实际开闸值：{'关闭' if total_timeout is None else f'{total_timeout:,.1f} s'}"
+             f"；`aborted_after_timeout` = **{timing_d['aborted_after_timeout']}**",
+             "- ⚠️ 超总闸的后果是**剩余全部 `time_id` 填 0**（`timeseries_api/runner.py:180-198`），"
+             "是悬崖不是线性损失。",
              "", "## 预测健康度", "",
              "| 项 | 值 |", "|---|---:|",
              f"| 行数 | {health['rows']:,}（期望 {health['rows_expected']:,}）|",

@@ -64,6 +64,16 @@ from history import AssetHistory, AssetLongWindow
 _BACKEND_SELFCHECK_ATOL = 1e-10
 _BACKEND_SELFCHECK_SEED = 20260809
 
+# ⚠️ 2026-08-29：树推理的线程数**必须由本文件显式给出**，不能靠环境变量。
+# 官方评测环境是 4 核（`docs/competition_description.md:158`），而 lightgbm 的默认
+# `num_threads=-1` 是「用全部**可见**核」——评测容器按配额限核时可见核数远大于配额，
+# 于是起 128 个线程去挤 4 核。云端实测（`experiments/thread_default_probe.py`，
+# 128 可见核）：默认 **99.249 ms/次** vs 显式 4 线程 **1.355 ms/次**，慢 **73.27×**。
+# 折算到全量 214,538 次调用 = 6.04 小时，是官方总预算 2.98 小时的 **2.03 倍**
+# ⟹ 约 49% 处撞总闸、其后全部 time_id 填 0。
+# 此前所有交付读数的「4 线程」都来自外部 `OMP_NUM_THREADS=4`，**它不随提交包走**。
+_PREDICT_NUM_THREADS = 4
+
 
 def _asset_scaled_zero_mean(values: np.ndarray, asset_ids: np.ndarray, scales: np.ndarray,
                             time_ids: np.ndarray | None = None) -> np.ndarray:
@@ -274,6 +284,8 @@ class Model:
             import lightgbm as lgb                # 延迟 import：只有推理时才需要
             boosters = [lgb.Booster(model_file=str(path)) for path in self.model_files]
             market_boosters = [lgb.Booster(model_file=str(path)) for path in self.market_files]
+            # 先探测可选参数再对拍：这样 __init__ 里那几次自检也走钉死的线程数。
+            self.predict_kwargs = self._probe_predict_kwargs(boosters[0])
             difference = max(self._selfcheck_difference(boosters, self.forest, self.num_iteration),
                              (self._selfcheck_difference(market_boosters, self.market_forest,
                                                         self.market_num_iteration)
@@ -295,15 +307,35 @@ class Model:
 
         self.boosters = boosters
         self.market_boosters = market_boosters or None
-        # 跳过每次 predict 的特征名校验（设计矩阵是裸 ndarray，本来也没名字可校）。
-        # 探测式启用：不支持就留空 dict，行为与以前逐位相同。
-        probe = np.zeros((1, self.forest.n_features), dtype=np.float32)
-        try:
-            boosters[0].predict(probe, num_iteration=self.num_iteration, validate_features=False)
-            self.predict_kwargs = {"validate_features": False}
-        except TypeError:
-            pass
         return "lightgbm"
+
+    def _probe_predict_kwargs(self, booster) -> dict:
+        """逐个探测 `predict` 的可选参数，只留下这份 lightgbm 真的认的。
+
+        必须**逐个**探测、且每次都带上已经确认可用的那些：评测端版本未知，
+        `validate_features` 是 lightgbm 4.x 才有的具名参数（传给 3.3.x 会在第一次
+        predict 就 TypeError），而 `num_threads` 是老早就有的训练/预测参数。
+        一次性全传会让不被认的那个把被认的那个一起拖没 —— 而这两者的代价完全不对等：
+        少了 `validate_features` 只是慢一点，少了 `num_threads` 会直接撞穿总超时。
+        所以 `num_threads` 排在前面先探。
+        """
+        kwargs: dict = {}
+        probe = np.zeros((1, self.forest.n_features), dtype=np.float32)
+        for key, value in (("num_threads", _PREDICT_NUM_THREADS),
+                           ("validate_features", False)):
+            candidate = {**kwargs, key: value}
+            try:
+                booster.predict(probe, num_iteration=self.num_iteration, **candidate)
+            except (TypeError, ValueError):
+                print(f"[v3_hybrid] 本机 lightgbm 不接受 predict(..., {key}=…)，跳过该参数",
+                      flush=True)
+                continue
+            kwargs = candidate
+        if "num_threads" not in kwargs:
+            # 兜底也要有声音：这不是「慢一点」，是可能超总时限的那一档。
+            print("[v3_hybrid] ⚠️ 无法设置 num_threads，树推理将用 lightgbm 默认线程数"
+                  "（在多核容器上可能极慢）", flush=True)
+        return kwargs
 
     def _selfcheck_difference(self, boosters: list, forest: NumpyForest, num_iteration: int) -> float:
         """固定种子造一批合成设计矩阵，两条路径各跑一次，返回最大绝对差。

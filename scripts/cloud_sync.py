@@ -22,7 +22,8 @@ token 不写进本文件，也不该进版本控制。
 ## 用法
 
     python scripts/cloud_sync.py status              # 只比对，列出差异
-    python scripts/cloud_sync.py push [--dry-run]    # 增量上传
+    python scripts/cloud_sync.py push [--dry-run]    # 增量上传（全量差集）
+    python scripts/cloud_sync.py push --only experiments/foo.py   # 只送一个文件
     python scripts/cloud_sync.py pull                # 云端 outputs/experiments → 本地 outputs/cloud
     python scripts/cloud_sync.py log <名字> [--tail N]  # 看云端 outputs/logs/<名字> 的尾部
 """
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fnmatch
 import hashlib
 import json
 import os
@@ -210,6 +212,22 @@ def cmd_status(api: Contents, args: argparse.Namespace) -> int:
     return 0
 
 
+def select_only(changed: list[str], patterns: list[str]) -> list[str]:
+    """把待传集合缩到 `--only` 指定的路径/前缀/glob 上。
+
+    三种写法都认：精确路径、目录前缀（`experiments/`）、glob（`experiments/*probe*.py`）。
+    """
+    picked = []
+    for relative in changed:
+        for pattern in patterns:
+            if (relative == pattern
+                    or relative.startswith(pattern.rstrip("/") + "/")
+                    or fnmatch.fnmatch(relative, pattern)):
+                picked.append(relative)
+                break
+    return picked
+
+
 def cmd_push(api: Contents, args: argparse.Namespace) -> int:
     local = local_manifest()
     remote = parse_manifest(api.get_bytes(f"{REMOTE_ROOT}/{MANIFEST_NAME}"))
@@ -222,6 +240,14 @@ def cmd_push(api: Contents, args: argparse.Namespace) -> int:
     if not changed:
         print(f"零差异，无需上传（{len(local)} 个文件）")
         return 0
+
+    if args.only:
+        total = len(changed)
+        changed = select_only(changed, args.only)
+        if not changed:
+            print(f"--only {args.only} 没匹配到任何待传文件（{total} 个待传里）")
+            return 1
+        print(f"--only：{total} 个待传里选中 {len(changed)} 个，其余保持不同步")
     if args.dry_run:
         for relative in changed:
             print(f"  会上传  {relative}")
@@ -237,8 +263,17 @@ def cmd_push(api: Contents, args: argparse.Namespace) -> int:
         api.put_bytes(f"{REMOTE_ROOT}/{relative}", (_REPO_ROOT / relative).read_bytes())
         print(f"  [{index}/{len(changed)}] {relative}")
 
-    api.put_bytes(f"{REMOTE_ROOT}/{MANIFEST_NAME}", render_manifest(local))
-    print(f"已上传 {len(changed)} 个文件，清单已更新")
+    # ⚠️ 清单必须只记**真的传上去了**的那些。这里原来无条件写整份 `local` ——
+    # 全量 push 时没问题，但配上 --only 就会让云端清单谎称全都同步了，
+    # 之后每次 status 都报「零差异」，而云端其实还差一大截（CLAUDE.md §8.11：
+    # 一个不会失败的检查等于没有检查）。所以：在**云端现有清单**上只覆盖本次传的条目。
+    synced = dict(remote) if args.only else {}
+    synced.update({relative: local[relative] for relative in changed})
+    if not args.only:
+        synced = local
+    api.put_bytes(f"{REMOTE_ROOT}/{MANIFEST_NAME}", render_manifest(synced))
+    print(f"已上传 {len(changed)} 个文件，清单已更新"
+          + ("（只更新了本次上传的条目）" if args.only else ""))
     return 0
 
 
@@ -290,7 +325,7 @@ def cmd_log(api: Contents, args: argparse.Namespace) -> int:
     return 0
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base", default=os.environ.get("JHUB_BASE", DEFAULT_BASE))
     sub = parser.add_subparsers(dest="command", required=True)
@@ -299,6 +334,10 @@ def parse_args() -> argparse.Namespace:
 
     push = sub.add_parser("push", help="增量上传变动文件")
     push.add_argument("--dry-run", action="store_true", help="只列出会传什么")
+    push.add_argument("--only", action="append", metavar="PATH",
+                      help="只传匹配的路径（精确路径 / 目录前缀 / glob），可重复。"
+                           "用于「云端落后一大截、但这次只想送一个文件过去」——"
+                           "云端清单只会更新本次真的传上去的那几条")
 
     sub.add_parser("pull", help="云端 outputs/experiments → 本地 outputs/cloud")
 
@@ -306,7 +345,11 @@ def parse_args() -> argparse.Namespace:
     log.add_argument("name")
     log.add_argument("--tail", type=int, default=40)
 
-    return parser.parse_args()
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    return build_parser().parse_args()
 
 
 def main() -> int:

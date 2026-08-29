@@ -1,0 +1,37 @@
+{
+  "experiment": "thread_default_probe",
+  "purpose": "量 num_threads 默认值(-1) 相对显式 4 的劣化倍数，决定是否重打包",
+  "environment": {
+    "os_cpu_count": 32,
+    "affinity_cpus": 32,
+    "thread_env": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "MKL_NUM_THREADS": null
+    },
+    "lightgbm": "4.3.0",
+    "numpy": "2.5.1",
+    "python": "3.13.5",
+    "platform": "Linux-6.12.105+deb13-amd64-x86_64-with-glibc2.41"
+  },
+  "design_shape": [
+    15,
+    441
+  ],
+  "n_boosters": 3,
+  "num_iteration": 480,
+  "repeats": 2000,
+  "ms_per_predict_call": {
+    "default": 0.40609936849796213,
+    "1": 1.2433307754981797,
+    "2": 0.7136153764949995,
+    "4": 0.4621660115008126,
+    "8": 0.337480363996292
+  },
+  "default_over_4x": 0.878687221457972,
+  "end_to_end_ms_per_call": {
+    "lightgbm_num_threads_4": 2.093047836679034,
+    "lightgbm_default_threads": 2.371186883344005,
+    "numpy_fallback": 3.8503411233735583
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "zip": "outputs/v3_hybrid_submission_20260829FALLBACK.zip",
+  "sha256": "5f91bca9e71408fcb0ad43a29b2923bfa282ee59ffd8d1ee02206abed9167bc4",
+  "bytes": 5836345,
+  "files": [
+    "features.py",
+    "history.py",
+    "lgbm_numpy.py",
+    "main.py",
+    "model/baseline_model.json",
+    "model/hybrid_meta.json",
+    "model/lgbm_market_seed2026.txt",
+    "model/lgbm_market_seed2027.txt",
+    "model/lgbm_market_seed2028.txt",
+    "model/lgbm_seed2026.txt",
+    "model/lgbm_seed2027.txt",
+    "model/lgbm_seed2028.txt",
+    "requirements.txt"
+  ],
+  "missing": [],
+  "forbidden": [],
+  "unexpected_modules": [],
+  "duplicates": [],
+  "absent_declared_models": [],
+  "absent_declared_market_models": [],
+  "public_baseline_drift": [],
+  "frozen_ridge_drift": [],
+  "requirements_problems": [],
+  "requirements_env_drift": [],
+  "requirements_summary": {
+    "sha256": "db645ebd15f79bb4b8f3293446b1e5b6ffec9c6ead1efcb3d83b3150eb890626",
+    "entry_count": 223,
+    "pinned_versions": {
+      "lightgbm": "4.3.0",
+      "numpy": "1.24.3"
+    },
+    "direct_reference_count": 0,
+    "option_line_count": 0,
+    "team_path_lines": []
+  },
+  "meta_summary": {
+    "prediction_scale": 1.16,
+    "num_iteration": 480,
+    "history_window": 5,
+    "history_positions": 40,
+    "blend_weight": 1.0,
+    "market_lambda": 0.5,
+    "cross_section_weighted": true,
+    "slow_fast_window": 2000,
+    "slow_fast_slow_relative": 0.387609649122807,
+    "slow_fast_fast_relative": 1.0801809210526316,
+    "long_window": 512,
+    "lgbm_model_files": [
+      "lgbm_seed2026.txt",
+      "lgbm_seed2027.txt",
+      "lgbm_seed2028.txt"
+    ],
+    "market_model_files": [
+      "lgbm_market_seed2026.txt",
+      "lgbm_market_seed2027.txt",
+      "lgbm_market_seed2028.txt"
+    ]
+  },
+  "checks": {
+    "required_files_present": true,
+    "no_unexpected_modules": true,
+    "no_forbidden_files": true,
+    "no_duplicate_entries": true,
+    "all_declared_models_present": true,
+    "all_declared_market_models_present": true,
+    "prediction_scale_matches": true,
+    "iterations_match": true,
+    "seed_count_matches": true,
+    "matches_public_baseline": true,
+    "frozen_ridge_matches": true,
+    "requirements_covers_dependencies": true,
+    "requirements_matches_eval_env": true
+  },
+  "passed": true
+}

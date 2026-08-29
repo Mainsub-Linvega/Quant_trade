@@ -15,6 +15,9 @@
 4. **`--from-zip` 的归属锚点**（2026-08-25 新增）。此前本脚本永远指着 `strategies/v3_hybrid/`
    跑 —— 那是源目录，不是交出去的那件东西。现在解压真 zip 再跑，且 zip 的 sha256
    必须进落盘 JSON：没有它，「测了交付物」就只是一句自述。
+5. **运行时间预算**（2026-08-29 新增）。主办方当日才补全 180 s / 50 ms / 那条总时长公式，
+   而此前脚本把 `total_timeout_seconds` 写死成 `None` ⟹ runner 的 `aborted_after_timeout`
+   分支从来没被走过，`not_aborted` 这道门禁**一直没有失败的机会**。
 """
 
 from __future__ import annotations
@@ -32,9 +35,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from promote_v3_candidate import PUBLIC_BASELINE  # noqa: E402
 from verify_delivery_runtime import (EVAL_CPU_CORES, EVAL_MEMORY_GB,  # noqa: E402
+                                     EVAL_MEAN_PREDICT_BUDGET_S,
+                                     EVAL_MODEL_INIT_TIMEOUT_S, EXPECTED_CALLS,
                                      ProgressProxy, extract_submission_zip, model_identity,
                                      peak_rss_bytes, public_baseline_drift,
-                                     resolve_manifest, rss_verdict)
+                                     resolve_manifest, rss_verdict, total_timeout_budget)
 
 GB = 1 << 30
 
@@ -283,3 +288,27 @@ class FromZipTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TimeBudgetTest(unittest.TestCase):
+    """2026-08-29：官方补全的三条运行时间限制。"""
+
+    def test_limits_come_from_organizer_doc(self) -> None:
+        # 与 EVAL_MEMORY_GB 同性质：改动它们等于改动交付判据，不能顺手调。
+        self.assertEqual(EVAL_MODEL_INIT_TIMEOUT_S, 180.0)
+        self.assertEqual(EVAL_MEAN_PREDICT_BUDGET_S, 0.05)
+
+    def test_default_budget_is_the_lower_bound(self) -> None:
+        # a、b 都 ≥ 0，所以 a=b=0 是预算下限 ⟹ 按它判定永远比真实评测更严。
+        self.assertAlmostEqual(total_timeout_budget(EXPECTED_CALLS), 0.05 * EXPECTED_CALLS)
+        self.assertLess(total_timeout_budget(1000),
+                        total_timeout_budget(1000, a=0.01, b=60.0))
+
+    def test_budget_scales_linearly_with_n_time_id(self) -> None:
+        # 关键性质：预算随 n_time_id 线性缩放 ⟹ 9 月实盘期变长不改变我们的占比。
+        self.assertAlmostEqual(total_timeout_budget(2 * EXPECTED_CALLS),
+                               2 * total_timeout_budget(EXPECTED_CALLS))
+
+    def test_bias_term_is_a_constant_not_a_rate(self) -> None:
+        self.assertAlmostEqual(total_timeout_budget(10, b=7.0) - total_timeout_budget(10), 7.0)
+        self.assertAlmostEqual(total_timeout_budget(99, b=7.0) - total_timeout_budget(99), 7.0)
