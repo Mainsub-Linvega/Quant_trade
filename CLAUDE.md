@@ -58,6 +58,12 @@
 - 2026-08-08：分区长期漂移符号不稳定，不等于逐 `time_id` 市场分量不可预测；市场分量样本外
   R² 约 0.0018，8/10 折为正。证据：`outputs/experiments/mt_predictability.md`、
   `outputs/experiments/ab_meandev.md`。
+- 2026-08-31：**提交策略的存放路径与开发环境（JupyterHub）是分开的，选手看不到。**
+  向主办方问得。⟹ 官方 `submission_and_evaluation.md` 里的 `~/submit`
+  （「评测系统会导入 `~/submit/main.py`」、检查清单「`~/submit` 已创建，内容与 ZIP 一致」）
+  只是**选手侧自检用的本地目录**，不是评测端实际导入代码的位置；评测端用的是上传的 ZIP。
+  ⟹ 「JupyterHub 上残留旧 `~/submit` 被误用」这条假想风险不存在。
+  证据：`RUNBOOK_8_23.md` §D6 上传日卡片 2026-08-31 条。
 
 ## 5. 研究与代码修改规则
 
