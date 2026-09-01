@@ -1,7 +1,7 @@
 # Quant_trade — 2026 量化交易研究大赛参赛记录
 
-> 本仓库是**个人参赛记录**，与主办方无关。比赛数据、赛题文档、示例代码与官方评测 runner
-> 版权归主办方，**不随本仓库分发** —— 见 [`UPSTREAM.md`](UPSTREAM.md)。
+一个低信噪比多标的时序预测赛题的**完整决策链**：从第一个 Ridge 基线到最终私榜交付件，
+连同每一次否决的口径、每一次事故的根因一起留档。
 
 赛题：给定 15 个匿名标的、323 个匿名特征的多标的时序数据，按 `time_id` **顺序**推理，
 预测风险调整目标 `target`，指标是加权零均值 R²。约束：4 核 / 12 GB / 无网络 /
@@ -43,27 +43,34 @@
 strategies/           v1_ridge → v2_lgbm → v3_hybrid（交付基线）→ v4_mlp（未采纳）
   v3_hybrid/model/    榜上那套权重（入库，可离线校验 sha256）
 src/                  指标、切分、IO、OOF 缓存、产物哈希
-experiments/          92 个研究脚本 + ledger.csv（35 条实验台账）
+experiments/          92 个研究脚本 + ledger.csv（35 条台账）+ INDEX.md（逐脚本索引）
 scripts/              打包、晋级、交付验证、数据审计、云端同步
 tests/                39 个测试文件；多数是事故后装上去的回归门禁
 outputs/              全部实验产物、promotion manifest、数据审计、交付验证读数
 research_history/     按主题归档的旧结论（含 SUPERSEDED 与 REJECTED）
 ```
 
+顶层还有六份文档，分工见下表；不确定某个名词是什么意思时，先查 [`GLOSSARY.md`](GLOSSARY.md)。
+
 ## 文档导航
 
 | 文件 | 读它是为了 |
 |---|---|
+| [`GLOSSARY.md`](GLOSSARY.md) | **先读这个**：编号体系（`P7`/`D4.5`）、信息标签、评价口径、模型部件、流程黑话，一页说清 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | **这套结构为什么长成这样**：逐块来历、scale 沿哪条轴分区才成立、被关闭的方向、交付层的每一道门禁 |
 | [`CLAUDE.md`](CLAUDE.md) | 人与 AI 的协作契约、权限边界，以及 **19 条长期伤疤规则** |
 | [`ROADMAP.md`](ROADMAP.md) | 收官时的状态、每个课题的结论与证据路径 |
 | [`NOTES.md`](NOTES.md) | 研究日志：每个实验当时为什么这么做 |
 | [`RUNBOOK_8_23.md`](RUNBOOK_8_23.md) | 8/23–8/31 收官执行序与上传日卡片 |
-| [`research_history/`](research_history/README.md) | 主题史：模型演进、特征、验证标定、交付事故 |
+| [`research_history/`](research_history/README.md) | 主题史：模型演进、特征、验证标定、交付事故（ROADMAP 的已结案课题也归档在这里） |
+| [`experiments/INDEX.md`](experiments/INDEX.md) | 92 个研究脚本逐个一行：在问什么、结论、产物、有没有被叙述引用 |
 
 想只看一件事的话，看 `CLAUDE.md` §8 第 17 条：`main.py` 从不设 `num_threads`，而四次
 全量交付验证的「4 线程」全部来自命令行前缀 `OMP_NUM_THREADS=4` —— 那个开关**不随提交包走**。
-评测机 128 核可见、4 核配额，lightgbm 默认起 128 线程挤 4 核，实测慢 **73.27×**，
-折算会让约一半 `time_id` 被填 0。四次验证全都没抓到，因为它们量的正是那个外部开关。
+评测机 128 核可见、4 核配额，lightgbm 默认起 128 线程挤 4 核，端到端实测慢 **74.50×**
+（当天第一个信号是只量截面森林的微基准 73.27×，端到端补上市场森林后量级更糟），
+折算 20.98 h vs 总预算 2.98 h ⟹ 会让 **86%** 的 `time_id` 被填 0。
+四次验证全都没抓到，因为它们量的正是那个外部开关。
 
 ## 跑起来
 
@@ -92,7 +99,10 @@ freeze**（约 200 个包），随提交包交付、作为「榜上那次推理�
 - 云端同步脚本 `scripts/cloud_sync.py` 需要 `$JHUB_BASE` 与 `$JHUB_TOKEN`，两者都是本机配置，不入库。
 - `strategies/v4_mlp/` 是被否决的方向，保留是为了留证（见 ROADMAP 的 REJECTED 条目）。
 
-## 许可
+## 数据、版权与许可
+
+本仓库是**个人参赛记录**，与主办方无关。比赛数据、赛题文档、示例代码与官方评测 runner
+版权归主办方，**不随本仓库分发** —— 获取方式见 [`UPSTREAM.md`](UPSTREAM.md)。
 
 作者本人编写的代码、文档与训练所得的模型权重依 Apache-2.0 授权（[`LICENSE`](LICENSE)）。
 许可**不覆盖**主办方的数据、文档、示例代码与官方 runner —— 范围说明见 [`NOTICE`](NOTICE)。

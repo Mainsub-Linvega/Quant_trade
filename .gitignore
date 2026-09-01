@@ -19,14 +19,14 @@ nvim.log
 # 流式聚合缓存（~1.2G，可由 experiments/mt_lagged.py 重新生成）
 /outputs/cache/
 
-# 模型产物：小的（json/npz）入库以便复现公榜分数
-# 等上了 LightGBM/NN 再改成只记 hash
-# strategies/**/model/*.txt 这个第24行会挡住LGBM模型，故选择注释
+# 模型产物：json/npz 与 LightGBM 的 .txt 都入库，以便离线校验 sha256、复现榜上分数。
+# ⚠️ 不要加 `strategies/**/model/*.txt` —— 那会挡掉交付基线的三片森林。
 strategies/**/model/*.pt
 strategies/**/model/*.bin
 
-# 当前最好模型（公榜 0.0026330806）是两个已入库候选的**拼装结果**，9.1 MB 全是重复。
-# 目录留在盘上，但不入库 —— 拼装就两条命令（NOTES「当前最好模型是怎么拼出来的」也有）：
+# 08-11 的一版候选（当时公榜最好，0.0026330806；现已被 long512 的 0.0041833953 取代）。
+# 它是两个已入库候选的**拼装结果**，9.1 MB 全是重复 ——
+# 目录留在盘上，但不入库，拼装就两条命令（NOTES「当前最好模型是怎么拼出来的」也有）：
 #   mkdir -p outputs/candidates/v3_hybrid_r480_phasebal
 #   cp outputs/candidates/v3_hybrid_r480/{hybrid_meta.json,lgbm_seed*.txt} \
 #      outputs/candidates/v3_hybrid_r480_phasebal/
