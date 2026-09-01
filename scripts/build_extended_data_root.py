@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +57,10 @@ import pyarrow.parquet as pq
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-DEFAULT_BACKFILL = Path("/home/mainsub/Downloads/public_release_20260823/data")
+# 回补包（主办方 2026-08-23 发布）解压后的 data/ 目录 —— 位置因机器而异，
+# 从 $QUANT_BACKFILL_ROOT 读，或显式传 --backfill-root。
+_ENV_BACKFILL = os.environ.get("QUANT_BACKFILL_ROOT", "").strip()
+DEFAULT_BACKFILL = Path(_ENV_BACKFILL) if _ENV_BACKFILL else None
 SEALED_PLAN = _REPO_ROOT / "outputs" / "experiments" / "sealed_period_plan.json"
 
 ROLE_FULL = "extended_full"
@@ -78,8 +82,8 @@ def parse_args() -> argparse.Namespace:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-root", default=str(_REPO_ROOT / "data"),
                    help="主公开包（只读，不会被写入）")
-    p.add_argument("--backfill", default=str(DEFAULT_BACKFILL),
-                   help="8/23 回补包的 data/ 目录")
+    p.add_argument("--backfill", default=DEFAULT_BACKFILL,
+                   help="8/23 回补包的 data/ 目录（缺省取 $QUANT_BACKFILL_ROOT）")
     p.add_argument("--out-dir", default=str(_REPO_ROOT / "outputs" / "data_roots"))
     p.add_argument("--sealed-plan", default=str(SEALED_PLAN),
                    help="密封期几何的唯一真值源；决策期边界从这里读")
@@ -261,6 +265,9 @@ def build(root: Path, data_root: Path, members: list[dict[str, Any]], role: str,
 def main() -> None:
     args = parse_args()
     data_root = Path(args.data_root)
+    if not args.backfill:
+        raise SystemExit(
+            "找不到回补包：设置 $QUANT_BACKFILL_ROOT，或传 --backfill <解压后的 data/ 目录>")
     backfill = Path(args.backfill)
     out_dir = Path(args.out_dir)
     cutoff = decision_cutoff(Path(args.sealed_plan))

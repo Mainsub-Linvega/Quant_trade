@@ -103,7 +103,16 @@ outputs/experiments/*_smoke.json
 outputs/experiments/*_smoke.md
 
 # 云端（JupyterHub）跑出来的结果：py3.11/numpy1.24 口径，不与本地结果混排
-outputs/cloud/
+outputs/cloud/*
+# ⚠️ 上面必须是 `outputs/cloud/*` 而不是 `outputs/cloud/` —— 目录级排除会让 git
+# 根本不进这个目录，下面的 `!` 否定规则就永远不生效。
+# 例外：这三份是**门禁与结论的已知真值**，不是待混排的研究读数 ——
+# 缺了它们，requirements 门禁会退化成静默通过（tests/test_submission_packaging.py
+# 的 test_eval_env_truth_is_available_and_not_this_machine 正是抓这个），
+# 且 README 引用的交付读数在新克隆里指向不存在的文件。2026-09-01 公开整改时补入。
+!outputs/cloud/delivery_cloud_py311_4t.json
+!outputs/cloud/delivery_cloud_20260829_unpinned.json
+!outputs/cloud/thread_default_probe.json
 
 # Claude Code 的个人级项目配置（含仓库级权限规则），不进版本控制
 .claude/settings.local.json
@@ -119,3 +128,14 @@ outputs/cloud/
 # 那份 zip 本身也不入库（上面的 /outputs/*.zip），可交性由
 # outputs/experiments/audit_submission_<日期>.json 里的 sha256 记录。
 /outputs/delivery_verify/
+
+# ---- 2026-09-01 公开发布整改 ----
+# 主办方原文：赛题文档、示例策略与官方 Time-Series API runner。
+# 版权归主办方，本仓库不转载 —— 文件仍在本机磁盘上，只是不入库。
+# 获取与放置方式见 UPSTREAM.md；缺这三个目录时受影响的脚本会给出指向它的报错。
+/docs/
+/examples/
+/timeseries_api/
+
+# pytest 缓存
+/.pytest_cache/

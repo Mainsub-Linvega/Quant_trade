@@ -1,0 +1,23 @@
+Quant_trade — 2026 量化交易研究大赛参赛记录
+Copyright 2026 Mainsub
+
+本作品依 Apache License 2.0 授权（见 LICENSE）。
+
+## 授权范围不包括
+
+本仓库的许可**仅覆盖作者本人编写的代码、文档与训练所得的模型权重**，
+不覆盖以下属于比赛主办方的内容（它们不随本仓库分发，见 UPSTREAM.md）：
+
+- 比赛数据（`data/`：parquet 分区、`manifest.json`、`sample_submission.csv`）
+- 赛题与数据文档（`docs/`）
+- 主办方示例策略代码（`examples/`）
+- 官方 Time-Series API runner（`timeseries_api/`）
+
+这些内容的版权归主办方所有。若你从主办方处取得它们并放回本仓库目录树中使用，
+其可用范围由主办方的条款决定，与本许可无关。
+
+## 关于模型权重
+
+`strategies/v3_hybrid/model/` 与 `outputs/candidates/` 下的 LightGBM 文本模型与
+岭回归系数，是在主办方数据上训练所得。它们按本许可分发，但**不含任何原始数据**，
+也无法从中还原数据 —— 特征、标的与时间戳在数据发布时即已匿名化。

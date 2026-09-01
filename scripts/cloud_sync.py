@@ -14,10 +14,13 @@
 和本地 `git ls-files` 的哈希求差集，**只 PUT 变动的文件**。改三行代码就只传三个文件，
 既快，也不需要远端有解包权限。
 
-## Token
+## Base URL 与 Token
 
-从 `$JHUB_TOKEN` 读，回落到 `~/.config/quant_jhub/token`（建议 chmod 600）。
-token 不写进本文件，也不该进版本控制。
+两者都是**本机配置**，不写进本文件，也不该进版本控制：
+
+- base：从 `$JHUB_BASE` 读，或每次显式传 `--base`。形如
+  `https://<主办方 JupyterHub 主机>/user/<你的账号>`。
+- token：从 `$JHUB_TOKEN` 读，回落到 `~/.config/quant_jhub/token`（建议 chmod 600）。
 
 ## 用法
 
@@ -43,7 +46,9 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-DEFAULT_BASE = "https://jupyter.xhth.cn/user/ustc064"
+# 主办方 JupyterHub 的个人 base URL —— 属于本机配置，不入库。
+# 形如 https://<主机>/user/<账号>；从 $JHUB_BASE 读，或传 --base。
+DEFAULT_BASE = os.environ.get("JHUB_BASE", "")
 REMOTE_ROOT = "Quant_trade"
 # 不带点开头：Jupyter Contents API 默认 allow_hidden=False，PUT 任何点开头的
 # 文件或目录都会 400（实测 body: "Cannot create file or directory"）。
@@ -327,7 +332,7 @@ def cmd_log(api: Contents, args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--base", default=os.environ.get("JHUB_BASE", DEFAULT_BASE))
+    parser.add_argument("--base", default=DEFAULT_BASE)
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status", help="比对本地与云端，不传输")
@@ -354,6 +359,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if not args.base:
+        raise SystemExit(
+            "找不到云端 base URL：设置 $JHUB_BASE，或传 --base "
+            "https://<主机>/user/<账号>")
     api = Contents(args.base, read_token())
     handlers = {"status": cmd_status, "push": cmd_push, "pull": cmd_pull, "log": cmd_log}
     try:

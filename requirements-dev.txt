@@ -1,0 +1,24 @@
+# 本地研究环境的最小依赖集。
+#
+# ⚠️ 不要用 strategies/v3_hybrid/requirements.txt 装环境 —— 那是**评测机 conda 环境的
+# 全量 freeze**（约 200 个包，含 jupyterhub / dask / scikit-image），进提交包是作为
+# 「评测环境口径证据」存在的，不是安装清单。
+#
+# 两套口径并存，且**不同**：
+#   评测机（outputs/cloud/delivery_cloud_py311_4t.json 的 environment）：
+#     python 3.11.15 / numpy 1.24.3 / pandas 2.0.3 / pyarrow 11.0.0 / lightgbm 4.3.0
+#   本仓库开发机（截至 2026-09-01）：
+#     python 3.13.5 / numpy 2.5.1 / pandas 3.0.3 / pyarrow 25.0.0 / lightgbm 4.3.0
+#
+# 只有 lightgbm 两边同版本 —— 它决定模型权重的加载与预测口径，故在此固定。
+# 其余不钉版本：本地跑研究用新版即可；要复现评测机数值请照上面第一组口径建独立环境。
+# 相关伤疤：CLAUDE.md §8.18（本地解释器比评测机新，会替我们兜住 3.12+ 语法错，
+# 因此进提交包的模块必须过 tests/test_eval_python_compat.py 的 token 级扫描）。
+
+lightgbm==4.3.0
+numpy
+pandas
+pyarrow
+scipy
+scikit-learn
+pytest

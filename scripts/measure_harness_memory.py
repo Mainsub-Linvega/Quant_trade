@@ -47,7 +47,16 @@ for _p in (str(_REPO_ROOT), str(_REPO_ROOT / "scripts")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from timeseries_api.runner import load_model, run_loaded_model  # noqa: E402
+_UPSTREAM_HINT = (
+    "缺少主办方原文目录 `timeseries_api/`。它是主办方公开发布包的一部分，"
+    "版权归主办方，不随本仓库分发 —— 见仓库根目录 UPSTREAM.md 的获取与放置说明。")
+
+try:
+    from timeseries_api.runner import load_model, run_loaded_model  # noqa: E402
+except ImportError as _exc:  # pragma: no cover - 仅在缺少主办方原文时触发
+    # 用 ImportError 而不是 SystemExit：后者在 import 期会让 pytest 整个 INTERNALERROR，
+    # 一个测试都收集不到；ImportError 只让依赖它的那几个模块报收集错误。
+    raise ImportError(f"{_UPSTREAM_HINT} 原始错误：{_exc}") from _exc
 from verify_delivery_runtime import (EVAL_MEMORY_GB, peak_rss_bytes,  # noqa: E402
                                      rss_verdict)
 
